@@ -56,4 +56,7 @@ original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop pres
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.
 - O iMac não tem uv nem checkouts; o BackingLab 2 Intel (build 43) instalado lá não deve ser alterado.
-- A nuvem não tem Swift: o app só compila no iMac (Command Line Tools, Swift 6.2).
+- A nuvem não tem Swift: o app só compila no iMac (Swift 6.2; `test.sh` usa o Xcode 26.3 de lá, porque as CLT 26
+  não trazem o módulo Testing).
+- Primeira prova real (28/10, iMac): Sunshine of Your Love do Songsterr em 92 s, Demucs 6s 82,5 s na GPU sem recair
+  para a CPU; o app conecta, lista o repertório e o motor sai com ele.
