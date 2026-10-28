@@ -101,6 +101,8 @@ struct FitaView: View {
         let half = height * 0.40
         func x(_ t: Double) -> Double { (t - start) / span * width }
         let end = start + span
+        // No ⇧ + arrastar só a onda (o som) desliza com o mouse; a grade, as âncoras e a agulha ficam paradas.
+        let soundStart = start - model.soundShift
 
         // O loop (e o que está sendo arrastado).
         let loops = [model.engine.loop, drag.map { min($0.from, $0.to)...max($0.from, $0.to) }].compactMap { $0 }
@@ -132,11 +134,11 @@ struct FitaView: View {
         // As ondas: o original atrás, a guitarra na frente.
         let step = 2.0
         if let peaks = model.sourcePeaks {
-            context.fill(wave(peaks, start: start, width: width, step: step, middle: middle, half: half),
+            context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                          with: .color(.secondary.opacity(0.35)))
         }
         if let peaks = model.guitarPeaks {
-            context.fill(wave(peaks, start: start, width: width, step: step, middle: middle, half: half),
+            context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                          with: .color(.orange.opacity(0.85)))
         }
 

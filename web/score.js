@@ -6,10 +6,14 @@
 // tempo dentro dele (o alphaTab do projeto espaça pela duração) e as barras caem sobre as da Fita. O cursor fica
 // parado nos 40 % e a pauta corre sob ele na velocidade da Fita.
 //
+// No Ajuste, ⇧ + arrastar desliza a onda da Fita sob as linhas paradas (a pauta e o cursor não se mexem); ao soltar,
+// o app leva a batida do cursor até o som que ficou sob a linha.
+//
 // Do app para a página: load({gp, track, points}), track(n), tempo(points), clock(s, playing, rate, delay),
-// span(segundos), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
+// span(segundos), adjusting(sim), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
 // Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks}, rendered {bars, ms},
-// seek {seconds}, error {message}.
+// seek {seconds}, shift {seconds} (quanto a onda andou no arrasto com ⇧), shiftEnd {seconds} (o total, ao soltar),
+// error {message}.
 (function () {
   "use strict";
 
@@ -67,6 +71,11 @@
     renderStarted: 0,
     scroll: 0,
     cursorLeft: 0,
+    adjusting: false,
+    // O arrasto com ⇧ em curso: de onde saiu e quanto o mouse andou (px).
+    shiftDrag: null,
+    // O clique que segue o fim de um arrasto não é um clique.
+    suppressClick: false,
   };
 
   function post(body) {
@@ -322,6 +331,10 @@
   }
 
   sheet.addEventListener("click", (event) => {
+    if (state.suppressClick) {
+      state.suppressClick = false;
+      return;
+    }
     if (!state.anchors.length || !state.points.length) {
       return;
     }
@@ -329,6 +342,45 @@
     const tick = core.tickAtX(state.anchors, event.clientX - page.left);
     post({ type: "seek", seconds: Math.max(0, core.tickToSeconds(state.points, tick)) });
   });
+
+  // ⇧ + arrastar, no Ajuste: nada se mexe na pauta; o app desliza a onda da Fita com o mouse.
+  sheet.addEventListener("pointerdown", (event) => {
+    if (!state.adjusting || !event.shiftKey || !state.anchors.length) {
+      return;
+    }
+    state.shiftDrag = { from: event.clientX, dx: 0 };
+    try {
+      sheet.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura o arrasto ainda funciona enquanto o ponteiro fica sobre a pauta.
+    }
+    sheet.classList.add("dragging");
+    event.preventDefault();
+  });
+
+  sheet.addEventListener("pointermove", (event) => {
+    if (!state.shiftDrag) {
+      return;
+    }
+    state.shiftDrag.dx = event.clientX - state.shiftDrag.from;
+    post({ type: "shift", seconds: state.shiftDrag.dx / (state.layoutWidth / state.span) });
+  });
+
+  function endShiftDrag() {
+    const drag = state.shiftDrag;
+    if (!drag) {
+      return;
+    }
+    state.shiftDrag = null;
+    sheet.classList.remove("dragging");
+    const moved = Math.abs(drag.dx) > 3;
+    state.suppressClick = moved;
+    const seconds = drag.dx / (state.layoutWidth / state.span);
+    post(moved ? { type: "shiftEnd", seconds } : { type: "shift", seconds: 0 });
+  }
+
+  sheet.addEventListener("pointerup", endShiftDrag);
+  sheet.addEventListener("pointercancel", endShiftDrag);
 
   window.addEventListener("resize", () => {
     draw(true);
@@ -398,6 +450,9 @@
       state.theme = name;
       document.documentElement.dataset.theme = name;
       render();
+    },
+    adjusting(value) {
+      state.adjusting = Boolean(value);
     },
     zoom(scale) {
       if (!Number.isFinite(scale) || scale === state.scale) {

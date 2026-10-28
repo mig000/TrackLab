@@ -118,11 +118,15 @@ struct AdjustBar: View {
                 .disabled(!model.canRedo)
                 .help("⇧⌘Z")
             Text(model.adjustMessage ?? (model.taps.isEmpty
-                    ? "Arraste uma batida na Fita até onde ela soa; duplo clique prende ou solta."
+                    ? "Arraste uma batida na Fita até onde ela soa, ou ⇧ + arraste a onda até a linha; duplo clique prende ou solta."
                     : "\(model.taps.count) toques: continue batendo; ao parar, o trecho é regravado."))
                 .font(.caption)
                 .foregroundStyle(model.adjustMessage == nil ? Color.secondary : Color.orange)
                 .lineLimit(1)
+                .help("Arraste uma batida na Fita até onde ela soa: ela vira âncora e as vizinhas acompanham. "
+                    + "⇧ + arraste na TAB: só a onda anda com o mouse, sob as linhas e a TAB paradas; ponha o ataque da nota "
+                    + "do cursor sob a linha e solte: a batida mais perto do cursor vai para esse som. "
+                    + "Duplo clique numa batida prende ou solta.")
             Spacer()
             if model.saving { ProgressView().controlSize(.small) }
             Text(model.anchorCount == 1 ? "1 âncora" : "\(model.anchorCount) âncoras")

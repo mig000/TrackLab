@@ -44,6 +44,8 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(g.nearestBarTick(1.9) == 0)
     #expect(g.nearestBarTick(7.5) == 7680)
     #expect(TempoGrid(points: grid().points).nearestBarTick(2.9) == 3840)
+    #expect(g.point(nearTick: 1300)?.tick == 960)
+    #expect(g.point(nearTick: 1500)?.tick == 1920)
 }
 
 @Test func loopPresoNasBatidas() {

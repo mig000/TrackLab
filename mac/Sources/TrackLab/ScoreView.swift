@@ -22,12 +22,16 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double]) -> Void)?
     var onRendered: ((_ ms: Int, _ height: Double?) -> Void)?
     var onError: ((String) -> Void)?
+    /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
+    var onShift: ((Double) -> Void)?
+    var onShiftEnd: ((Double) -> Void)?
     private(set) var ready = false
     private var pending: [String: Any]?
     private var points: [[String: Any]] = []
     private var loopRange: ClosedRange<Double>?
     private var theme = "light"
     private var span = 10.0
+    private var adjusting = false
     private var timer: Timer?
     private var observer: UUID?
 
@@ -103,6 +107,13 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.span(seconds)", ["seconds": seconds])
     }
 
+    /// No Ajuste a página aceita ⇧ + arrastar.
+    func setAdjusting(_ value: Bool) {
+        guard value != adjusting else { return }
+        adjusting = value
+        call("window.tracklab.adjusting(value)", ["value": value])
+    }
+
     func pushClock() {
         guard ready, let engine else { return }
         call("window.tracklab.clock(seconds, playing, rate, delay)",
@@ -113,6 +124,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private func sendPending() {
         call("window.tracklab.theme(name)", ["name": theme])
         call("window.tracklab.span(seconds)", ["seconds": span])
+        call("window.tracklab.adjusting(value)", ["value": adjusting])
         if let pending { call("window.tracklab.load(payload)", ["payload": pending]) }
         sendLoop()
         pushClock()
@@ -161,6 +173,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 onLoaded?(list, ticks)
             case "rendered":
                 onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
+            case "shift":
+                onShift?((body["seconds"] as? NSNumber)?.doubleValue ?? 0)
+            case "shiftEnd":
+                if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { onShiftEnd?(seconds) }
             case "seek":
                 if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { engine?.seek(to: seconds) }
             case "error":

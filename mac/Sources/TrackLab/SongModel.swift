@@ -35,7 +35,11 @@ final class SongModel {
     private(set) var separating: (job: String, message: String, progress: Double?)?
 
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
-    var adjusting = false
+    var adjusting = false {
+        didSet { bridge.setAdjusting(adjusting) }
+    }
+    /// ⇧ + arrastar em curso: quanto a onda da Fita andou sob as linhas paradas, em segundos.
+    private(set) var soundShift = 0.0
     /// O mapa de tempo como o motor o gravou; os gestos do Ajuste partem dele.
     private(set) var tempoMap: TempoMapDocument?
     /// O que o último gesto recusado disse (some no próximo que der certo).
@@ -65,6 +69,11 @@ final class SongModel {
             if let height, height > 0 { self?.scoreHeight = height }
         }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
+        bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
+        bridge.onShiftEnd = { [weak self] seconds in
+            self?.soundShift = 0
+            self?.alignBeat(shiftedBy: seconds)
+        }
     }
 
     func close() {
@@ -240,6 +249,13 @@ final class SongModel {
                 adjustMessage = error.localizedDescription
             }
         }
+    }
+
+    /// ⇧ + arrastar, ao soltar: a onda andou `shift` segundos sob a linha parada, então o som que ficou sob ela é o
+    /// desta posição da TAB. A batida mais perto do cursor anda o mesmo para trás e vira âncora.
+    func alignBeat(shiftedBy shift: Double) {
+        guard adjusting, let point = grid.point(nearTick: grid.tick(at: engine.currentTime)) else { return }
+        moveBeat(tick: point.tick, to: point.seconds - shift)
     }
 
     func undo() {

@@ -64,7 +64,9 @@ direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava t
 da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
-(um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta); ⌘Z / ⇧⌘Z pelo
+(um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta), ⇧ + arrastar na TAB
+desliza só a onda da Fita sob as linhas, a TAB e a grade paradas; ao soltar, a batida mais perto do cursor anda o
+mesmo deslocamento (o som que ficou sob a linha é o daquela posição da TAB); ⌘Z / ⇧⌘Z pelo
 menu Editar (sem ajuste a desfazer, vão para a cadeia de respondedores). TrackLabCore (modelos, `TempoGrid`,
 `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
 

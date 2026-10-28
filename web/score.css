@@ -42,6 +42,10 @@ body {
   will-change: transform;
 }
 
+#sheet.dragging {
+  cursor: ew-resize;
+}
+
 #cursor {
   position: absolute;
   top: 0;
@@ -64,6 +68,12 @@ body {
   border-right: 1px solid var(--loop-edge);
   pointer-events: none;
   z-index: 1;
+}
+
+/* Escondida, a camada da mensagem não pode ficar por cima da pauta pegando os cliques: `display: flex` venceria o
+   atributo `hidden`. */
+#message[hidden] {
+  display: none;
 }
 
 #message {

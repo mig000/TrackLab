@@ -67,6 +67,11 @@ public struct TempoGrid: Sendable, Equatable {
         return best
     }
 
+    /// A batida do mapa mais perto do tique (o que o ⇧ + arrastar deixou sob o cursor).
+    public func point(nearTick tick: Double) -> TempoPoint? {
+        points.min { abs($0.tick - tick) < abs($1.tick - tick) }
+    }
+
     /// O início de compasso mais perto de `seconds`, em tiques: o 1 que a tecla U leva até o toque.
     public func nearestBarTick(_ seconds: Double) -> Double? {
         let ticks = barTicks.count >= 2 ? Array(barTicks.dropLast()) : points.filter { $0.kind != "interpolated" }.map(\.tick)
