@@ -35,6 +35,25 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
 - O lock universal fixa torch 2.2.2 / numpy 1.26 (o demucs 4.1.0 exige isso no macOS x86_64); separar por
   plataforma na fase do Apple Silicon.
 
+## Partitura (`web/`)
+`score.html` + `score.js` desenham o GP do pacote com o alphaTab (horizontal, só TAB, uma pista por vez) e não têm
+áudio: o app empurra o relógio e o mapa de tempo; segundos → tiques pelo mapa → x pelas batidas desenhadas
+(`absolutePlaybackStart`, `onNotesX`; o fim de cada compasso). O cursor fica parado a 40 % da largura e a pauta
+rola. As contas puras ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
+`tests/fixtures` (feitos pelo conversor do motor) no alphaTab do node: os tiques do alphaTab batem com os do mapa.
+O conversor não escreve repetições, então os pontos do Songsterr são um por compasso escrito.
+
+## App (`mac/`)
+SwiftPM sem Xcode (`./build.sh` → build/TrackLab.app, `./test.sh`), alvo macOS 15, Swift 6 em modo 5. Estado das
+views por `@Local` (= SwiftUI.State). `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
+lê a porta do stdout (`TRACKLAB_URL` aponta para outro motor). `StemEngine`: o original e as seis faixas num
+AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6); o loop é agendado no
+player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), sem seek a cada volta. `SongModel`
+abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
+original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas. TrackLabCore
+(modelos, `TempoGrid`, `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
+
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.
 - O iMac não tem uv nem checkouts; o BackingLab 2 Intel (build 43) instalado lá não deve ser alterado.
+- A nuvem não tem Swift: o app só compila no iMac (Command Line Tools, Swift 6.2).

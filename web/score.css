@@ -1,0 +1,75 @@
+/* A partitura do estudo: uma faixa horizontal que rola sob um cursor parado a 40 % da largura. */
+:root {
+  color-scheme: light;
+  --background: #ffffff;
+  --cursor: #ff9500;
+  --loop: rgba(255, 149, 0, 0.12);
+  --loop-edge: rgba(255, 149, 0, 0.55);
+  --text: #6e6e73;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: #1e1e1e;
+  --cursor: #ff9f0a;
+  --loop: rgba(255, 159, 10, 0.14);
+  --loop-edge: rgba(255, 159, 10, 0.6);
+  --text: #98989d;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--background);
+  -webkit-user-select: none;
+  user-select: none;
+  font: 13px -apple-system, system-ui, sans-serif;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+#sheet {
+  position: relative;
+  min-width: 100%;
+  cursor: pointer;
+}
+
+#cursor {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--cursor);
+  pointer-events: none;
+  z-index: 3;
+}
+
+#loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--loop);
+  border-left: 1px solid var(--loop-edge);
+  border-right: 1px solid var(--loop-edge);
+  pointer-events: none;
+  z-index: 1;
+}
+
+#message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+  text-align: center;
+  padding: 24px;
+}

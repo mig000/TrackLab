@@ -1,0 +1,330 @@
+import AVFoundation
+import Observation
+import QuartzCore
+import TrackLabCore
+
+/// O áudio do estudo num só AVAudioEngine: o original e cada faixa da separação, cada um num player, todos
+/// começando no mesmo instante de host (ficam alinhados amostra a amostra), somados num barramento que passa por
+/// um AVAudioUnitTimePitch (velocidade 0,5–1,5 e tom −6…+6 em tempo real). O loop é agendado no próprio player
+/// (o trecho até o fim do loop e depois o loop de novo, várias vezes), sem salto de seek a cada volta.
+/// O relógio é tempo de host × velocidade desde a âncora do último play, menos a latência ouvida, como no
+/// StemEngine do KaraokeLab e do TabLab.
+@Observable
+@MainActor
+final class StemEngine {
+    static let sourceID = "source"
+    static let rates: ClosedRange<Float> = 0.5...1.5
+    static let rateStep: Float = 0.05
+    static let semitones: ClosedRange<Int> = -6...6
+
+    private(set) var duration: Double = 0
+    private(set) var isPlaying = false
+    private(set) var loaded = false
+    /// Conta os seeks: a Fita traz o cursor de volta à vista quando ele salta.
+    private(set) var seekCount = 0
+    private(set) var playbackError: String?
+
+    /// O trecho que se repete; mudar enquanto toca agenda de novo do ponto ouvido.
+    var loop: ClosedRange<Double>? {
+        didSet {
+            guard loop != oldValue else { return }
+            if isPlaying { restart(at: currentTime) }
+            changed()
+        }
+    }
+
+    /// Original (o áudio do vídeo) ou as faixas da separação.
+    var useStems = false { didSet { applyMix() } }
+    var mix: [String: StemMix] = [:] { didSet { applyMix() } }
+    var masterVolume: Float = 1 { didSet { bus.outputVolume = masterVolume } }
+
+    var rate: Float {
+        get { rateValue }
+        set { setRate(newValue) }
+    }
+
+    /// Tom em semitons; a duração não muda.
+    var semitones: Int = 0 {
+        didSet {
+            semitones = min(max(semitones, Self.semitones.lowerBound), Self.semitones.upperBound)
+            timePitch.pitch = Float(semitones * 100)
+        }
+    }
+
+    private var rateValue: Float = 1
+    @ObservationIgnored var onEnded: (() -> Void)?
+    @ObservationIgnored private var observers: [UUID: () -> Void] = [:]
+
+    @ObservationIgnored private let engine = AVAudioEngine()
+    @ObservationIgnored private let bus = AVAudioMixerNode()
+    @ObservationIgnored private let timePitch = AVAudioUnitTimePitch()
+
+    private struct Track {
+        let file: AVAudioFile
+        let player: AVAudioPlayerNode
+    }
+
+    @ObservationIgnored private var tracks: [String: Track] = [:]
+    @ObservationIgnored private(set) var sources: [String: URL] = [:]
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var plan = PlaybackPlan(start: 0, loop: nil, duration: 0)
+    /// Quanto de música o plano agendou (`plan.length`, guardado: o tique pergunta 20 vezes por segundo).
+    @ObservationIgnored private var planLength: Double = 0
+    // Tempo da música = plan.songTime(after: (agora − anchorHost − latência) × velocidade + anchorElapsed).
+    private var anchorTime: Double = 0
+    @ObservationIgnored private var anchorHost: CFTimeInterval = 0
+    /// Música já tocada no plano atual antes da âncora (uma mudança de velocidade no meio dele).
+    @ObservationIgnored private var anchorElapsed: Double = 0
+    /// A latência ouvida (saída + time-pitch), relida a cada segundo: perguntar ao Core Audio a cada quadro custa.
+    @ObservationIgnored private var latency: Double = 0
+    @ObservationIgnored private var latencyRead: CFTimeInterval = 0
+    @ObservationIgnored private var configurationObserver: NSObjectProtocol?
+
+    init() {
+        engine.attach(bus)
+        engine.attach(timePitch)
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.outputChanged() }
+        }
+    }
+
+    /// A saída mudou (fone, AirPlay): o motor parou sozinho; retoma do mesmo ponto no dispositivo novo.
+    private func outputChanged() {
+        let wasPlaying = isPlaying
+        let position = currentTime
+        pause()
+        anchorTime = position
+        guard loaded else { return }
+        engine.prepare()
+        if wasPlaying { startPlayers() }
+    }
+
+    // MARK: - Arquivos
+
+    /// Carrega o original e as faixas (id → arquivo). A posição fica onde estava, dentro da duração nova.
+    func load(_ files: [(id: String, url: URL)]) throws {
+        let position = anchorTime
+        stop()
+        for track in tracks.values {
+            engine.disconnectNodeOutput(track.player)
+            engine.detach(track.player)
+        }
+        tracks = [:]
+        sources = [:]
+        engine.disconnectNodeOutput(bus)
+        engine.disconnectNodeOutput(timePitch)
+        var opened: [(id: String, file: AVAudioFile)] = []
+        for item in files {
+            opened.append((item.id, try AVAudioFile(forReading: item.url)))
+            sources[item.id] = item.url
+        }
+        guard let first = opened.first else {
+            duration = 0
+            anchorTime = 0
+            return
+        }
+        let format = AVAudioFormat(standardFormatWithSampleRate: first.file.processingFormat.sampleRate, channels: 2)
+        for item in opened {
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: bus, format: item.file.processingFormat)
+            tracks[item.id] = Track(file: item.file, player: player)
+        }
+        engine.connect(bus, to: timePitch, format: format)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
+        engine.prepare()
+        // O original manda na duração: as faixas têm o mesmo tamanho, mas um arredondamento não cria silêncio no fim.
+        let source = opened.first { $0.id == Self.sourceID } ?? first
+        duration = Double(source.file.length) / source.file.processingFormat.sampleRate
+        anchorTime = min(position, duration)
+        loaded = true
+        applyMix()
+    }
+
+    /// Ids carregados, além do original.
+    var stemIDs: [String] { tracks.keys.filter { $0 != Self.sourceID }.sorted() }
+
+    // MARK: - Relógio
+
+    /// O tempo da música ouvido agora, em segundos (contínuo, para desenhar).
+    var currentTime: Double { songTime(atHost: CACurrentMediaTime()) }
+
+    func songTime(atHost host: Double) -> Double {
+        guard isPlaying else { return anchorTime }
+        return plan.songTime(after: elapsed(atHost: host, rate: rateValue))
+    }
+
+    /// Música tocada no plano atual até `host`.
+    private func elapsed(atHost host: Double, rate: Float) -> Double {
+        anchorElapsed + max(0, host - anchorHost - latency) * Double(rate)
+    }
+
+    private func readLatency(force: Bool = false) {
+        let now = CACurrentMediaTime()
+        guard force || now - latencyRead > 1 else { return }
+        latencyRead = now
+        latency = engine.outputNode.presentationLatency + timePitch.auAudioUnit.latency
+    }
+
+    // MARK: - Transporte
+
+    func toggle() { isPlaying ? pause() : play() }
+
+    func play() {
+        guard loaded, !tracks.isEmpty, !isPlaying else { return }
+        if loop == nil, anchorTime >= duration - 0.05 { anchorTime = 0 }
+        startPlayers()
+    }
+
+    private func startPlayers() {
+        guard loaded, !tracks.isEmpty, !isPlaying else { return }
+        plan = PlaybackPlan(start: anchorTime, loop: loop, duration: duration)
+        let segments = plan.segments
+        guard !segments.isEmpty else { return }
+        planLength = segments.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
+        for track in tracks.values { schedule(track, segments) }
+        do {
+            if !engine.isRunning { try engine.start() }
+            playbackError = nil
+        } catch {
+            for track in tracks.values { track.player.stop() }
+            playbackError = "O áudio não ligou na saída atual: \(error.localizedDescription)"
+            return
+        }
+        readLatency(force: true)
+        // Um início comum um pouco à frente, para todos os players estarem prontos no mesmo instante.
+        let lead = 0.05
+        let start = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead))
+        for track in tracks.values { track.player.play(at: start) }
+        anchorHost = CACurrentMediaTime() + lead
+        anchorElapsed = 0
+        isPlaying = true
+        startTimer()
+        changed()
+    }
+
+    func pause() {
+        guard isPlaying else { return }
+        anchorTime = currentTime
+        isPlaying = false
+        for track in tracks.values { track.player.stop() }
+        stopTimer()
+        changed()
+    }
+
+    func seek(to seconds: Double) {
+        let wasPlaying = isPlaying
+        pause()
+        anchorTime = min(max(0, seconds), duration)
+        seekCount += 1
+        if wasPlaying { startPlayers() } else { changed() }
+    }
+
+    func skip(_ seconds: Double) { seek(to: currentTime + seconds) }
+
+    /// Volta ao começo do loop, ou da música.
+    func toStart() { seek(to: loop?.lowerBound ?? 0) }
+
+    func stop() {
+        pause()
+        engine.stop()
+        loaded = false
+    }
+
+    /// Agenda de novo do ponto dado, tocando (o loop mudou, ou o plano agendado está acabando).
+    private func restart(at seconds: Double) {
+        pause()
+        anchorTime = min(max(0, seconds), duration)
+        startPlayers()
+    }
+
+    private func setRate(_ value: Float) {
+        let clean = Self.snap(value)
+        guard clean != rateValue else { return }
+        if isPlaying {
+            // O que já está na fila de saída ainda soa na velocidade antiga: a âncora nova é o instante em que a
+            // velocidade nova começa a ser ouvida.
+            let now = CACurrentMediaTime()
+            anchorElapsed = elapsed(atHost: now + latency, rate: rateValue)
+            anchorHost = now
+        }
+        rateValue = clean
+        timePitch.rate = clean
+        changed()
+    }
+
+    static func snap(_ value: Float) -> Float {
+        let stepped = (value / rateStep).rounded() * rateStep
+        return min(max(stepped, rates.lowerBound), rates.upperBound)
+    }
+
+    // MARK: - Mix
+
+    private func applyMix() {
+        let gains = mixGains(mix)
+        for (id, track) in tracks {
+            if id == Self.sourceID {
+                track.player.volume = useStems ? 0 : 1
+            } else {
+                track.player.volume = useStems ? (gains[id] ?? 1) : 0
+            }
+        }
+    }
+
+    // MARK: - Observadores (a página da partitura segue o relógio)
+
+    func observe(_ f: @escaping () -> Void) -> UUID {
+        let id = UUID()
+        observers[id] = f
+        return id
+    }
+
+    func unobserve(_ id: UUID) { observers[id] = nil }
+
+    private func changed() { observers.values.forEach { $0() } }
+
+    // MARK: - Tique
+
+    private func startTimer() {
+        stopTimer()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    private func tick() {
+        guard isPlaying else { return }
+        readLatency()
+        let played = elapsed(atHost: CACurrentMediaTime(), rate: rateValue)
+        if plan.ended(after: played) {
+            pause()
+            anchorTime = duration
+            onEnded?()
+            return
+        }
+        // Vinte minutos de loop agendados acabando: agenda mais, do ponto ouvido.
+        if plan.loop != nil, played > planLength - 5 {
+            restart(at: currentTime)
+        }
+    }
+
+    private func schedule(_ track: Track, _ segments: [ClosedRange<Double>]) {
+        track.player.stop()
+        let file = track.file
+        let rate = file.processingFormat.sampleRate
+        for segment in segments {
+            let first = AVAudioFramePosition((segment.lowerBound * rate).rounded())
+            let last = min(file.length, AVAudioFramePosition((segment.upperBound * rate).rounded()))
+            guard last > first else { continue }
+            track.player.scheduleSegment(file, startingFrame: first, frameCount: AVAudioFrameCount(last - first), at: nil)
+        }
+    }
+}
