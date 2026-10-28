@@ -142,13 +142,18 @@ public struct SongDetail: Codable, Hashable, Sendable {
 public struct TempoPoint: Codable, Hashable, Sendable {
     public let tick: Double
     public let seconds: Double
+    /// `anchor` (posto à mão no Ajuste), `detected` (do Songsterr ou ouvido) ou `interpolated`.
     public let kind: String
+    public let confidence: Double?
 
-    public init(tick: Double, seconds: Double, kind: String) {
+    public init(tick: Double, seconds: Double, kind: String, confidence: Double? = nil) {
         self.tick = tick
         self.seconds = seconds
         self.kind = kind
+        self.confidence = confidence
     }
+
+    public var isAnchor: Bool { kind == "anchor" }
 }
 
 /// O mapa de tempo do pacote (`score/tempo-map.json`): tiques da partitura (960 por semínima) → segundos do áudio.

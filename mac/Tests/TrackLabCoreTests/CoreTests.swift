@@ -34,6 +34,18 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(g.points.map(\.tick) == [0, 960])
 }
 
+@Test func ajusteAchaABatidaEOUm() {
+    let g = TempoGrid(points: grid().points, barTicks: [0, 3840, 7680, 11520])
+    #expect(g.beat(near: 2.08, within: 0.1)?.tick == 1920)
+    #expect(g.beat(near: 2.25, within: 0.1) == nil)
+    #expect(g.beat(near: 0.95, within: 0.1)?.tick == 0)
+    // O 1 mais perto, nunca o fim do último compasso.
+    #expect(g.nearestBarTick(2.9) == 3840)
+    #expect(g.nearestBarTick(1.9) == 0)
+    #expect(g.nearestBarTick(7.5) == 7680)
+    #expect(TempoGrid(points: grid().points).nearestBarTick(2.9) == 3840)
+}
+
 @Test func loopPresoNasBatidas() {
     let g = grid()
     #expect(LoopRegion.snapped(3.2, 1.6, grid: g, duration: 10) == 1.5...3)

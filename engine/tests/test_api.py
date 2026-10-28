@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from conftest import guitar_track
 from test_songsterr import FakeSource
 from test_stems import fake_run
+from tracklab import package
 from tracklab.api import create_app
 from tracklab.jobs import FINAL, JobManager
 from tracklab.media import separate as demucs
@@ -71,3 +72,45 @@ def test_unknown_song_and_job(client):
     assert client.get("/api/jobs/job-nada").status_code == 404
     info = client.get("/api/info").json()
     assert info["version"] and info["songs"].endswith("Repertorio")
+
+
+def test_tempo_map_gestures_are_saved_with_history_and_undone(client):
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    original = client.get(f"/api/songs/{song_id}/tempo-map").json()
+    beat = original["points"][2]
+    moved = client.post(f"/api/songs/{song_id}/tempo-map/edit",
+                        json={"action": "move", "tick": beat["tick"], "seconds": beat["seconds"] + 0.1}).json()
+    anchor = next(p for p in moved["points"] if p["tick"] == beat["tick"])
+    assert anchor["kind"] == "anchor" and anchor["seconds"] == pytest.approx(beat["seconds"] + 0.1)
+    assert client.get(f"/api/songs/{song_id}/tempo-map").json() == moved
+    found = package.find(song_id)
+    history = sorted(found.file("score/tempo-map-history").glob("*.json"))
+    assert len(history) == 1 and json.loads(history[0].read_text()) == original
+    entry = client.get(f"/api/songs/{song_id}").json()["tempoMap"]
+    assert entry["anchors"] == 1 and entry["points"] == len(moved["points"]) and entry["edited"]
+    # Desfazer: o app manda o mapa de antes; o do gesto vai para o histórico.
+    undone = client.put(f"/api/songs/{song_id}/tempo-map", json=original).json()
+    assert undone["points"] == original["points"]
+    assert len(list(found.file("score/tempo-map-history").glob("*.json"))) == 2
+    assert client.get(f"/api/songs/{song_id}").json()["tempoMap"]["anchors"] == 0
+    # Soltar a âncora deixa a batida onde está.
+    again = client.post(f"/api/songs/{song_id}/tempo-map/edit",
+                        json={"tick": beat["tick"], "seconds": beat["seconds"] + 0.1}).json()
+    released = client.post(f"/api/songs/{song_id}/tempo-map/edit", json={"action": "release", "tick": beat["tick"]}).json()
+    point = next(p for p in released["points"] if p["tick"] == beat["tick"])
+    assert point["kind"] == "detected" and point["seconds"] == next(p for p in again["points"] if p["tick"] == beat["tick"])["seconds"]
+
+
+def test_a_gesture_the_map_cannot_take_is_refused_and_nothing_changes(client):
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    before = client.get(f"/api/songs/{song_id}/tempo-map").json()
+    first, second = before["points"][1], before["points"][3]
+    client.post(f"/api/songs/{song_id}/tempo-map/edit", json={"tick": second["tick"], "seconds": second["seconds"]})
+    refused = client.post(f"/api/songs/{song_id}/tempo-map/edit", json={"tick": first["tick"], "seconds": second["seconds"] + 1})
+    assert refused.status_code == 400 and "âncoras" in refused.json()["detail"]
+    assert client.put(f"/api/songs/{song_id}/tempo-map", json={"points": [{"tick": 0, "seconds": 1}]}).status_code == 400
+    assert client.post("/api/songs/song-nada/tempo-map/edit", json={"tick": 0, "seconds": 1}).status_code == 404

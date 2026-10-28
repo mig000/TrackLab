@@ -36,6 +36,12 @@ struct SongView: View {
             .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
             .onChange(of: span, initial: true) { model.bridge.setSpan(span) }
             Divider()
+            if model.adjusting {
+                AdjustBar(model: model)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                Divider()
+            }
             FitaView(model: model, span: $span)
                 .frame(minHeight: 120, maxHeight: .infinity)
                 .padding(.horizontal, 12)
@@ -66,6 +72,13 @@ struct SongView: View {
                 }
             }
             Spacer()
+            Button {
+                model.adjusting.toggle()
+            } label: {
+                Label("Ajustar sincronização", systemImage: "slider.horizontal.below.rectangle")
+            }
+            .keyboardShortcut("j")
+            .help("⌘J: mostra as batidas na Fita para levar cada uma até onde ela soa")
             if model.scoreTracks.count > 1 {
                 Picker("Pista", selection: Binding(get: { model.scoreTrack }, set: { model.scoreTrack = $0 })) {
                     ForEach(model.scoreTracks, id: \.index) { track in
@@ -77,6 +90,42 @@ struct SongView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+/// A barra do Ajuste, sobre a Fita: o 1 no toque (U), Desfazer e Refazer, quantas âncoras há e o que o motor disse.
+struct AdjustBar: View {
+    let model: SongModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text("Ajuste")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(.orange.opacity(0.15)))
+            Button { model.downbeatHere() } label: { Label("O 1 é aqui", systemImage: "metronome") }
+                .keyboardShortcut("u", modifiers: [])
+                .help("U: tocando, aperte no tempo forte; o começo de compasso mais perto vem até o toque")
+            Button { model.undo() } label: { Label("Desfazer", systemImage: "arrow.uturn.backward") }
+                .disabled(!model.canUndo)
+                .help("⌘Z")
+            Button { model.redo() } label: { Label("Refazer", systemImage: "arrow.uturn.forward") }
+                .disabled(!model.canRedo)
+                .help("⇧⌘Z")
+            Text(model.adjustMessage ?? "Arraste uma batida na Fita até onde ela soa; duplo clique prende ou solta.")
+                .font(.caption)
+                .foregroundStyle(model.adjustMessage == nil ? Color.secondary : Color.orange)
+                .lineLimit(1)
+            Spacer()
+            if model.saving { ProgressView().controlSize(.small) }
+            Text(model.anchorCount == 1 ? "1 âncora" : "\(model.anchorCount) âncoras")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            Button("Concluir") { model.adjusting = false }
+        }
+        .buttonStyle(.borderless)
     }
 }
 

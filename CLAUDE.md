@@ -19,7 +19,8 @@ https://claude.ai/artifact/EomP8enfZv8mW3S46N5ycf.
 Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytest`.
 - `package.py`: o pacote `<artista-título>.tracklab` (manifest.json esquema 1, score/original.gp,
   score/tempo-map.json, audio/source.flac, stems/<chave>/, peaks/). Um pacote nasce numa pasta oculta e só ganha o
-  nome quando está inteiro; cada separação idem dentro de `stems/`.
+  nome quando está inteiro; cada separação idem dentro de `stems/`. `save_tempo_map` grava o mapa ajustado e guarda
+  o anterior em `score/tempo-map-history/` (as últimas 200 versões).
 - `tempomap.py`: o contrato do mapa de batida do TabLab (tiques a 960 por semínima, pontos anchor / detected /
   interpolated, âncoras com alcance de 8 batidas), copiado do backend do TabLab (`integracao`), mais
   `from_bar_starts` (os pontos do Songsterr: início de cada compasso vira `detected`, as batidas de dentro
@@ -30,8 +31,9 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
 - `media/`: probe / convert / peaks / separate copiados do TabLab. `separate` (Demucs 6s) cai para a CPU se o MPS
   recusar uma operação e registra o motivo no recibo.
 - `models.py`: pesos baixados de uma revisão fixa e conferidos por SHA-256 (`~/TrackLab/Modelos`).
-- `jobs.py` (do TabLab: um worker, eventos em disco e por SSE), `api.py` (FastAPI), `cli.py` (`tracklab serve
-  --port 0 --parent-pid N` imprime `TRACKLAB_PORT=<n>`; o motor é do app e sai com ele).
+- `jobs.py` (do TabLab: um worker, eventos em disco e por SSE), `api.py` (FastAPI; o Ajuste usa
+  `POST songs/{id}/tempo-map/edit` com um gesto de `anchor_edit` e `PUT songs/{id}/tempo-map` para o Desfazer),
+  `cli.py` (`tracklab serve --port 0 --parent-pid N` imprime `TRACKLAB_PORT=<n>`; o motor é do app e sai com ele).
 - O lock universal fixa torch 2.2.2 / numpy 1.26 (o demucs 4.1.0 exige isso no macOS x86_64); separar por
   plataforma na fase do Apple Silicon.
 
@@ -56,8 +58,11 @@ player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), se
 abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
 original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas; o relógio é lido
 direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A partitura ganha só a altura
-da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. TrackLabCore
-(modelos, `TempoGrid`, `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
+da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. Ajuste (⌘J,
+Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
+batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque; ⌘Z / ⇧⌘Z pelo
+menu Editar (sem ajuste a desfazer, vão para a cadeia de respondedores). TrackLabCore (modelos, `TempoGrid`,
+`mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
 
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.

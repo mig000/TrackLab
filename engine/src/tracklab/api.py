@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import platform
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import __version__, home, package, songsterr, stems
+from . import __version__, home, package, songsterr, stems, tempomap
 from .errors import PackageError, TrackLabError
 from .jobs import JobManager
 from .media.peaks import peaks
@@ -87,6 +87,20 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         if not entry:
             raise HTTPException(404, "Esta música ainda não tem mapa de tempo.")
         return read_json(found.file(entry["file"]))
+
+    @app.post("/api/songs/{song_id}/tempo-map/edit")
+    def edit_tempo_map(song_id: str, gesture: dict = Body(...)) -> dict:
+        """Um gesto do Ajuste sobre o mapa gravado (`tempomap.anchor_edit`: move ou release de uma batida); o
+        resultado é gravado e devolvido."""
+        found = song(song_id)
+        current = tempo_map(song_id)
+        return found.save_tempo_map(tempomap.anchor_edit({**gesture, "tempoMap": current}))
+
+    @app.put("/api/songs/{song_id}/tempo-map")
+    def put_tempo_map(song_id: str, document: dict = Body(...)) -> dict:
+        """Um mapa inteiro no lugar do gravado (o Desfazer e o Refazer do app), conferido antes."""
+        found = song(song_id)
+        return found.save_tempo_map(tempomap.normalize_tempo_map(document))
 
     @app.get("/api/songs/{song_id}/files/{relative:path}")
     def song_file(song_id: str, relative: str):

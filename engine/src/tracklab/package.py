@@ -3,6 +3,7 @@
     manifest.json          esquema, origem, hashes e o que existe dentro
     score/original.gp      a partitura como veio do Songsterr (sem áudio embutido)
     score/tempo-map.json   tique ↔ segundo, o contrato do TabLab; os ajustes manuais mudam só este arquivo
+    score/tempo-map-history/  as versões anteriores do mapa, uma por ajuste (as últimas `TEMPO_HISTORY`)
     audio/source.flac      o áudio do vídeo vinculado, convertido uma vez
     stems/<chave>/         uma pasta por separação (provedor, modelo e hash do áudio na chave) com `receipt.json`
     peaks/                 caches da Fita, refazíveis
@@ -26,6 +27,8 @@ from .util import atomic_json, new_id, now_iso, read_json, slugify
 SCHEMA = 1
 SUFFIX = ".tracklab"
 MANIFEST = "manifest.json"
+TEMPO_MAP = "score/tempo-map.json"
+TEMPO_HISTORY = 200
 _LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
 
 
@@ -93,6 +96,31 @@ class SongPackage:
             data["activeStems"] = key
 
         return self.update(record)
+
+    def save_tempo_map(self, tempo_map: dict) -> dict:
+        """Grava o mapa (já conferido) como o atual; o anterior vai para `score/tempo-map-history/`, numerado, e
+        só as últimas `TEMPO_HISTORY` versões ficam. O manifesto conta pontos e âncoras e marca o ajuste."""
+        with _LOCK:
+            current = self.file(TEMPO_MAP)
+            if current.is_file():
+                history = self.file("score/tempo-map-history")
+                history.mkdir(exist_ok=True)
+                versions = sorted(history.glob("*.json"))
+                number = int(versions[-1].stem.split("-")[0]) + 1 if versions else 1
+                shutil.copy2(current, history / f"{number:06d}-{now_iso().replace(':', '')}.json")
+                for old in sorted(history.glob("*.json"))[:-TEMPO_HISTORY]:
+                    old.unlink()
+            atomic_json(current, tempo_map)
+
+            def record(data: dict) -> None:
+                entry = data.get("tempoMap") or {"file": TEMPO_MAP, "source": tempo_map.get("source")}
+                entry["points"] = len(tempo_map["points"])
+                entry["anchors"] = sum(1 for point in tempo_map["points"] if point.get("kind") == "anchor")
+                entry["edited"] = now_iso()
+                data["tempoMap"] = entry
+
+            self.update(record)
+            return tempo_map
 
     def summary(self) -> dict:
         data = self.manifest

@@ -34,6 +34,19 @@ final class SongModel {
     /// A separação em curso (o id da tarefa e a última mensagem dela).
     private(set) var separating: (job: String, message: String, progress: Double?)?
 
+    /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
+    var adjusting = false
+    /// O mapa de tempo como o motor o gravou; os gestos do Ajuste partem dele.
+    private(set) var tempoMap: TempoMapDocument?
+    /// O que o último gesto recusado disse (some no próximo que der certo).
+    private(set) var adjustMessage: String?
+    private(set) var saving = false
+    private var undoStack: [TempoMapDocument] = []
+    private var redoStack: [TempoMapDocument] = []
+    var canUndo: Bool { !undoStack.isEmpty && !saving }
+    var canRedo: Bool { !redoStack.isEmpty && !saving }
+    var anchorCount: Int { grid.points.filter(\.isAnchor).count }
+
     var preset: MixPreset? { MixPreset.matching(engine.mix, stems: engine.stemIDs) }
 
     init(id: String) {
@@ -61,7 +74,10 @@ final class SongModel {
         do {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
-            if let map = try await Backend.shared.tempoMap(id) { grid = TempoGrid(points: map.points) }
+            if let map = try await Backend.shared.tempoMap(id) {
+                tempoMap = map
+                grid = TempoGrid(points: map.points)
+            }
             try loadAudio(detail)
             loadScore(detail)
             phase = .ready
@@ -146,6 +162,74 @@ final class SongModel {
         } else {
             setLoop(LoopRegion.bar(containing: engine.currentTime, grid: grid))
         }
+    }
+
+    // MARK: - Ajuste
+
+    /// Leva a batida do `tick` até `seconds` como âncora: as vizinhas acompanham até 8 batidas ou até a próxima âncora.
+    func moveBeat(tick: Double, to seconds: Double) {
+        edit(.init(action: "move", tick: tick, seconds: seconds))
+    }
+
+    /// Duplo clique: uma âncora se solta (fica onde está); uma batida solta vira âncora onde está.
+    func toggleAnchor(_ point: TempoPoint) {
+        edit(.init(action: point.isAnchor ? "release" : "move", tick: point.tick, seconds: point.isAnchor ? nil : point.seconds))
+    }
+
+    /// U, "o 1 é aqui": o início de compasso mais perto do que se ouve agora vai até este instante.
+    func downbeatHere() {
+        let now = engine.currentTime
+        guard let tick = grid.nearestBarTick(now) else { return }
+        moveBeat(tick: tick, to: now)
+    }
+
+    func undo() {
+        guard canUndo, let current = tempoMap, let previous = undoStack.popLast() else { return }
+        replace(with: previous) { [self] in redoStack.append(current) } failed: { [self] in undoStack.append(previous) }
+    }
+
+    func redo() {
+        guard canRedo, let current = tempoMap, let next = redoStack.popLast() else { return }
+        replace(with: next) { [self] in undoStack.append(current) } failed: { [self] in redoStack.append(next) }
+    }
+
+    /// Um gesto por vez: o motor aplica ao mapa gravado e devolve o novo, que entra no Desfazer.
+    private func edit(_ gesture: Backend.TempoGesture) {
+        guard !saving, let before = tempoMap else { return }
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                let map = try await Backend.shared.editTempo(id, gesture)
+                undoStack.append(before)
+                redoStack.removeAll()
+                show(map)
+            } catch {
+                adjustMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func replace(with map: TempoMapDocument, done: @escaping () -> Void, failed: @escaping () -> Void) {
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                show(try await Backend.shared.putTempo(id, map))
+                done()
+            } catch {
+                failed()
+                adjustMessage = error.localizedDescription
+            }
+        }
+    }
+
+    /// O mapa novo na Fita, no relógio do compasso e na partitura (que se redesenha na escala nova).
+    private func show(_ map: TempoMapDocument) {
+        adjustMessage = nil
+        tempoMap = map
+        grid = TempoGrid(points: map.points, barTicks: grid.barTicks)
+        bridge.setTempo(map.points)
     }
 
     // MARK: - Separação

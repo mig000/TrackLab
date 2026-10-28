@@ -21,12 +21,21 @@ struct TrackLabApp: App {
                 Button("Importar do Songsterr…") { NotificationCenter.default.post(name: .importSong, object: nil) }
                     .keyboardShortcut("n")
             }
+            // A música aberta decide: o ajuste do mapa, ou o Desfazer de sempre (os campos de texto).
+            CommandGroup(replacing: .undoRedo) {
+                Button("Desfazer") { NotificationCenter.default.post(name: .undoTempo, object: nil) }
+                    .keyboardShortcut("z")
+                Button("Refazer") { NotificationCenter.default.post(name: .redoTempo, object: nil) }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
         }
     }
 }
 
 extension Notification.Name {
     static let importSong = Notification.Name("TrackLab.importSong")
+    static let undoTempo = Notification.Name("TrackLab.undoTempo")
+    static let redoTempo = Notification.Name("TrackLab.redoTempo")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -74,6 +83,14 @@ struct RootView: View {
             }
         }
         .task { await connect() }
+        // ⌘Z e ⇧⌘Z do menu Editar: o ajuste do mapa da música aberta, se houver o que desfazer; senão o Desfazer de
+        // sempre, pela cadeia de respondedores (os campos de texto).
+        .onReceive(NotificationCenter.default.publisher(for: .undoTempo)) { _ in
+            if let song, song.canUndo { song.undo() } else { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .redoTempo)) { _ in
+            if let song, song.canRedo { song.redo() } else { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .importSong)) { _ in
             if phase == .ready { importing = true }
         }

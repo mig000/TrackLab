@@ -56,6 +56,23 @@ public struct TempoGrid: Sendable, Equatable {
         return best
     }
 
+    /// A batida do mapa mais perto de `seconds`, se estiver a até `tolerance` segundos: o que um arrasto do Ajuste
+    /// pega. Nil longe de todas.
+    public func beat(near seconds: Double, within tolerance: Double) -> TempoPoint? {
+        guard !points.isEmpty else { return nil }
+        let index = Self.floorIndex(beats, seconds)
+        let candidates = [index, index + 1].filter { $0 >= 0 && $0 < points.count }.map { points[$0] }
+        guard let best = candidates.min(by: { abs($0.seconds - seconds) < abs($1.seconds - seconds) }),
+              abs(best.seconds - seconds) <= tolerance else { return nil }
+        return best
+    }
+
+    /// O início de compasso mais perto de `seconds`, em tiques: o 1 que a tecla U leva até o toque.
+    public func nearestBarTick(_ seconds: Double) -> Double? {
+        let ticks = barTicks.count >= 2 ? Array(barTicks.dropLast()) : points.filter { $0.kind != "interpolated" }.map(\.tick)
+        return ticks.min { abs(self.seconds(at: $0) - seconds) < abs(self.seconds(at: $1) - seconds) }
+    }
+
     /// Batidas por minuto em `seconds` (semínimas), pelo trecho do mapa que o contém.
     public func bpm(at seconds: Double) -> Double? {
         guard points.count >= 2 else { return nil }

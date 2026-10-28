@@ -164,6 +164,24 @@ final class Backend {
         }
     }
 
+    /// Um gesto do Ajuste: `move` leva a batida do `tick` a `seconds` como âncora (as vizinhas acompanham até 8
+    /// batidas ou até a próxima âncora); `release` solta a âncora do `tick`.
+    struct TempoGesture: Encodable {
+        let action: String
+        let tick: Double
+        let seconds: Double?
+    }
+
+    /// Aplica o gesto ao mapa gravado no pacote; o motor grava o resultado (o anterior vai para o histórico).
+    func editTempo(_ id: String, _ gesture: TempoGesture) async throws -> TempoMapDocument {
+        try await send("POST", "songs/\(id)/tempo-map/edit", body: gesture)
+    }
+
+    /// Um mapa inteiro no lugar do gravado: o Desfazer e o Refazer.
+    func putTempo(_ id: String, _ map: TempoMapDocument) async throws -> TempoMapDocument {
+        try await send("PUT", "songs/\(id)/tempo-map", body: map)
+    }
+
     /// A onda do áudio original (`stem` nil) ou de uma faixa da separação ativa; nil se não houver.
     func peaks(_ id: String, stem: String? = nil) async throws -> Peaks? {
         let query = stem.map { [URLQueryItem(name: "stem", value: $0)] } ?? []
