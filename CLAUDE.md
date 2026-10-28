@@ -37,10 +37,14 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
 
 ## Partitura (`web/`)
 `score.html` + `score.js` desenham o GP do pacote com o alphaTab (horizontal, só TAB, uma pista por vez) e não têm
-áudio: o app empurra o relógio e o mapa de tempo; segundos → tiques pelo mapa → x pelas batidas desenhadas
-(`absolutePlaybackStart`, `onNotesX`; o fim de cada compasso). O cursor fica parado a 40 % da largura e a pauta
-rola. As contas puras ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
-`tests/fixtures` (feitos pelo conversor do motor) no alphaTab do node: os tiques do alphaTab batem com os do mapa.
+áudio: o app empurra o relógio e o mapa de tempo. A TAB tem a escala da Fita (`span` segundos na largura): cada
+compasso ganha `displayWidth` = duração × px/s (descontada a clave e a fórmula, medidas num primeiro desenho de cada
+pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. O
+alphaTab de `vendor/` tem dois ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
+ocupa largura). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
+sai. As contas puras ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
+`tests/fixtures` (feitos pelo conversor do motor) no alphaTab do node: os tiques batem com os do mapa, e barras e notas
+caem no tempo.
 O conversor não escreve repetições, então os pontos do Songsterr são um por compasso escrito.
 
 ## App (`mac/`)

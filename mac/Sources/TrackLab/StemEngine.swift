@@ -150,6 +150,12 @@ final class StemEngine {
     /// O tempo da música ouvido agora, em segundos (contínuo, para desenhar).
     var currentTime: Double { songTime(atHost: CACurrentMediaTime()) }
 
+    /// Quanto falta, em segundos de relógio, para o som do play chegar à saída (a latência); zero parado.
+    var startDelay: Double {
+        guard isPlaying else { return 0 }
+        return max(0, anchorHost + latency - CACurrentMediaTime())
+    }
+
     func songTime(atHost host: Double) -> Double {
         guard isPlaying else { return anchorTime }
         return plan.songTime(after: elapsed(atHost: host, rate: rateValue))

@@ -72,13 +72,12 @@
     return piecewise(points, tick, (p) => p.tick, (p) => p.seconds);
   }
 
-  // Âncoras [tique, x] da pauta desenhada, em ordem de tique; x nunca volta. Num tique repetido (a barra de um
-  // compasso e a primeira batida dele) fica o maior x: o cursor no ataque da nota. Com `atBar`, fica o menor: o
-  // loop começa e termina nas barras.
-  function cleanAnchors(anchors, atBar) {
+  // Âncoras [tique, x] da pauta desenhada, em ordem de tique; x nunca volta. Num tique repetido (o fim de um
+  // compasso e o início do seguinte) fica o maior x: depois da clave e da fórmula, quando o seguinte as tem.
+  function cleanAnchors(anchors) {
     const sorted = anchors
       .filter((a) => Number.isFinite(a[0]) && Number.isFinite(a[1]))
-      .sort((a, b) => a[0] - b[0] || (atBar ? a[1] - b[1] : b[1] - a[1]));
+      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
     const out = [];
     for (const a of sorted) {
       const last = out[out.length - 1];
@@ -91,22 +90,7 @@
     return out;
   }
 
-  // x de um tique entre as âncoras; antes da primeira e depois da última, preso nelas.
-  function xAtTick(anchors, tick) {
-    if (!anchors.length) {
-      return 0;
-    }
-    if (tick <= anchors[0][0]) {
-      return anchors[0][1];
-    }
-    const last = anchors[anchors.length - 1];
-    if (tick >= last[0]) {
-      return last[1];
-    }
-    return piecewise(anchors, tick, (a) => a[0], (a) => a[1]);
-  }
-
-  // O tique de um x (o clique na pauta), o inverso de xAtTick.
+  // O tique de um x (o clique na pauta), o inverso de followX dentro das âncoras.
   function tickAtX(anchors, x) {
     if (!anchors.length) {
       return 0;
@@ -122,7 +106,24 @@
     return piecewise(byX, x, (a) => a[1], (a) => a[0]);
   }
 
-  // O tempo da música agora a partir do último aviso do app: parado, o próprio aviso; tocando, extrapolado na velocidade.
+  // O x de um tique na reta das âncoras, também antes da primeira e depois da última: a pauta anda desde o começo do
+  // áudio, antes do primeiro compasso, como a Fita.
+  function followX(anchors, tick) {
+    return anchors.length ? piecewise(anchors, tick, (a) => a[0], (a) => a[1]) : 0;
+  }
+
+  // Largura de cada compasso para que de um início de compasso ao seguinte a pauta ande `pxPerSecond` por segundo,
+  // como a Fita: a duração vezes a escala, mais o que vem antes das batidas deste compasso (clave, fórmula), menos o
+  // que vem antes das do seguinte. `bars`: [{seconds, pre}].
+  function barWidths(bars, pxPerSecond, minWidth) {
+    return bars.map((bar, i) => {
+      const next = i + 1 < bars.length ? bars[i + 1].pre : 0;
+      return Math.max(minWidth, bar.seconds * pxPerSecond + bar.pre - next);
+    });
+  }
+
+  // O tempo da música agora a partir do último aviso do app: parado, o próprio aviso; tocando, extrapolado na
+  // velocidade depois de `delay` segundos (o som do play ainda não saiu: a latência da saída).
   function estimate(clock, now) {
     if (!clock) {
       return 0;
@@ -130,13 +131,13 @@
     if (!clock.playing) {
       return clock.seconds;
     }
-    return clock.seconds + Math.max(0, (now - clock.at) / 1000) * clock.rate;
+    return clock.seconds + Math.max(0, (now - clock.at) / 1000 - (clock.delay || 0)) * clock.rate;
   }
 
   // Um aviso novo do app: aceito quando parado, ou quando a extrapolação já se afastou mais que `tolerance`
   // (pequenas diferenças fariam o cursor tremer).
   function nextClock(previous, update, now, tolerance) {
-    const fresh = { seconds: update.seconds, playing: update.playing, rate: update.rate, at: now };
+    const fresh = { seconds: update.seconds, playing: update.playing, rate: update.rate, delay: update.delay || 0, at: now };
     if (!previous || !previous.playing || !update.playing || previous.rate !== update.rate) {
       return fresh;
     }
@@ -147,5 +148,17 @@
     return Math.max(0, x - width * CURSOR_AT);
   }
 
-  return { CURSOR_AT, cleanPoints, secondsToTick, tickToSeconds, cleanAnchors, xAtTick, tickAtX, estimate, nextClock, scrollFor };
+  return {
+    CURSOR_AT,
+    cleanPoints,
+    secondsToTick,
+    tickToSeconds,
+    cleanAnchors,
+    tickAtX,
+    followX,
+    barWidths,
+    estimate,
+    nextClock,
+    scrollFor,
+  };
 });

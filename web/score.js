@@ -2,8 +2,12 @@
 // uma pista por vez. A página não toca nada: o app empurra o relógio (`tracklab.clock`) e o mapa de tempo
 // (`tracklab.tempo`); a página leva segundos a tiques pelo mapa e tiques a x pelas batidas desenhadas.
 //
-// Do app para a página: load({gp, track, points}), track(n), tempo(points), clock(s, playing, rate),
-// loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
+// Cada compasso tem a largura da sua duração na escala da Fita (`span` segundos na largura), as notas ficam no seu
+// tempo dentro dele (o alphaTab do projeto espaça pela duração) e as barras caem sobre as da Fita. O cursor fica
+// parado nos 40 % e a pauta corre sob ele na velocidade da Fita.
+//
+// Do app para a página: load({gp, track, points}), track(n), tempo(points), clock(s, playing, rate, delay),
+// span(segundos), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
 // Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks}, rendered {bars, ms},
 // seek {seconds}, error {message}.
 (function () {
@@ -20,6 +24,10 @@
   // Diferença entre o relógio extrapolado e um aviso do app abaixo da qual o aviso é ignorado.
   const CLOCK_TOLERANCE = 0.04;
   const FONT_TIMEOUT_MS = 8000;
+  // Espera para desenhar de novo depois de mudar a escala, o mapa ou a largura da janela.
+  const RELAYOUT_MS = 200;
+  // Um compasso nunca fica mais estreito que isto (px), por mais curto que seja.
+  const MIN_BAR_WIDTH = 24;
 
   const THEMES = {
     light: {
@@ -48,11 +56,17 @@
     scale: 1,
     points: [],
     anchors: [],
-    barAnchors: [],
+    span: 10,
+    // Medido no primeiro desenho de cada pista: quanto cada compasso tem antes das batidas (clave, fórmula).
+    before: null,
+    measuring: false,
+    layoutWidth: 0,
+    relayoutTimer: 0,
     clock: null,
     loop: null,
     renderStarted: 0,
-    lastScroll: -1,
+    scroll: 0,
+    cursorLeft: 0,
   };
 
   function post(body) {
@@ -127,14 +141,71 @@
     }, FONT_TIMEOUT_MS);
   }
 
-  function render() {
+  // A pauta começa a 40 % da largura, como a Fita começa a música sob a agulha.
+  function lead() {
+    return viewport.clientWidth * core.CURSOR_AT;
+  }
+
+  // Cada pista é desenhada duas vezes na primeira vez: a primeira mede quanto cada compasso tem antes das batidas
+  // (clave, fórmula), a segunda desconta isso das larguras. Depois (escala, mapa, largura da janela), uma só.
+  function render(second) {
     if (!state.score) {
       return;
     }
     const api = createApi();
     const track = Math.min(Math.max(0, state.track), state.score.tracks.length - 1);
-    state.renderStarted = performance.now();
+    state.measuring = !state.before;
+    sizeBars(track);
+    sheet.style.visibility = state.measuring ? "hidden" : "";
+    tabElement.style.marginLeft = lead() + "px";
+    if (!second) {
+      state.renderStarted = performance.now();
+    }
     whenFontsLoaded(api, () => api.renderScore(state.score, [track]));
+  }
+
+  function relayout() {
+    window.clearTimeout(state.relayoutTimer);
+    state.relayoutTimer = window.setTimeout(() => render(), RELAYOUT_MS);
+  }
+
+  // A duração de um compasso pelo mapa; sem mapa, a 120 por minuto.
+  function barSeconds(master) {
+    const end = master.start + master.calculateDuration();
+    if (state.points.length < 2) {
+      return (end - master.start) / 1920;
+    }
+    return core.tickToSeconds(state.points, end) - core.tickToSeconds(state.points, master.start);
+  }
+
+  // Cada compasso da pista com a largura da sua duração na escala da Fita (o alphaTab do projeto espaça as notas
+  // pelo tempo dentro dele).
+  function sizeBars(track) {
+    const masters = state.score.masterBars;
+    const width = viewport.clientWidth || 1000;
+    const before = state.before && state.before.length === masters.length ? state.before : null;
+    const bars = masters.map((master, i) => ({ seconds: barSeconds(master), pre: before ? before[i] : 0 }));
+    const widths = core.barWidths(bars, width / state.span, MIN_BAR_WIDTH);
+    for (const staff of state.score.tracks[track].staves) {
+      staff.bars.forEach((bar, i) => {
+        bar.displayWidth = widths[i] / state.scale;
+      });
+    }
+    state.layoutWidth = width;
+  }
+
+  // Quanto cada compasso tem antes das batidas: a clave e a fórmula; zero nos outros (a barra não ocupa largura).
+  function measureBefore() {
+    const before = new Array(state.score.masterBars.length).fill(0);
+    for (const system of state.api.renderer.boundsLookup.staffSystems) {
+      for (const masterBounds of system.bars) {
+        const beat = masterBounds.bars[0] && masterBounds.bars[0].beats[0];
+        if (beat) {
+          before[masterBounds.index] = Math.max(0, beat.visualBounds.x - masterBounds.realBounds.x);
+        }
+      }
+    }
+    return before;
   }
 
   function decode(base64) {
@@ -146,7 +217,8 @@
     return bytes;
   }
 
-  // Pares [tique, x] das batidas desenhadas e das barras de cada compasso (início e fim), em coordenadas de #sheet.
+  // Pares [tique, x] em coordenadas de #sheet: o início de cada compasso na barra (depois da clave e da fórmula, quando
+  // há) e o fim do último. Entre eles, uma reta: o tempo da Fita.
   function collectAnchors() {
     const lookup = state.api && state.api.renderer.boundsLookup;
     if (!lookup) {
@@ -155,32 +227,33 @@
     const surface = state.api.canvasElement.element.getBoundingClientRect();
     const page = sheet.getBoundingClientRect();
     const left = surface.left - page.left;
-    const points = [];
+    const anchors = [];
     for (const system of lookup.staffSystems) {
       for (const masterBounds of system.bars) {
         const master = state.score.masterBars[masterBounds.index];
-        if (master) {
-          const end = master.start + master.calculateDuration();
-          points.push([master.start, masterBounds.realBounds.x + left]);
-          points.push([end, masterBounds.realBounds.x + masterBounds.realBounds.w + left]);
+        if (!master) {
+          continue;
         }
-        for (const bar of masterBounds.bars) {
-          for (const beat of bar.beats) {
-            points.push([beat.beat.absolutePlaybackStart, beat.onNotesX + left]);
-          }
-        }
+        const x = masterBounds.realBounds.x + left;
+        const first = masterBounds.bars[0] && masterBounds.bars[0].beats[0];
+        anchors.push([master.start, first ? Math.max(x, first.visualBounds.x + left) : x]);
+        // O fim de um compasso cai no tique do início do seguinte, que fica (o maior x): só o do último sobra.
+        anchors.push([master.start + master.calculateDuration(), x + masterBounds.realBounds.w]);
       }
     }
-    return points;
+    return core.cleanAnchors(anchors);
   }
 
   function afterRender() {
-    const points = collectAnchors();
-    state.anchors = core.cleanAnchors(points);
-    state.barAnchors = core.cleanAnchors(points, true);
-    const width = Math.ceil(tabElement.scrollWidth);
+    if (state.measuring) {
+      state.before = measureBefore();
+      render(true);
+      return;
+    }
+    state.anchors = collectAnchors();
+    const width = Math.ceil(lead() + tabElement.scrollWidth + viewport.clientWidth * (1 - core.CURSOR_AT));
     sheet.style.width = width + "px";
-    state.lastScroll = -1;
+    sheet.style.visibility = "";
     drawLoop();
     draw(true);
     post({
@@ -191,31 +264,38 @@
     });
   }
 
-  function xAtSeconds(seconds, anchors = state.anchors) {
-    if (!state.points.length || !anchors.length) {
+  function xAtSeconds(seconds) {
+    if (!state.points.length || !state.anchors.length) {
       return null;
     }
-    return core.xAtTick(anchors, core.secondsToTick(state.points, seconds));
+    return core.followX(state.anchors, core.secondsToTick(state.points, seconds));
   }
 
-  function draw(force) {
-    const x = xAtSeconds(core.estimate(state.clock, performance.now()));
+  // O cursor fica nos 40 % e a pauta corre sob ele, na velocidade da Fita. A pauta anda por `transform` (frações de
+  // pixel, na GPU; `scrollLeft` arredonda e alterna passos de 1 e 2 px) e o cursor fica fora dela, parado na tela.
+  // `now`: a hora do quadro (requestAnimationFrame), para os passos saírem iguais.
+  function draw(force, now = performance.now()) {
+    const x = xAtSeconds(core.estimate(state.clock, now));
     if (x === null) {
       cursor.hidden = true;
       return;
     }
-    cursor.hidden = false;
-    cursor.style.left = x + "px";
     const playing = state.clock && state.clock.playing;
     const width = viewport.clientWidth;
-    const outside = x < viewport.scrollLeft || x > viewport.scrollLeft + width;
+    const outside = x < state.scroll || x > state.scroll + width;
     if (playing || force || outside) {
       const target = core.scrollFor(x, width);
-      if (Math.abs(target - state.lastScroll) >= 0.5) {
-        viewport.scrollLeft = target;
-        state.lastScroll = target;
+      if (force || Math.abs(target - state.scroll) >= 0.01) {
+        sheet.style.transform = `translate3d(${-target}px, 0, 0)`;
+        state.scroll = target;
       }
     }
+    const left = x - state.scroll;
+    if (force || cursor.hidden || Math.abs(left - state.cursorLeft) >= 0.01) {
+      cursor.style.transform = `translate3d(${left}px, 0, 0)`;
+      state.cursorLeft = left;
+    }
+    cursor.hidden = false;
   }
 
   function drawLoop() {
@@ -223,8 +303,8 @@
       loopBox.hidden = true;
       return;
     }
-    const a = xAtSeconds(state.loop[0], state.barAnchors);
-    const b = xAtSeconds(state.loop[1], state.barAnchors);
+    const a = xAtSeconds(state.loop[0]);
+    const b = xAtSeconds(state.loop[1]);
     if (a === null || b === null || b <= a) {
       loopBox.hidden = true;
       return;
@@ -234,9 +314,9 @@
     loopBox.style.width = b - a + "px";
   }
 
-  function frame() {
+  function frame(now) {
     if (state.clock && state.clock.playing) {
-      draw(false);
+      draw(false, now);
     }
     window.requestAnimationFrame(frame);
   }
@@ -251,8 +331,10 @@
   });
 
   window.addEventListener("resize", () => {
-    state.lastScroll = -1;
     draw(true);
+    if (Math.abs(viewport.clientWidth - state.layoutWidth) > 1) {
+      relayout();
+    }
   });
 
   window.tracklab = {
@@ -266,6 +348,7 @@
         return;
       }
       show("");
+      state.before = null;
       state.track = Number.isInteger(payload.track) ? payload.track : 0;
       state.points = core.cleanPoints(payload.points);
       const masters = state.score.masterBars;
@@ -284,16 +367,25 @@
         return;
       }
       state.track = index;
+      state.before = null;
       render();
     },
     tempo(points) {
       state.points = core.cleanPoints(points);
       drawLoop();
       draw(true);
+      relayout();
     },
-    clock(seconds, playing, rate) {
-      state.clock = core.nextClock(state.clock, { seconds, playing, rate }, performance.now(), CLOCK_TOLERANCE);
+    clock(seconds, playing, rate, delay) {
+      state.clock = core.nextClock(state.clock, { seconds, playing, rate, delay }, performance.now(), CLOCK_TOLERANCE);
       draw(!playing);
+    },
+    span(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0 || seconds === state.span) {
+        return;
+      }
+      state.span = seconds;
+      relayout();
     },
     loop(start, end) {
       state.loop = Number.isFinite(start) && Number.isFinite(end) && end > start ? [start, end] : null;
@@ -312,6 +404,7 @@
         return;
       }
       state.scale = Math.min(Math.max(scale, 0.5), 2);
+      state.before = null;
       render();
     },
   };

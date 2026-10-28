@@ -17,10 +17,12 @@ struct FitaView: View {
 
     var body: some View {
         // O relógio é lido direto na TimelineView e entra no Canvas: dentro de um GeometryReader a Fita não era
-        // redesenhada a cada quadro e ficava parada enquanto a música tocava.
+        // redesenhada a cada quadro e ficava parada enquanto a música tocava. O tempo é o do quadro (`context.date`),
+        // não o da hora em que a view é avaliada: os passos saem iguais.
         GeometryReader { geometry in
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: !model.engine.isPlaying)) { _ in
-                tape(width: geometry.size.width, now: model.engine.currentTime)
+            TimelineView(.animation(paused: !model.engine.isPlaying)) { context in
+                let host = CACurrentMediaTime() + context.date.timeIntervalSinceNow
+                tape(width: geometry.size.width, now: model.engine.songTime(atHost: host))
             }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
@@ -119,16 +121,20 @@ struct FitaView: View {
         context.stroke(line, with: .color(.accentColor), lineWidth: 2)
     }
 
-    /// A silhueta espelhada da onda, um ponto a cada `step` pixels.
+    /// A silhueta espelhada da onda, um ponto a cada `step` pixels. Os pontos ficam presos em instantes da música
+    /// (múltiplos de um passo de tempo), não em pixels da tela: tocando, a silhueta só desliza; amostrada nos pixels,
+    /// cada quadro pegava trechos um pouco diferentes do áudio e a onda tremia.
     private func wave(_ peaks: Peaks, start: Double, width: Double, step: Double, middle: Double, half: Double) -> Path {
+        let dt = step / max(width, 1) * span
         var top: [CGPoint] = []
-        var x = 0.0
-        while x <= width {
-            let a = start + x / width * span
-            let b = start + (x + step) / width * span
-            let amplitude = a < 0 ? 0 : Double(peaks.amplitude(from: a, to: b))
+        var k = (start / dt).rounded(.down) - 1
+        while true {
+            let a = k * dt
+            let x = (a - start) / span * width
+            let amplitude = a < 0 ? 0 : Double(peaks.amplitude(from: a, to: a + dt))
             top.append(CGPoint(x: x, y: middle - min(1, amplitude) * half))
-            x += step
+            if x > width { break }
+            k += 1
         }
         var path = Path()
         guard let first = top.first else { return path }

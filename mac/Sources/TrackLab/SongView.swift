@@ -31,7 +31,10 @@ struct SongView: View {
                     Text(message).foregroundStyle(.secondary).padding().background(.background)
                 }
             }
+            // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
+            .padding(.horizontal, 12)
             .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
+            .onChange(of: span, initial: true) { model.bridge.setSpan(span) }
             Divider()
             FitaView(model: model, span: $span)
                 .frame(minHeight: 120, maxHeight: .infinity)

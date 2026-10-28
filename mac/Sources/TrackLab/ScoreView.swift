@@ -27,6 +27,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private var points: [[String: Any]] = []
     private var loopRange: ClosedRange<Double>?
     private var theme = "light"
+    private var span = 10.0
     private var timer: Timer?
     private var observer: UUID?
 
@@ -95,14 +96,23 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.theme(name)", ["name": name])
     }
 
+    /// Os segundos que a Fita mostra na largura: a página desenha os compassos na mesma escala.
+    func setSpan(_ seconds: Double) {
+        guard seconds != span else { return }
+        span = seconds
+        call("window.tracklab.span(seconds)", ["seconds": seconds])
+    }
+
     func pushClock() {
         guard ready, let engine else { return }
-        call("window.tracklab.clock(seconds, playing, rate)",
-             ["seconds": engine.currentTime, "playing": engine.isPlaying, "rate": Double(engine.rate)])
+        call("window.tracklab.clock(seconds, playing, rate, delay)",
+             ["seconds": engine.currentTime, "playing": engine.isPlaying, "rate": Double(engine.rate),
+              "delay": engine.startDelay])
     }
 
     private func sendPending() {
         call("window.tracklab.theme(name)", ["name": theme])
+        call("window.tracklab.span(seconds)", ["seconds": span])
         if let pending { call("window.tracklab.load(payload)", ["payload": pending]) }
         sendLoop()
         pushClock()

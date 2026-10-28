@@ -56748,10 +56748,10 @@
 		_calculateSpringConstant(spring, duration, minDuration) {
 			if (duration <= 0) duration = MidiUtils.toTicks(Duration.TwoHundredFiftySixth);
 			if (spring.smallestDuration === 0) spring.smallestDuration = duration;
-			const smallestDuration = spring.smallestDuration;
 			const minDurationWidth = BarLayoutingInfo._defaultMinDurationWidth;
-			const phi = 1 + .85 * Math.log2(duration / minDuration);
-			return smallestDuration / duration * (1 / (phi * minDurationWidth));
+			// TrackLab: espaço proporcional à duração (a TAB rola sob a Fita, na escala do tempo), em vez de
+			// `phi = 1 + 0.85 log2(duração / mínima)`.
+			return minDuration / (duration * minDurationWidth);
 		}
 		spaceToForce(space) {
 			if (this.totalSpringConstant !== -1) {
@@ -58701,7 +58701,8 @@
 		doLayout() {
 			this.renderer.scoreRenderer.canvas.font = this.renderer.resources.elementFonts.get(NotationElement.BarNumber);
 			const size = this.renderer.scoreRenderer.canvas.measureText(this._number);
-			this.width = size.width;
+			// TrackLab: o número fica acima da pauta e não ocupa largura; senão empurra a primeira nota do compasso.
+			this.width = 0;
 			this.height = size.height;
 			this.y -= this.height;
 		}

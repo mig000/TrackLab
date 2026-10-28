@@ -31,7 +31,7 @@ body {
 #viewport {
   position: absolute;
   inset: 0;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -39,12 +39,15 @@ body {
   position: relative;
   min-width: 100%;
   cursor: pointer;
+  will-change: transform;
 }
 
 #cursor {
   position: absolute;
   top: 0;
   bottom: 0;
+  left: 0;
+  will-change: transform;
   width: 2px;
   margin-left: -1px;
   background: var(--cursor);
@@ -72,9 +75,4 @@ body {
   color: var(--text);
   text-align: center;
   padding: 24px;
-}
-
-/* O app rola a pauta sob o cursor; a barra de rolagem só atrapalharia. */
-#viewport::-webkit-scrollbar {
-  display: none;
 }
