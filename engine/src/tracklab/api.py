@@ -110,6 +110,21 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         found = song(song_id)
         return found.save_tempo_map(tempomap.normalize_tempo_map(document))
 
+    @app.put("/api/songs/{song_id}/status")
+    def status(song_id: str, body: dict = Body(...)) -> dict:
+        """O estado de estudo da música."""
+        return {"status": song(song_id).set_status(body.get("status"))}
+
+    @app.put("/api/songs/{song_id}/sections")
+    def sections(song_id: str, body: dict = Body(...)) -> dict:
+        """Os trechos da música (nome, from e to em tiques, meta em %), no lugar dos que estavam; o treino fica."""
+        return {"sections": song(song_id).set_sections(body.get("sections"))}
+
+    @app.post("/api/songs/{song_id}/sections/{section_id}/practice")
+    def practice(song_id: str, section_id: str, body: dict = Body(...)) -> dict:
+        """Uma passada pelo trecho (`rate` em %, `clean`): guarda a hora, o histórico e o recorde."""
+        return song(song_id).practice(section_id, body.get("rate"), bool(body.get("clean")))
+
     @app.put("/api/songs/{song_id}/checked")
     def checked(song_id: str, body: dict = Body(...)) -> dict:
         """Os compassos conferidos no Ajuste (`{"bars": [1, 2, …]}`), no lugar dos que estavam."""

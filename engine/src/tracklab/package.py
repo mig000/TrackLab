@@ -21,7 +21,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from . import home
+from . import home, repertoire
 from .errors import PackageError
 from .util import atomic_json, new_id, now_iso, read_json, slugify
 
@@ -137,6 +137,38 @@ class SongPackage:
         self.update(record)
         return clean
 
+    def set_status(self, status) -> str:
+        """O estado de estudo da música (Quero aprender, Aprendendo, Polindo, No repertório, Arquivo)."""
+        status = repertoire.check_status(status)
+        self.update(lambda data: data.__setitem__("status", status))
+        return status
+
+    def set_sections(self, sections) -> list[dict]:
+        """Os trechos como o app os mandou (nome, compassos, meta); o treino de cada um continua."""
+        merged = []
+
+        def record(data: dict) -> None:
+            merged[:] = repertoire.merge_sections(data.get("sections") or [], sections)
+            data["sections"] = merged
+
+        self.update(record)
+        return merged
+
+    def practice(self, section_id: str, rate, clean: bool) -> dict:
+        """Uma passada pelo trecho: a hora, a velocidade e se foi limpa (o recorde sobe com as limpas)."""
+        done = {}
+
+        def record(data: dict) -> None:
+            sections = data.get("sections") or []
+            index = next((k for k, s in enumerate(sections) if s.get("id") == section_id), None)
+            if index is None:
+                raise repertoire.RepertoireError(f"Trecho não encontrado: {section_id}.")
+            sections[index] = repertoire.record_practice(sections[index], rate, clean)
+            done.update(sections[index])
+
+        self.update(record)
+        return done
+
     def original_tempo_map(self) -> dict | None:
         """O mapa como veio do Songsterr: o guardado antes do primeiro ajuste, ou o atual se nunca houve ajuste."""
         for relative in (TEMPO_ORIGINAL, TEMPO_MAP):
@@ -149,7 +181,7 @@ class SongPackage:
         return {"id": data["id"], "title": data.get("title"), "artist": data.get("artist"),
                 "folder": self.path.name, "hasAudio": bool(data.get("audio")),
                 "stems": sorted(data.get("stems", {})), "activeStems": data.get("activeStems"),
-                "created": data.get("created"), "updated": data.get("updated")}
+                "created": data.get("created"), "updated": data.get("updated"), **repertoire.study_summary(data)}
 
 
 class Draft:

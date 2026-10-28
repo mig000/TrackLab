@@ -50,6 +50,22 @@ final class SongModel {
     var canUndo: Bool { !undoStack.isEmpty && !saving }
     var canRedo: Bool { !redoStack.isEmpty && !saving }
     var anchorCount: Int { grid.points.filter(\.isAnchor).count }
+    // O estudo (Fase 3): o estado da música, os trechos com meta e o treino de velocidade no trecho ativo.
+    private(set) var status: StudyStatus = .want
+    private(set) var sections: [StudySection] = []
+    private(set) var activeSectionID: String?
+    /// As seções marcadas no Guitar Pro (Intro, Verse 1…), para criar trechos de uma vez.
+    private(set) var markers: [(tick: Double, name: String)] = []
+    private(set) var streak = 0
+    private(set) var trainingMessage: String?
+    @ObservationIgnored private var trainer = SpeedTrainer()
+    /// Avisa a lista (a barra lateral e o Para hoje) quando o estado, os trechos ou o treino mudam.
+    @ObservationIgnored var onStudyChange: (() -> Void)?
+    /// O trecho a abrir quando a música carregar (vindo do Para hoje).
+    @ObservationIgnored var startSection: String?
+
+    var activeSection: StudySection? { sections.first { $0.id == activeSectionID } }
+
     /// Os compassos (a partir de 1) já conferidos no Ajuste.
     private(set) var checkedBars: Set<Int> = []
     var barCount: Int { max(0, grid.bars.count - 1) }
@@ -62,10 +78,11 @@ final class SongModel {
     init(id: String) {
         self.id = id
         bridge = ScoreBridge(engine: engine)
-        bridge.onLoaded = { [weak self] tracks, ticks in
+        bridge.onLoaded = { [weak self] tracks, ticks, markers in
             guard let self else { return }
             scoreTracks = tracks
             grid = TempoGrid(points: grid.points, barTicks: ticks)
+            self.markers = markers
         }
         bridge.onRendered = { [weak self] _, height in
             self?.scoreMessage = nil
@@ -90,6 +107,8 @@ final class SongModel {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
             checkedBars = Set(detail.checkedBars)
+            status = detail.status
+            sections = detail.sections
             if let map = try await Backend.shared.tempoMap(id) {
                 tempoMap = map
                 grid = TempoGrid(points: map.points)
@@ -97,6 +116,8 @@ final class SongModel {
             try loadAudio(detail)
             loadScore(detail)
             phase = .ready
+            if let start = startSection, let section = sections.first(where: { $0.id == start }) { activate(section) }
+            startSection = nil
             await loadPeaks(detail)
         } catch {
             phase = .failed(error.localizedDescription)
@@ -186,8 +207,120 @@ final class SongModel {
     func toggleBarLoop() {
         if engine.loop != nil {
             setLoop(nil)
+            activeSectionID = nil
         } else {
             setLoop(LoopRegion.bar(containing: engine.currentTime, grid: grid))
+        }
+    }
+
+    // MARK: - Estudo
+
+    func setStatus(_ value: StudyStatus) {
+        let before = status
+        status = value
+        Task {
+            do {
+                status = try await Backend.shared.setStatus(id, value)
+                onStudyChange?()
+            } catch {
+                status = before
+                notice = error.localizedDescription
+            }
+        }
+    }
+
+    /// "+ Trecho do loop": o loop vira um trecho de estudo (nos tiques da partitura) e fica ativo.
+    func addSectionFromLoop() {
+        guard let loop = engine.loop, !grid.isEmpty else { return }
+        let from = grid.tick(at: loop.lowerBound).rounded()
+        let to = grid.tick(at: loop.upperBound).rounded()
+        save(sections + [StudySection(name: "Trecho \(sections.count + 1)", from: from, to: to)], select: (from, to))
+    }
+
+    /// Um trecho por seção marcada no Guitar Pro, de uma seção até a seguinte (a última até o fim).
+    func addSectionsFromMarkers() {
+        guard let end = grid.barTicks.last else { return }
+        var made: [StudySection] = []
+        for (index, marker) in markers.enumerated() {
+            let to = index + 1 < markers.count ? markers[index + 1].tick : end
+            if to > marker.tick { made.append(StudySection(name: marker.name, from: marker.tick, to: to)) }
+        }
+        save(sections + made)
+    }
+
+    func rename(_ section: StudySection, to name: String) {
+        let clean = name.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { return }
+        save(sections.map { $0.id == section.id ? StudySection(id: $0.id, name: clean, from: $0.from, to: $0.to, goal: $0.goal) : $0 })
+    }
+
+    func setGoal(_ section: StudySection, _ goal: Int) {
+        save(sections.map { $0.id == section.id ? StudySection(id: $0.id, name: $0.name, from: $0.from, to: $0.to, goal: goal) : $0 })
+    }
+
+    func delete(_ section: StudySection) {
+        if activeSectionID == section.id { deactivateSection() }
+        save(sections.filter { $0.id != section.id })
+    }
+
+    private func save(_ list: [StudySection], select range: (Double, Double)? = nil) {
+        Task {
+            do {
+                sections = try await Backend.shared.putSections(id, list)
+                if let range, let made = sections.first(where: { $0.from == range.0 && $0.to == range.1 }) { activate(made) }
+                onStudyChange?()
+            } catch {
+                notice = error.localizedDescription
+            }
+        }
+    }
+
+    /// Um trecho ativo: o loop nos compassos dele, a música no começo e a velocidade no recorde (ou 70 %).
+    func activate(_ section: StudySection) {
+        guard !grid.isEmpty else { return }
+        activeSectionID = section.id
+        let range = grid.seconds(at: section.from)...grid.seconds(at: section.to)
+        setLoop(range)
+        if !engine.isPlaying { engine.seek(to: range.lowerBound) }
+        engine.rate = Float(section.startRate) / 100
+        trainer.reset()
+        streak = 0
+        trainingMessage = nil
+    }
+
+    func deactivateSection() {
+        activeSectionID = nil
+        setLoop(nil)
+        trainingMessage = nil
+        streak = 0
+    }
+
+    /// Limpo! (⏎): uma passada sem erro na velocidade de agora. Três seguidas sobem 5 %, até a meta; o recorde fica
+    /// no pacote.
+    func markClean() {
+        guard let section = activeSection, let sectionID = section.id else { return }
+        let rate = Int((engine.rate * 100).rounded())
+        let next = trainer.clean(rate: rate, goal: section.goal)
+        streak = trainer.streak
+        if let next {
+            engine.rate = Float(next) / 100
+            trainingMessage = "Três limpos a \(rate) %: agora \(next) %"
+        } else if rate >= section.goal {
+            trainingMessage = "Limpo na meta (\(rate) %)"
+        } else {
+            trainingMessage = "Limpo \(streak) de \(SpeedTrainer.streakToRise) a \(rate) %"
+        }
+        Task {
+            do {
+                let saved = try await Backend.shared.practice(id, section: sectionID, rate: rate, clean: true)
+                if let index = sections.firstIndex(where: { $0.id == sectionID }) {
+                    sections[index].best = saved.best
+                    sections[index].practiced = saved.practiced
+                }
+                onStudyChange?()
+            } catch {
+                trainingMessage = error.localizedDescription
+            }
         }
     }
 
@@ -251,6 +384,8 @@ final class SongModel {
 
     /// Metade e Dobro: menos ou mais batidas no mapa, sem mudar o tempo (o passo do arrasto e do Bater junto).
     func halveBeats() { edit(.init(action: "half")) }
+    /// Atraso do vídeo: o mapa inteiro `seconds` para frente (positivo) ou para trás.
+    func shiftAll(by seconds: Double) { edit(.init(action: "offset", seconds: seconds)) }
     func doubleBeats() { edit(.init(action: "double")) }
 
     /// Os compassos do trecho a conferir: os do loop, ou o que está tocando.

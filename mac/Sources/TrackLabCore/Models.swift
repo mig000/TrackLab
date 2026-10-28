@@ -3,7 +3,7 @@ import Foundation
 // O que o motor responde (engine/src/tracklab/api.py). Campos que o app não usa ficam de fora: o decodificador os
 // ignora, e o motor pode crescer sem quebrar o app.
 
-/// Uma música do repertório, como a lista a mostra (`GET /api/songs`).
+/// Uma música do repertório, como a lista e o Para hoje a mostram (`GET /api/songs`).
 public struct SongSummary: Codable, Identifiable, Hashable, Sendable {
     public let id: String
     public let title: String?
@@ -13,9 +13,18 @@ public struct SongSummary: Codable, Identifiable, Hashable, Sendable {
     public let stems: [String]
     public let activeStems: String?
     public let updated: String?
+    public let status: StudyStatus
+    public let sections: [StudySection]
+    /// A afinação da pista de guitarra (MIDI, da corda mais aguda à mais grave).
+    public let tuning: [Int]?
+    public let measures: Int?
+    /// Compassos conferidos no Ajuste e avisos da importação.
+    public let checked: Int
+    public let warnings: Int
 
     public init(id: String, title: String?, artist: String?, folder: String, hasAudio: Bool, stems: [String],
-                activeStems: String?, updated: String?) {
+                activeStems: String?, updated: String?, status: StudyStatus = .want, sections: [StudySection] = [],
+                tuning: [Int]? = nil, measures: Int? = nil, checked: Int = 0, warnings: Int = 0) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -24,9 +33,41 @@ public struct SongSummary: Codable, Identifiable, Hashable, Sendable {
         self.stems = stems
         self.activeStems = activeStems
         self.updated = updated
+        self.status = status
+        self.sections = sections
+        self.tuning = tuning
+        self.measures = measures
+        self.checked = checked
+        self.warnings = warnings
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, artist, folder, hasAudio, stems, activeStems, updated, status, sections, tuning, measures,
+             checked, warnings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        artist = try c.decodeIfPresent(String.self, forKey: .artist)
+        folder = try c.decode(String.self, forKey: .folder)
+        hasAudio = try c.decodeIfPresent(Bool.self, forKey: .hasAudio) ?? false
+        stems = try c.decodeIfPresent([String].self, forKey: .stems) ?? []
+        activeStems = try c.decodeIfPresent(String.self, forKey: .activeStems)
+        updated = try c.decodeIfPresent(String.self, forKey: .updated)
+        status = StudyStatus(text: try c.decodeIfPresent(String.self, forKey: .status))
+        sections = try c.decodeIfPresent([StudySection].self, forKey: .sections) ?? []
+        tuning = try c.decodeIfPresent([Int].self, forKey: .tuning)
+        measures = try c.decodeIfPresent(Int.self, forKey: .measures)
+        checked = try c.decodeIfPresent(Int.self, forKey: .checked) ?? 0
+        warnings = try c.decodeIfPresent(Int.self, forKey: .warnings) ?? 0
     }
 
     public var displayTitle: String { title?.isEmpty == false ? title! : folder }
+    public var tuningName: String { Tuning.name(tuning) }
+    /// Ainda falta conferir a sincronização: há aviso da importação ou compassos não conferidos.
+    public var needsSync: Bool { warnings > 0 || (measures.map { checked < $0 } ?? false) }
 }
 
 public struct ScoreTrack: Codable, Hashable, Sendable {
@@ -99,10 +140,12 @@ public struct SongDetail: Codable, Hashable, Sendable {
     public let warnings: [String]
     /// Os compassos (a partir de 1) conferidos no Ajuste.
     public let checkedBars: [Int]
+    public let status: StudyStatus
+    public let sections: [StudySection]
 
     public init(id: String, title: String?, artist: String?, folder: String, score: ScoreEntry?, audio: AudioEntry?,
                 tempoMap: TempoEntry?, stems: [String: StemSet], activeStems: String?, warnings: [String],
-                checkedBars: [Int] = []) {
+                checkedBars: [Int] = [], status: StudyStatus = .want, sections: [StudySection] = []) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -114,10 +157,13 @@ public struct SongDetail: Codable, Hashable, Sendable {
         self.activeStems = activeStems
         self.warnings = warnings
         self.checkedBars = checkedBars
+        self.status = status
+        self.sections = sections
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings, checkedBars
+        case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings, checkedBars, status,
+             sections
     }
 
     public init(from decoder: Decoder) throws {
@@ -133,6 +179,8 @@ public struct SongDetail: Codable, Hashable, Sendable {
         activeStems = try c.decodeIfPresent(String.self, forKey: .activeStems)
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
         checkedBars = try c.decodeIfPresent([Int].self, forKey: .checkedBars) ?? []
+        status = StudyStatus(text: try c.decodeIfPresent(String.self, forKey: .status))
+        sections = try c.decodeIfPresent([StudySection].self, forKey: .sections) ?? []
     }
 
     /// A separação ativa, se houver.

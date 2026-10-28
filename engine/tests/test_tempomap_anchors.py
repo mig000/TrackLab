@@ -3,7 +3,7 @@
 import pytest
 
 from tracklab.tempomap import (RhythmError, anchor_edit, double_beats, halve_beats, map_of, move_anchor,
-                               release_anchor, tap_beats)
+                               release_anchor, shift_all, tap_beats)
 
 
 def grid(seconds: list[float], anchors: tuple[int, ...] = ()) -> dict:
@@ -91,3 +91,12 @@ def test_double_and_half_change_the_beats_not_the_time():
     anchored = move_anchor(bars, 960, 0.55)
     assert 960 in [p["tick"] for p in halve_beats(anchored)["points"]]
     assert anchor_edit({"tempoMap": bars, "action": "double"}) == doubled
+
+
+def test_the_video_delay_moves_the_whole_map_anchors_included():
+    before = grid([0.5 * k for k in range(8)], anchors=(3,))
+    after = anchor_edit({"tempoMap": before, "action": "offset", "seconds": -0.04})
+    assert times(after) == [round(0.5 * k - 0.04, 6) for k in range(8)]
+    assert [p["kind"] for p in after["points"]] == [p["kind"] for p in before["points"]]
+    with pytest.raises(RhythmError, match="atraso"):
+        shift_all(before, 5)

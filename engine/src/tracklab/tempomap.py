@@ -269,14 +269,29 @@ def halve_beats(tempo_map: dict) -> dict:
     return normalize_tempo_map(dict(clean, points=kept))
 
 
+MAX_OFFSET = 2.0  # o atraso do vídeo é de milissegundos; mais que isso é engano
+
+
+def shift_all(tempo_map: dict, seconds: float) -> dict:
+    """Atraso do vídeo: o mapa inteiro, âncoras incluídas, `seconds` para frente (ou para trás, negativo)."""
+    if not _number(seconds) or abs(seconds) > MAX_OFFSET:
+        raise RhythmError(f"O atraso é de até {MAX_OFFSET:g} s para cada lado.")
+    clean = normalize_tempo_map(tempo_map)
+    points = [dict(p, seconds=p["seconds"] + seconds) for p in clean["points"]]
+    return normalize_tempo_map(dict(clean, points=points))
+
+
 def anchor_edit(raw: dict) -> dict:
     """Um gesto da régua sobre o mapa enviado pelo app (que guarda o mapa e o Desfazer): `move` leva a batida do
     `tick` a `seconds` como âncora, puxando o lado sem âncora até `reach` batidas (padrão 8), ou o resto inteiro com
     `pull`; `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`);
-    `half` e `double` mudam a densidade das batidas. Sem `tempoMap`, parte da reta da régua (`ruler`)."""
+    `half` e `double` mudam a densidade das batidas; `offset` desloca o mapa inteiro `seconds` (o atraso do vídeo).
+    Sem `tempoMap`, parte da reta da régua (`ruler`)."""
     if not isinstance(raw, dict):
         raise RhythmError("Envie o gesto como um objeto com tempoMap, tick e seconds.")
     tempo_map = map_from(raw)
+    if raw.get("action") == "offset":
+        return shift_all(tempo_map, raw.get("seconds"))
     if raw.get("action") == "half":
         return halve_beats(tempo_map)
     if raw.get("action") == "double":
@@ -291,7 +306,7 @@ def anchor_edit(raw: dict) -> dict:
     if raw.get("action", "move") == "release":
         return release_anchor(tempo_map, tick)
     if raw.get("action", "move") != "move":
-        raise RhythmError("O gesto é move, release, tap, half ou double.")
+        raise RhythmError("O gesto é move, release, tap, half, double ou offset.")
     if not _number(raw.get("seconds")):
         raise RhythmError("Para mover a batida, envie o segundo (seconds) em que ela cai.")
     reach = None

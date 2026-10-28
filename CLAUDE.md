@@ -29,6 +29,10 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   `interpolated`), `tap_beats` (Bater junto: um toque por batida a partir da mais perto do primeiro; as pontas viram
   âncoras, as de dentro ficam nos toques) e `halve_beats` / `double_beats` (Metade e Dobro: a densidade das batidas,
   sem mudar o tempo; âncoras e pontos ouvidos ficam).
+- `repertoire.py` (Fase 3): no manifesto, `status` (want / learning / polishing / repertoire / archived) e `sections`
+  (nome, from e to em tiques, meta e recorde em %, última vez, histórico); `PUT songs/{id}/status`,
+  `PUT songs/{id}/sections` (o treino de cada trecho continua pelo id) e `POST songs/{id}/sections/{sid}/practice`.
+  O resumo de `GET songs` traz estado, trechos, afinação da guitarra, compassos e conferidos.
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
@@ -72,7 +76,14 @@ mesmo deslocamento (o som que ficou sob a linha é o daquela posição da TAB); 
 compassos do loop (ou o que toca), com faixa verde na Fita; ⌘Z / ⇧⌘Z pelo menu Editar (sem ajuste a desfazer, vão
 para a cadeia de respondedores). Dois dedos ou a roda do mouse sobre a TAB ou a Fita andam pela música na escala da
 tela e pausam (`ScrollCatcher`: um monitor local de rolagem, sem pegar cliques). TrackLabCore (modelos, `TempoGrid`,
-`mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
+`mixGains`, `MixPreset`, `PlaybackPlan`, e o estudo em `Study.swift`: estados, afinações com nome, `SpeedTrainer` e
+`TodayPlan`) tem os testes.
+
+Repertório (Fase 3): o app abre no Para hoje (`TodayView`: trechos perto da meta, esquecidos há 3 dias, sem recorde;
+revisão do repertório a cada 7; músicas novas já conferidas). A barra lateral agrupa por estado, com busca e coleções
+(sincronização a conferir, afinação). Na música: o estado no cabeçalho, os trechos acima da TAB (do loop, ou das seções
+do Guitar Pro), um clique liga o loop do trecho no recorde (ou 70 %); Limpo! (⏎) conta três seguidos e sobe 5 % até a
+meta. Ainda não: busca FTS5 e o índice de multitracks do BackingLab.
 
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.

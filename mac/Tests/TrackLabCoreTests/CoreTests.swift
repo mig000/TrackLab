@@ -129,3 +129,78 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(song.score?.tracks.first(where: \.isGuitar)?.index == 1)
     #expect(song.url("audio/source.flac").path == "/tmp/x.tracklab/audio/source.flac")
 }
+
+
+// MARK: - Repertório
+
+@Test func nomesDasAfinacoes() {
+    #expect(Tuning.name([64, 59, 55, 50, 45, 40]) == "Padrão")
+    #expect(Tuning.name([63, 58, 54, 49, 44, 39]) == "Mi bemol")
+    #expect(Tuning.name([64, 59, 55, 50, 45, 38]) == "Drop D")
+    #expect(Tuning.name([63, 58, 54, 49, 44, 37]) == "Drop C#")
+    #expect(Tuning.name([62, 57, 55, 50, 45, 38]) == "DADGAD")
+    #expect(Tuning.name([43, 38, 33, 28]) == "E A D G")
+    #expect(Tuning.name(nil) == "Sem afinação")
+}
+
+@Test func tresLimposSobemCincoPorCento() {
+    var trainer = SpeedTrainer()
+    #expect(trainer.clean(rate: 80, goal: 100) == nil)
+    #expect(trainer.clean(rate: 80, goal: 100) == nil)
+    #expect(trainer.clean(rate: 80, goal: 100) == 85)
+    // Mudar a velocidade à mão recomeça a contagem.
+    #expect(trainer.clean(rate: 90, goal: 100) == nil)
+    #expect(trainer.streak == 1)
+    trainer.reset()
+    for _ in 0..<2 { _ = trainer.clean(rate: 98, goal: 100) }
+    #expect(trainer.clean(rate: 98, goal: 100) == 100)
+    // Na meta, não sobe mais.
+    for _ in 0..<2 { _ = trainer.clean(rate: 100, goal: 100) }
+    #expect(trainer.clean(rate: 100, goal: 100) == nil)
+}
+
+@Test func paraHoje() throws {
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-10-28T12:00:00Z"))
+    func section(_ name: String, best: Int?, goal: Int = 100, daysAgo: Int?) -> StudySection {
+        let practiced = daysAgo.map { ISO8601DateFormatter().string(from: now.addingTimeInterval(-Double($0) * 86400)) }
+        return StudySection(id: name, name: name, from: 0, to: 1920, goal: goal, best: best, practiced: practiced)
+    }
+    let songs = [
+        SongSummary(id: "a", title: "Sunshine", artist: "Cream", folder: "a", hasAudio: true, stems: [],
+                    activeStems: nil, updated: nil, status: .learning,
+                    sections: [section("Riff", best: 92, daysAgo: 1), section("Solo", best: 60, daysAgo: 9),
+                               section("Intro", best: nil, daysAgo: nil), section("Fim", best: 100, daysAgo: 1)]),
+        SongSummary(id: "b", title: "White Room", artist: "Cream", folder: "b", hasAudio: true, stems: [],
+                    activeStems: nil, updated: nil, status: .repertoire,
+                    sections: [section("Riff", best: 100, daysAgo: 10), section("Verso", best: 100, daysAgo: 2)]),
+        SongSummary(id: "c", title: "Rebel Rebel", artist: "Bowie", folder: "c", hasAudio: true, stems: [],
+                    activeStems: nil, updated: nil, status: .want, measures: 4, checked: 4),
+        SongSummary(id: "d", title: "Nova", artist: nil, folder: "d", hasAudio: true, stems: [], activeStems: nil,
+                    updated: nil, status: .want, measures: 4, checked: 1),
+        SongSummary(id: "e", title: "Velha", artist: nil, folder: "e", hasAudio: true, stems: [], activeStems: nil,
+                    updated: nil, status: .archived, sections: [section("x", best: 50, daysAgo: 30)]),
+    ]
+    let items = TodayPlan.items(songs, now: now)
+    #expect(items.map(\.title) == ["Sunshine · Riff", "Sunshine · Solo", "Sunshine · Intro", "White Room · Riff",
+                                    "Rebel Rebel"])
+    #expect(items.map(\.reason) == ["Meta quase lá", "Sem tocar há 9 dias", "Ainda sem recorde", "Revisão: 10 dias",
+                                     "Nova, sincronização conferida"])
+    #expect(songs[3].needsSync && !songs[2].needsSync)
+}
+
+@Test func resumoDoRepertorio() throws {
+    let json = """
+    {"id": "song-1", "title": "White Room", "artist": "Cream", "folder": "x.tracklab", "hasAudio": true,
+     "stems": ["demucs6s-1"], "activeStems": "demucs6s-1", "status": "polishing", "tuning": [64, 59, 55, 50, 45, 40],
+     "sections": [{"id": "sec-1", "name": "Riff", "from": 0, "to": 3840, "goal": 100, "best": 85,
+                   "practiced": "2026-10-28T20:00:00.123456+00:00"}],
+     "measures": 131, "checked": 3, "warnings": 1}
+    """
+    let song = try JSONDecoder().decode(SongSummary.self, from: Data(json.utf8))
+    #expect(song.status == .polishing && song.tuningName == "Padrão" && song.needsSync)
+    #expect(song.sections.first?.startRate == 85)
+    let now = try #require(ISO8601DateFormatter().date(from: "2026-10-30T21:00:00Z"))
+    #expect(song.sections.first?.daysSincePracticed(now: now) == 2)
+    let old = try JSONDecoder().decode(SongSummary.self, from: Data(#"{"id": "s", "folder": "f"}"#.utf8))
+    #expect(old.status == .want && old.sections.isEmpty && !old.hasAudio)
+}

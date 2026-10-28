@@ -11,7 +11,8 @@
 //
 // Do app para a página: load({gp, track, points}), track(n), tempo(points), clock(s, playing, rate, delay),
 // span(segundos), adjusting(sim), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
-// Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks}, rendered {bars, ms},
+// Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks, sections},
+// rendered {bars, ms},
 // seek {seconds}, shift {seconds} (quanto a onda andou no arrasto com ⇧), shiftEnd {seconds} (o total, ao soltar),
 // error {message}.
 (function () {
@@ -411,6 +412,10 @@
         // Início de cada compasso em tiques, mais o fim do último: a Fita desenha os compassos por eles.
         barTicks: masters.map((m) => m.start).concat(last ? [last.start + last.calculateDuration()] : []),
         tracks: state.score.tracks.map((track, index) => ({ index, name: track.name || "Faixa " + (index + 1) })),
+        // As seções marcadas no Guitar Pro (Intro, Verse 1…): o app faz trechos de estudo com elas.
+        sections: masters
+          .filter((m) => m.section && (m.section.text || m.section.marker))
+          .map((m) => ({ tick: m.start, name: m.section.text || m.section.marker })),
       });
       render();
     },

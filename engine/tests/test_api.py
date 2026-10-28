@@ -127,3 +127,19 @@ def test_checked_bars_are_kept_in_the_manifest(client):
     assert client.put(f"/api/songs/{song_id}/checked", json={"bars": [3, 1, 3, 0, "x", 2]}).json() == {"bars": [1, 2, 3]}
     assert client.get(f"/api/songs/{song_id}").json()["checkedBars"] == [1, 2, 3]
     assert client.put(f"/api/songs/{song_id}/checked", json={}).status_code == 400
+
+
+def test_status_sections_and_practice_through_the_api(client):
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    assert client.put(f"/api/songs/{song_id}/status", json={"status": "learning"}).json() == {"status": "learning"}
+    assert client.put(f"/api/songs/{song_id}/status", json={"status": "x"}).status_code == 400
+    sections = client.put(f"/api/songs/{song_id}/sections",
+                          json={"sections": [{"name": "Riff", "from": 0, "to": 3840}]}).json()["sections"]
+    done = client.post(f"/api/songs/{song_id}/sections/{sections[0]['id']}/practice",
+                       json={"rate": 90, "clean": True}).json()
+    assert done["best"] == 90
+    listed = client.get("/api/songs").json()["songs"][0]
+    assert listed["status"] == "learning" and listed["sections"][0]["best"] == 90
+    assert client.post(f"/api/songs/{song_id}/sections/sec-nada/practice", json={"rate": 90}).status_code == 400

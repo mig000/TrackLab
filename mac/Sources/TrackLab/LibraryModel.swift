@@ -2,10 +2,28 @@ import Foundation
 import Observation
 import TrackLabCore
 
-/// O repertório (as músicas do motor) e as importações do Songsterr em curso.
+/// O repertório (as músicas do motor, por estado, com busca e coleções), o Para hoje e as importações em curso.
 @Observable
 @MainActor
 final class LibraryModel {
+    /// A seleção da barra lateral que mostra o Para hoje em vez de uma música.
+    static let today = "today"
+
+    /// As coleções da barra lateral: todas, as que falta conferir a sincronização, uma afinação.
+    enum Collection: Hashable {
+        case all
+        case needsSync
+        case tuning(String)
+
+        var label: String {
+            switch self {
+            case .all: "Todas"
+            case .needsSync: "Sincronização a conferir"
+            case let .tuning(name): name
+            }
+        }
+    }
+
     struct Importing: Identifiable, Equatable {
         let id: String
         var title: String
@@ -19,6 +37,41 @@ final class LibraryModel {
     private(set) var loadError: String?
     private(set) var imports: [Importing] = []
     var selection: String?
+    var search = ""
+    var collection = Collection.all
+    /// O trecho a abrir na próxima música selecionada (um item do Para hoje).
+    var pendingSection: String?
+
+    var today: [TodayItem] { TodayPlan.items(songs) }
+
+    var collections: [Collection] {
+        [.all, .needsSync] + Set(songs.map(\.tuningName)).sorted().map { .tuning($0) }
+    }
+
+    /// As músicas da coleção e da busca (título, artista, afinação, trecho), por estado.
+    var grouped: [(status: StudyStatus, songs: [SongSummary])] {
+        let words = search.lowercased().split(separator: " ").map(String.init)
+        let shown = songs.filter { song in
+            switch collection {
+            case .all: break
+            case .needsSync: if !song.needsSync { return false }
+            case let .tuning(name): if song.tuningName != name { return false }
+            }
+            let text = ([song.displayTitle, song.artist ?? "", song.tuningName, song.status.label] + song.sections.map(\.name))
+                .joined(separator: " ").lowercased()
+            return words.allSatisfy(text.contains)
+        }
+        return StudyStatus.allCases.compactMap { status in
+            let list = shown.filter { $0.status == status }
+            return list.isEmpty ? nil : (status, list)
+        }
+    }
+
+    /// Abre a música de um item do Para hoje, já no trecho dele.
+    func open(_ item: TodayItem) {
+        pendingSection = item.sectionID
+        selection = item.songID
+    }
 
     func refresh() async {
         do {

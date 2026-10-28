@@ -178,6 +178,27 @@ final class Backend {
         try await send("POST", "songs/\(id)/tempo-map/edit", body: gesture)
     }
 
+    // MARK: - Repertório
+
+    func setStatus(_ id: String, _ status: StudyStatus) async throws -> StudyStatus {
+        struct Body: Codable { let status: String }
+        let saved: Body = try await send("PUT", "songs/\(id)/status", body: Body(status: status.rawValue))
+        return StudyStatus(text: saved.status)
+    }
+
+    /// Os trechos (nome, compassos, meta) no lugar dos que estavam; o motor mantém o treino de cada um.
+    func putSections(_ id: String, _ sections: [StudySection]) async throws -> [StudySection] {
+        struct Body: Codable { let sections: [StudySection] }
+        let saved: Body = try await send("PUT", "songs/\(id)/sections", body: Body(sections: sections))
+        return saved.sections
+    }
+
+    /// Uma passada pelo trecho na velocidade `rate` (%), limpa ou não; devolve o trecho com o recorde.
+    func practice(_ id: String, section: String, rate: Int, clean: Bool) async throws -> StudySection {
+        struct Body: Encodable { let rate: Int; let clean: Bool }
+        return try await send("POST", "songs/\(id)/sections/\(section)/practice", body: Body(rate: rate, clean: clean))
+    }
+
     /// Os compassos conferidos no Ajuste, no lugar dos que estavam; devolve os gravados.
     func putChecked(_ id: String, bars: [Int]) async throws -> [Int] {
         struct Body: Codable { let bars: [Int] }

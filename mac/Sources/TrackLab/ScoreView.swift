@@ -19,7 +19,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
 
     let webView: WKWebView
     private weak var engine: StemEngine?
-    var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double]) -> Void)?
+    /// A partitura lida: as pistas, o início de cada compasso (e o fim do último) e as seções marcadas no Guitar Pro.
+    var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double], _ markers: [(tick: Double, name: String)]) -> Void)?
     var onRendered: ((_ ms: Int, _ height: Double?) -> Void)?
     var onError: ((String) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -189,7 +190,12 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                     return PageTrack(index: index, name: item["name"] as? String ?? "Faixa \(index + 1)")
                 }
                 let ticks = (body["barTicks"] as? [NSNumber] ?? []).map(\.doubleValue)
-                onLoaded?(list, ticks)
+                let markers = (body["sections"] as? [[String: Any]] ?? []).compactMap { item -> (tick: Double, name: String)? in
+                    guard let tick = (item["tick"] as? NSNumber)?.doubleValue, let name = item["name"] as? String,
+                          !name.isEmpty else { return nil }
+                    return (tick, name)
+                }
+                onLoaded?(list, ticks, markers)
             case "rendered":
                 onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
             case "shift":

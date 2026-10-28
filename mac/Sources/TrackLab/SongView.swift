@@ -25,6 +25,9 @@ struct SongView: View {
     private var study: some View {
         VStack(spacing: 0) {
             header
+            SectionsBar(model: model)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
             ZStack {
                 ScoreView(bridge: model.bridge)
                 if let message = model.scoreMessage {
@@ -79,6 +82,12 @@ struct SongView: View {
                 }
             }
             Spacer()
+            Picker("Estado", selection: Binding(get: { model.status }, set: { model.setStatus($0) })) {
+                ForEach(StudyStatus.flow) { status in Text(status.label).tag(status) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("O estado de estudo da música: a barra lateral e o Para hoje se organizam por ele")
             Button {
                 model.adjusting.toggle()
             } label: {
@@ -97,6 +106,69 @@ struct SongView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+}
+
+/// Os trechos de estudo da música, acima da TAB: um clique liga o loop do trecho na velocidade do recorde; o menu
+/// renomeia, muda a meta ou apaga. "+ Trecho do loop" guarda o loop de agora; sem trechos, as seções do Guitar Pro.
+struct SectionsBar: View {
+    let model: SongModel
+    @Local private var renaming: StudySection?
+    @Local private var newName = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.sections, id: \.id) { section in chip(section) }
+                }
+            }
+            if model.sections.isEmpty && !model.markers.isEmpty {
+                Button("Trechos das seções da TAB") { model.addSectionsFromMarkers() }
+                    .help(model.markers.map(\.name).joined(separator: " · "))
+            }
+            Button { model.addSectionFromLoop() } label: { Label("Trecho do loop", systemImage: "plus") }
+                .disabled(model.engine.loop == nil)
+                .help("Guarda o loop de agora como um trecho de estudo (marque o loop arrastando na Fita ou com L)")
+        }
+        .buttonStyle(.borderless)
+        .alert("Renomear trecho", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Nome", text: $newName)
+            Button("Renomear") { if let renaming { model.rename(renaming, to: newName) } }
+            Button("Cancelar", role: .cancel) {}
+        }
+    }
+
+    private func chip(_ section: StudySection) -> some View {
+        let active = model.activeSectionID == section.id
+        return Button {
+            if active { model.deactivateSection() } else { model.activate(section) }
+        } label: {
+            HStack(spacing: 6) {
+                Text(section.name).fontWeight(.semibold)
+                Text("\(section.best.map(String.init) ?? "–") → \(section.goal) %")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(active ? Color.primary : Color.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 6).fill(active ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(active ? Color.accentColor : Color.clear))
+        }
+        .help("Clique: loop do trecho a \(section.startRate) %. Menu: renomear, meta, apagar.")
+        .contextMenu {
+            Button("Renomear…") {
+                newName = section.name
+                renaming = section
+            }
+            Menu("Meta") {
+                ForEach([80, 90, 100, 110, 120], id: \.self) { goal in
+                    Button("\(goal) %\(goal == section.goal ? " ✓" : "")") { model.setGoal(section, goal) }
+                }
+            }
+            Divider()
+            Button("Apagar", role: .destructive) { model.delete(section) }
+        }
     }
 }
 
@@ -128,6 +200,11 @@ struct AdjustBar: View {
                 .help("Metade das batidas no mapa (o tempo não muda): o arrasto e o Bater junto vão de duas em duas")
             Button("Dobro") { model.doubleBeats() }
                 .help("O dobro de batidas no mapa (o tempo não muda): uma no meio de cada uma")
+            HStack(spacing: 4) {
+                Button("−10 ms") { model.shiftAll(by: -0.01) }
+                Button("+10 ms") { model.shiftAll(by: 0.01) }
+            }
+            .help("Atraso do vídeo: a TAB e a grade inteiras 10 ms antes ou depois do som")
             Button { model.undo() } label: { Label("Desfazer", systemImage: "arrow.uturn.backward") }
                 .disabled(!model.canUndo)
                 .help("⌘Z")
@@ -208,14 +285,29 @@ struct TransportBar: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.orange)
             }
+            if let section = model.activeSection {
+                Divider().frame(height: 18)
+                Button { model.markClean() } label: { Label("Limpo!", systemImage: "checkmark.seal") }
+                    .keyboardShortcut(.return, modifiers: [])
+                    .help("⏎: tocou o trecho sem errar nesta velocidade. Três seguidos sobem 5 %, até a meta.")
+                HStack(spacing: 3) {
+                    ForEach(0..<SpeedTrainer.streakToRise, id: \.self) { index in
+                        Circle().fill(index < model.streak ? Color.green : Color.secondary.opacity(0.3)).frame(width: 7, height: 7)
+                    }
+                }
+                Text(model.trainingMessage ?? "recorde \(section.best.map { "\($0) %" } ?? "–") · meta \(section.goal) %")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(model.trainingMessage == nil ? Color.secondary : Color.green)
+                    .lineLimit(1)
+            }
             Spacer()
             Stepper(value: Binding(get: { Double(engine.rate) }, set: { engine.rate = Float($0) }),
                     in: Double(StemEngine.rates.lowerBound)...Double(StemEngine.rates.upperBound),
                     step: Double(StemEngine.rateStep)) {
-                Text("Velocidade \(Int((engine.rate * 100).rounded())) %").monospacedDigit()
+                Text("Velocidade \(Int((engine.rate * 100).rounded())) %").monospacedDigit().fixedSize()
             }
             Stepper(value: Binding(get: { engine.semitones }, set: { engine.semitones = $0 }), in: StemEngine.semitones) {
-                Text("Tom \(engine.semitones > 0 ? "+" : "")\(engine.semitones)").monospacedDigit()
+                Text("Tom \(engine.semitones > 0 ? "+" : "")\(engine.semitones)").monospacedDigit().fixedSize()
             }
             Stepper(value: $span, in: FitaView.spans, step: 2) {
                 Image(systemName: "waveform").help("Quantos segundos a Fita mostra")

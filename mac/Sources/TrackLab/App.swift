@@ -102,7 +102,9 @@ struct RootView: View {
             Sidebar(library: library, importing: $importing)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            if let song {
+            if library.selection == LibraryModel.today {
+                TodayView(library: library, importing: $importing)
+            } else if let song {
                 SongView(model: song).id(song.id)
             } else {
                 VStack(spacing: 10) {
@@ -122,6 +124,8 @@ struct RootView: View {
         do {
             try await Backend.shared.connect()
             await library.refresh()
+            // O app abre no que tocar hoje.
+            if library.selection == nil { library.selection = LibraryModel.today }
             phase = .ready
         } catch {
             phase = .failed(error.localizedDescription)
@@ -129,11 +133,19 @@ struct RootView: View {
     }
 
     private func open(_ id: String?) {
-        guard id != song?.id else { return }
+        let section = library.pendingSection
+        library.pendingSection = nil
+        if let song, id == song.id {
+            if let section, let found = song.sections.first(where: { $0.id == section }) { song.activate(found) }
+            return
+        }
         song?.close()
         song = nil
-        guard let id else { return }
+        guard let id, id != LibraryModel.today else { return }
         let model = SongModel(id: id)
+        model.startSection = section
+        let library = library
+        model.onStudyChange = { Task { await library.refresh() } }
         song = model
         Task { await model.load() }
     }
@@ -146,37 +158,58 @@ private struct Sidebar: View {
     var body: some View {
         VStack(spacing: 0) {
             List(selection: Binding(get: { library.selection }, set: { library.selection = $0 })) {
+                Label("Para hoje", systemImage: "sun.max")
+                    .badge(library.today.count)
+                    .tag(LibraryModel.today)
                 if !library.imports.isEmpty {
                     Section("Importando") {
                         ForEach(library.imports) { item in ImportRow(library: library, item: item) }
                     }
                 }
-                Section("Repertório") {
-                    ForEach(library.songs) { song in
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(song.displayTitle).lineLimit(1)
-                            HStack(spacing: 4) {
-                                Text(song.artist ?? "").lineLimit(1)
-                                if !song.stems.isEmpty { Image(systemName: "slider.vertical.3").help("Faixas separadas") }
-                                if !song.hasAudio { Image(systemName: "speaker.slash").help("Sem áudio") }
-                            }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        }
-                        .tag(song.id)
+                ForEach(library.grouped, id: \.status) { group in
+                    Section(group.status.label) {
+                        ForEach(group.songs) { song in SongRow(song: song).tag(song.id) }
                     }
                 }
             }
+            .searchable(text: Binding(get: { library.search }, set: { library.search = $0 }), placement: .sidebar,
+                        prompt: "Título, artista, afinação, trecho")
             if let error = library.loadError {
                 Text(error).font(.caption).foregroundStyle(.red).padding(8)
             }
             Divider()
+            Picker("Coleção", selection: Binding(get: { library.collection }, set: { library.collection = $0 })) {
+                ForEach(library.collections, id: \.self) { collection in Text(collection.label).tag(collection) }
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
             Button { importing = true } label: {
                 Label("Importar do Songsterr", systemImage: "plus")
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.borderless)
             .padding(10)
+        }
+    }
+}
+
+private struct SongRow: View {
+    let song: SongSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(song.displayTitle).lineLimit(1)
+            HStack(spacing: 4) {
+                Text([song.artist, song.tuningName == "Padrão" ? nil : song.tuningName].compactMap { $0 }.joined(separator: " · "))
+                    .lineLimit(1)
+                if !song.stems.isEmpty { Image(systemName: "slider.vertical.3").help("Faixas separadas") }
+                if !song.hasAudio { Image(systemName: "speaker.slash").help("Sem áudio") }
+                if song.needsSync {
+                    Image(systemName: "metronome").help("Sincronização a conferir: \(song.checked) de \(song.measures ?? 0) compassos")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
     }
 }
