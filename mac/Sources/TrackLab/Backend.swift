@@ -29,7 +29,8 @@ final class Backend {
     private(set) var root: URL?
     private var process: Process?
     private var logURL: URL?
-    var base: URL? { root?.appending(path: "api/") }
+    // "api" como pasta: com "api/", o appending(path:) seguinte gera "api//info".
+    var base: URL? { root?.appending(path: "api", directoryHint: .isDirectory) }
 
     func connect() async throws {
         if let given = ProcessInfo.processInfo.environment["TRACKLAB_URL"], let url = URL(string: given) {

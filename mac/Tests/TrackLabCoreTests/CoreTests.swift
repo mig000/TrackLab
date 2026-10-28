@@ -79,7 +79,8 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(plan.songTime(after: 4) == 4)
     #expect(abs(plan.songTime(after: 5.5) - 5.5) < 1e-9)
     #expect(!plan.ended(after: 1000))
-    #expect(plan.length > 1000)
+    // Loop de 2 s: o limite de 400 voltas vem antes dos 20 min.
+    #expect(plan.length == 4 + Double(PlaybackPlan.maxRepeats) * 2)
 }
 
 @Test func playDepoisDoLoopTocaSolto() {
