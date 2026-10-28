@@ -1,0 +1,163 @@
+"""O pacote de uma música: uma pasta `<nome>.tracklab` que leva partitura, áudio, mapa de tempo e faixas juntos.
+
+    manifest.json          esquema, origem, hashes e o que existe dentro
+    score/original.gp      a partitura como veio do Songsterr (sem áudio embutido)
+    score/tempo-map.json   tique ↔ segundo, o contrato do TabLab; os ajustes manuais mudam só este arquivo
+    audio/source.flac      o áudio do vídeo vinculado, convertido uma vez
+    stems/<chave>/         uma pasta por separação (provedor, modelo e hash do áudio na chave) com `receipt.json`
+    peaks/                 caches da Fita, refazíveis
+
+Nada aparece pela metade: um pacote novo nasce numa pasta oculta ao lado e só ganha o nome final quando está
+inteiro, e cada separação faz o mesmo dentro de `stems/`. Copiar a pasta para outro Mac leva tudo junto.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import threading
+from pathlib import Path
+
+from . import home
+from .errors import PackageError
+from .util import atomic_json, new_id, now_iso, read_json, slugify
+
+SCHEMA = 1
+SUFFIX = ".tracklab"
+MANIFEST = "manifest.json"
+_LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
+
+
+class SongPackage:
+    """Um pacote publicado. O manifesto é lido do disco a cada acesso: o app e o motor podem tê-lo mudado."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    @property
+    def manifest(self) -> dict:
+        try:
+            data = read_json(self.path / MANIFEST)
+        except (OSError, ValueError) as error:
+            raise PackageError(f"Não consegui ler o pacote {self.path.name}: {error}") from None
+        if not isinstance(data, dict) or data.get("schema") != SCHEMA or not isinstance(data.get("id"), str):
+            raise PackageError(f"{self.path.name} não é um pacote do TrackLab que este motor conheça.")
+        return data
+
+    @property
+    def id(self) -> str:
+        return self.manifest["id"]
+
+    def file(self, relative: str) -> Path:
+        """Um arquivo de dentro do pacote; caminhos que saem dele são recusados."""
+        target = (self.path / relative).resolve()
+        if not str(relative) or target != self.path.resolve() and self.path.resolve() not in target.parents:
+            raise PackageError("Caminho fora do pacote.")
+        return target
+
+    def update(self, change) -> dict:
+        """Aplica `change(manifest)` (que muda o dicionário no lugar) e regrava o manifesto de forma atômica."""
+        with _LOCK:
+            data = self.manifest
+            change(data)
+            data["updated"] = now_iso()
+            atomic_json(self.path / MANIFEST, data)
+            return data
+
+    def add_stems(self, key: str, build) -> dict:
+        """Separação publicada de uma vez: `build(pasta)` grava as faixas e devolve o recibo; só então a pasta entra."""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", key):
+            raise PackageError(f"Chave de faixas inválida: {key}.")
+        stems = self.path / "stems"
+        stems.mkdir(exist_ok=True)
+        final = stems / key
+        temp = stems / f".{key}.{new_id()}.partial"
+        temp.mkdir()
+        try:
+            receipt = build(temp)
+            if final.exists():
+                shutil.rmtree(final)
+            temp.rename(final)
+        finally:
+            if temp.exists():
+                shutil.rmtree(temp, ignore_errors=True)
+        files = {name: f"stems/{key}/{info['file']}" for name, info in receipt.get("stems", {}).items()}
+
+        def record(data: dict) -> None:
+            data.setdefault("stems", {})[key] = {
+                "provider": receipt.get("provider", "demucs"), "model": receipt.get("model"),
+                "device": receipt.get("device"), "seconds": receipt.get("seconds"),
+                "created": receipt.get("created", now_iso()), "files": files,
+                **({"fallback": receipt["fallback"]} if receipt.get("fallback") else {})}
+            data["activeStems"] = key
+
+        return self.update(record)
+
+    def summary(self) -> dict:
+        data = self.manifest
+        return {"id": data["id"], "title": data.get("title"), "artist": data.get("artist"),
+                "folder": self.path.name, "hasAudio": bool(data.get("audio")),
+                "stems": sorted(data.get("stems", {})), "activeStems": data.get("activeStems"),
+                "created": data.get("created"), "updated": data.get("updated")}
+
+
+class Draft:
+    """Um pacote em construção numa pasta oculta; `publish` dá o nome final, `discard` apaga."""
+
+    def __init__(self, title: str, artist: str | None, origin: dict, *, root: Path | None = None):
+        self.root = Path(root or home.songs())
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.name = slugify(" ".join(part for part in (artist, title) if part), limit=60)
+        self.path = self.root / f".{self.name}.{new_id()}.partial"
+        self.path.mkdir()
+        for folder in ("score", "audio", "stems", "peaks"):
+            (self.path / folder).mkdir()
+        self.manifest = {"schema": SCHEMA, "id": new_id("song"), "title": title, "artist": artist,
+                         "created": now_iso(), "updated": now_iso(), "origin": origin, "score": None,
+                         "audio": None, "tempoMap": None, "stems": {}, "activeStems": None, "warnings": []}
+
+    def file(self, relative: str) -> Path:
+        target = self.path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def publish(self) -> SongPackage:
+        atomic_json(self.path / MANIFEST, self.manifest)
+        for index in range(1000):
+            suffix = "" if index == 0 else f"-{index + 1}"
+            final = self.root / f"{self.name}{suffix}{SUFFIX}"
+            try:
+                # mkdir reserva o nome; rename por cima de uma pasta vazia é atômico no mesmo volume.
+                final.mkdir()
+            except FileExistsError:
+                continue
+            os.replace(self.path, final)
+            return SongPackage(final)
+        raise PackageError("Não encontrei um nome livre para o pacote.")
+
+    def discard(self) -> None:
+        shutil.rmtree(self.path, ignore_errors=True)
+
+
+def packages(root: Path | None = None) -> list[SongPackage]:
+    """Os pacotes publicados do repertório; pastas pela metade e pacotes ilegíveis ficam de fora."""
+    root = Path(root or home.songs())
+    found = []
+    for path in sorted(root.glob(f"*{SUFFIX}")):
+        if path.name.startswith(".") or not (path / MANIFEST).is_file():
+            continue
+        package = SongPackage(path)
+        try:
+            package.manifest
+        except PackageError:
+            continue
+        found.append(package)
+    return found
+
+
+def find(song_id: str, root: Path | None = None) -> SongPackage:
+    for package in packages(root):
+        if package.id == song_id:
+            return package
+    raise PackageError(f"Música não encontrada: {song_id}.")

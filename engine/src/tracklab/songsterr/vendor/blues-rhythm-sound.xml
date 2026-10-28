@@ -1,0 +1,38 @@
+<Sound>
+<Name>Blues</Name>
+<Label>Blues</Label>
+<Path>Stringed/Electric Guitars/Overdrive Guitar</Path>
+<Role>Factory</Role>
+<MIDI>
+<LSB>0</LSB>
+<MSB>0</MSB>
+<Program>26</Program>
+</MIDI>
+<RSE>
+<SoundbankPatch>Strat-Guitar</SoundbankPatch>
+<ElementsSettings>
+</ElementsSettings>
+<Pickups>
+<OverloudPosition>0</OverloudPosition>
+<Volumes>1 1</Volumes>
+<Tones>1 1</Tones>
+</Pickups>
+<EffectChain>
+<Effect id="E30_EqGEq">
+<Parameters>0.6 0.657143 0.828571 0.628571 0.885714 0.6 0.0857143 0.657143</Parameters>
+</Effect>
+<Effect id="E21_PhaserStone">
+<Parameters>0.24 0.25 0.91</Parameters>
+</Effect>
+<Effect id="A02_ComboAmericanClean">
+<Parameters>0.91 0.45 0.71 1 0 0 0.5</Parameters>
+</Effect>
+<Effect id="E25_ReverbSpring">
+<Parameters>0.5 0.26</Parameters>
+</Effect>
+<Effect id="M07_DynamicClassicDynamic">
+<Parameters>0.92 0.6 0.66</Parameters>
+</Effect>
+</EffectChain>
+</RSE>
+</Sound>
