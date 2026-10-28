@@ -79,6 +79,8 @@ def test_tempo_map_gestures_are_saved_with_history_and_undone(client):
                                                      "separate": False})
     song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
     original = client.get(f"/api/songs/{song_id}/tempo-map").json()
+    # Sem ajuste, o original é o próprio mapa.
+    assert client.get(f"/api/songs/{song_id}/tempo-map/original").json() == original
     beat = original["points"][2]
     moved = client.post(f"/api/songs/{song_id}/tempo-map/edit",
                         json={"action": "move", "tick": beat["tick"], "seconds": beat["seconds"] + 0.1}).json()
@@ -90,6 +92,8 @@ def test_tempo_map_gestures_are_saved_with_history_and_undone(client):
     assert len(history) == 1 and json.loads(history[0].read_text()) == original
     entry = client.get(f"/api/songs/{song_id}").json()["tempoMap"]
     assert entry["anchors"] == 1 and entry["points"] == len(moved["points"]) and entry["edited"]
+    # O original do Songsterr ficou guardado antes do primeiro ajuste.
+    assert client.get(f"/api/songs/{song_id}/tempo-map/original").json() == original
     # Desfazer: o app manda o mapa de antes; o do gesto vai para o histórico.
     undone = client.put(f"/api/songs/{song_id}/tempo-map", json=original).json()
     assert undone["points"] == original["points"]

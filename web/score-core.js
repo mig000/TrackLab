@@ -112,6 +112,21 @@
     return anchors.length ? piecewise(anchors, tick, (a) => a[0], (a) => a[1]) : 0;
   }
 
+  // O x de um segundo: segundo → tique pelo mapa, tique → x pelas âncoras. Antes do primeiro ponto do mapa e depois
+  // do último, em linha reta na escala da Fita (`pxPerSecond`): a primeira batida pode ser irregular (um toque do
+  // Bater junto) e não deve ditar a escala da introdução.
+  function xAtSeconds(points, anchors, seconds, pxPerSecond) {
+    const first = points[0];
+    const last = points[points.length - 1];
+    if (seconds < first.seconds) {
+      return followX(anchors, first.tick) - (first.seconds - seconds) * pxPerSecond;
+    }
+    if (seconds > last.seconds) {
+      return followX(anchors, last.tick) + (seconds - last.seconds) * pxPerSecond;
+    }
+    return followX(anchors, secondsToTick(points, seconds));
+  }
+
   // Largura de cada compasso para que de um início de compasso ao seguinte a pauta ande `pxPerSecond` por segundo,
   // como a Fita: a duração vezes a escala, mais o que vem antes das batidas deste compasso (clave, fórmula), menos o
   // que vem antes das do seguinte. `bars`: [{seconds, pre}].
@@ -156,6 +171,7 @@
     cleanAnchors,
     tickAtX,
     followX,
+    xAtSeconds,
     barWidths,
     estimate,
     nextClock,

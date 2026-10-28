@@ -4,6 +4,7 @@
     score/original.gp      a partitura como veio do Songsterr (sem áudio embutido)
     score/tempo-map.json   tique ↔ segundo, o contrato do TabLab; os ajustes manuais mudam só este arquivo
     score/tempo-map-history/  as versões anteriores do mapa, uma por ajuste (as últimas `TEMPO_HISTORY`)
+    score/tempo-map-original.json  o mapa como veio do Songsterr, guardado antes do primeiro ajuste
     audio/source.flac      o áudio do vídeo vinculado, convertido uma vez
     stems/<chave>/         uma pasta por separação (provedor, modelo e hash do áudio na chave) com `receipt.json`
     peaks/                 caches da Fita, refazíveis
@@ -28,6 +29,7 @@ SCHEMA = 1
 SUFFIX = ".tracklab"
 MANIFEST = "manifest.json"
 TEMPO_MAP = "score/tempo-map.json"
+TEMPO_ORIGINAL = "score/tempo-map-original.json"
 TEMPO_HISTORY = 200
 _LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
 
@@ -102,6 +104,9 @@ class SongPackage:
         só as últimas `TEMPO_HISTORY` versões ficam. O manifesto conta pontos e âncoras e marca o ajuste."""
         with _LOCK:
             current = self.file(TEMPO_MAP)
+            original = self.file(TEMPO_ORIGINAL)
+            if current.is_file() and not original.is_file():
+                shutil.copy2(current, original)
             if current.is_file():
                 history = self.file("score/tempo-map-history")
                 history.mkdir(exist_ok=True)
@@ -121,6 +126,13 @@ class SongPackage:
 
             self.update(record)
             return tempo_map
+
+    def original_tempo_map(self) -> dict | None:
+        """O mapa como veio do Songsterr: o guardado antes do primeiro ajuste, ou o atual se nunca houve ajuste."""
+        for relative in (TEMPO_ORIGINAL, TEMPO_MAP):
+            if self.file(relative).is_file():
+                return read_json(self.file(relative))
+        return None
 
     def summary(self) -> dict:
         data = self.manifest

@@ -51,6 +51,16 @@ test("a rolagem segue a reta antes da primeira âncora e depois da última", () 
   assert.equal(core.followX(follow, 5760), 800);
 });
 
+test("antes do primeiro ponto do mapa e depois do último, a pauta anda na escala da Fita", () => {
+  // A primeira batida longa (um toque do Bater junto): 1 s para 960 tiques, depois 0,5 s.
+  const map = core.cleanPoints([{ tick: 0, seconds: 2 }, { tick: 960, seconds: 3 }, { tick: 1920, seconds: 3.5 }]);
+  const anchors = [[0, 500], [1920, 700]];
+  assert.equal(core.xAtSeconds(map, anchors, 2, 100), 500);
+  assert.equal(core.xAtSeconds(map, anchors, 1.5, 100), 450);
+  assert.equal(core.xAtSeconds(map, anchors, 4, 100), 750);
+  assert.equal(core.xAtSeconds(map, anchors, 3, 100), 600);
+});
+
 test("largura dos compassos: de um início de compasso ao seguinte, a duração na escala", () => {
   const widths = core.barWidths([{ seconds: 2, pre: 60 }, { seconds: 2, pre: 15 }, { seconds: 1, pre: 15 }], 100, 24);
   assert.deepEqual(widths, [245, 200, 115]);

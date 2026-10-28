@@ -185,6 +185,44 @@ def release_anchor(tempo_map: dict, tick: float) -> dict:
 
 
 DEFAULT_REACH_BEATS = 8  # o arrasto local da régua: medido nas 80 músicas do Rock Band (beat-eval --fine)
+MIN_TAPS = 4  # menos que isso não diz o andamento de um trecho
+MIN_TAP_GAP = 0.1  # dois toques mais perto que isso são um tremor do dedo, não duas batidas
+
+
+def _reach(tempo_map: dict, beats: float) -> float:
+    """`beats` batidas do mapa em tiques (o passo mediano entre os pontos)."""
+    ticks = [p["tick"] for p in tempo_map["points"]]
+    return beats * statistics.median(b - a for a, b in zip(ticks, ticks[1:]))
+
+
+def tap_beats(tempo_map: dict, taps: list[float], reach: float | None = None) -> dict:
+    """Bater junto: os toques (segundos ouvidos, um por batida, em ordem) regravam as batidas de um trecho.
+
+    O primeiro toque fica com a batida do mapa mais perto dele, e cada toque seguinte com a batida seguinte. A
+    primeira e a última batidas do trecho viram âncoras, levadas como num arrasto (`move_anchor`, com `reach`
+    tiques de alcance do lado sem âncora); as de dentro ficam exatamente nos toques. Âncoras de dentro do trecho dão
+    lugar aos toques. Toques além do fim do mapa são ignorados."""
+    clean = normalize_tempo_map(tempo_map)
+    times = [float(t) for t in taps if _number(t)]
+    if len(times) < MIN_TAPS:
+        raise RhythmError(f"Bata ao menos {MIN_TAPS} vezes, uma em cada batida, para regravar um trecho.")
+    if any(b - a < MIN_TAP_GAP for a, b in zip(times, times[1:])):
+        raise RhythmError("Os toques precisam vir em ordem, um por batida.")
+    points = clean["points"]
+    first = min(range(len(points)), key=lambda k: abs(points[k]["seconds"] - times[0]))
+    times = times[:len(points) - first]
+    if len(times) < MIN_TAPS:
+        raise RhythmError("Os toques passaram do fim do mapa.")
+    ticks = [points[first + i]["tick"] for i in range(len(times))]
+    for tick in ticks:
+        clean = release_anchor(clean, tick)
+    clean = move_anchor(clean, ticks[0], times[0], reach=reach)
+    clean = move_anchor(clean, ticks[-1], times[-1], reach=reach)
+    points = [dict(p) for p in clean["points"]]
+    where = {p["tick"]: k for k, p in enumerate(points)}
+    for tick, seconds in zip(ticks[1:-1], times[1:-1]):
+        points[where[tick]].update(seconds=seconds, kind="detected", confidence=1.0)
+    return normalize_tempo_map(dict(clean, points=points))
 
 
 def map_from(raw: dict) -> dict:
@@ -201,17 +239,22 @@ def map_from(raw: dict) -> dict:
 def anchor_edit(raw: dict) -> dict:
     """Um gesto da régua sobre o mapa enviado pelo app (que guarda o mapa e o Desfazer): `move` leva a batida do
     `tick` a `seconds` como âncora, puxando o lado sem âncora até `reach` batidas (padrão 8), ou o resto inteiro com
-    `pull`; `release` solta a âncora do `tick`. Sem `tempoMap`, parte da reta da régua (`ruler`)."""
+    `pull`; `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`). Sem
+    `tempoMap`, parte da reta da régua (`ruler`)."""
     if not isinstance(raw, dict):
         raise RhythmError("Envie o gesto como um objeto com tempoMap, tick e seconds.")
     tempo_map = map_from(raw)
+    if raw.get("action") == "tap":
+        if not isinstance(raw.get("taps"), list):
+            raise RhythmError("Para bater junto, envie os toques (taps) em segundos.")
+        return tap_beats(tempo_map, raw["taps"], reach=_reach(tempo_map, DEFAULT_REACH_BEATS))
     if not _number(raw.get("tick")):
         raise RhythmError("O gesto precisa do tique da batida (tick).")
     tick = raw["tick"]
     if raw.get("action", "move") == "release":
         return release_anchor(tempo_map, tick)
     if raw.get("action", "move") != "move":
-        raise RhythmError("O gesto é move ou release.")
+        raise RhythmError("O gesto é move, release ou tap.")
     if not _number(raw.get("seconds")):
         raise RhythmError("Para mover a batida, envie o segundo (seconds) em que ela cai.")
     reach = None
@@ -219,9 +262,7 @@ def anchor_edit(raw: dict) -> dict:
         beats = raw.get("reach", DEFAULT_REACH_BEATS)
         if not _number(beats) or beats <= 0:
             raise RhythmError("O alcance (reach) é um número de batidas maior que zero.")
-        ticks = [p["tick"] for p in tempo_map["points"]]
-        step = statistics.median(b - a for a, b in zip(ticks, ticks[1:]))
-        reach = beats * step
+        reach = _reach(tempo_map, beats)
     return move_anchor(tempo_map, tick, raw["seconds"], reach=reach)
 
 

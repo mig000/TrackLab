@@ -165,16 +165,22 @@ final class Backend {
     }
 
     /// Um gesto do Ajuste: `move` leva a batida do `tick` a `seconds` como âncora (as vizinhas acompanham até 8
-    /// batidas ou até a próxima âncora); `release` solta a âncora do `tick`.
+    /// batidas ou até a próxima âncora); `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques.
     struct TempoGesture: Encodable {
         let action: String
-        let tick: Double
-        let seconds: Double?
+        var tick: Double?
+        var seconds: Double?
+        var taps: [Double]?
     }
 
     /// Aplica o gesto ao mapa gravado no pacote; o motor grava o resultado (o anterior vai para o histórico).
     func editTempo(_ id: String, _ gesture: TempoGesture) async throws -> TempoMapDocument {
         try await send("POST", "songs/\(id)/tempo-map/edit", body: gesture)
+    }
+
+    /// O mapa como veio do Songsterr (antes do primeiro ajuste).
+    func originalTempo(_ id: String) async throws -> TempoMapDocument {
+        try await get("songs/\(id)/tempo-map/original")
     }
 
     /// Um mapa inteiro no lugar do gravado: o Desfazer e o Refazer.

@@ -20,11 +20,13 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
 - `package.py`: o pacote `<artista-título>.tracklab` (manifest.json esquema 1, score/original.gp,
   score/tempo-map.json, audio/source.flac, stems/<chave>/, peaks/). Um pacote nasce numa pasta oculta e só ganha o
   nome quando está inteiro; cada separação idem dentro de `stems/`. `save_tempo_map` grava o mapa ajustado e guarda
-  o anterior em `score/tempo-map-history/` (as últimas 200 versões).
+  o anterior em `score/tempo-map-history/` (as últimas 200 versões); antes do primeiro ajuste, copia o do Songsterr
+  para `score/tempo-map-original.json` (o "Recomeçar do Songsterr" do Ajuste).
 - `tempomap.py`: o contrato do mapa de batida do TabLab (tiques a 960 por semínima, pontos anchor / detected /
   interpolated, âncoras com alcance de 8 batidas), copiado do backend do TabLab (`integracao`), mais
   `from_bar_starts` (os pontos do Songsterr: início de cada compasso vira `detected`, as batidas de dentro
-  `interpolated`).
+  `interpolated`) e `tap_beats` (Bater junto: um toque por batida a partir da mais perto do primeiro; as pontas viram
+  âncoras, as de dentro ficam nos toques).
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
@@ -44,7 +46,8 @@ compasso ganha `displayWidth` = duração × px/s (descontada a clave e a fórmu
 pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. O
 alphaTab de `vendor/` tem dois ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
 ocupa largura). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
-sai. As contas puras ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
+sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. As contas puras
+ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
 `tests/fixtures` (feitos pelo conversor do motor) no alphaTab do node: os tiques batem com os do mapa, e barras e notas
 caem no tempo.
 O conversor não escreve repetições, então os pontos do Songsterr são um por compasso escrito.
@@ -60,7 +63,8 @@ original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop pres
 direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A partitura ganha só a altura
 da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
-batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque; ⌘Z / ⇧⌘Z pelo
+batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
+(um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta); ⌘Z / ⇧⌘Z pelo
 menu Editar (sem ajuste a desfazer, vão para a cadeia de respondedores). TrackLabCore (modelos, `TempoGrid`,
 `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
 

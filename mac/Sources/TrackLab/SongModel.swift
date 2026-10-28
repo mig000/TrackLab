@@ -46,6 +46,9 @@ final class SongModel {
     var canUndo: Bool { !undoStack.isEmpty && !saving }
     var canRedo: Bool { !redoStack.isEmpty && !saving }
     var anchorCount: Int { grid.points.filter(\.isAnchor).count }
+    /// Bater junto: os toques do trecho em curso, em segundos ouvidos.
+    private(set) var taps: [Double] = []
+    @ObservationIgnored private var tapsEnd: Task<Void, Never>?
 
     var preset: MixPreset? { MixPreset.matching(engine.mix, stems: engine.stemIDs) }
 
@@ -181,6 +184,62 @@ final class SongModel {
         let now = engine.currentTime
         guard let tick = grid.nearestBarTick(now) else { return }
         moveBeat(tick: tick, to: now)
+    }
+
+    /// T, bater junto: um toque por batida, com a música tocando. Quando os toques param (ou o loop volta ao início),
+    /// o trecho é regravado por eles.
+    func tap() {
+        guard engine.isPlaying else {
+            adjustMessage = "Para bater junto, toque a música e aperte T em cada batida."
+            return
+        }
+        let now = engine.currentTime
+        if let last = taps.last {
+            if now <= last {
+                finishTaps()  // o loop voltou: o trecho anterior fecha e este começa outro
+            } else if now - last < 0.1 {
+                return  // a tecla segurada repete: não é outra batida
+            }
+        }
+        taps.append(now)
+        adjustMessage = nil
+        // Espera duas batidas e meia sem toque (no mínimo 1,5 s) antes de aplicar.
+        let gaps = zip(taps, taps.dropFirst()).map { $1 - $0 }.sorted()
+        let wait = max(1.5, (gaps.isEmpty ? 0 : gaps[gaps.count / 2]) * 2.5)
+        tapsEnd?.cancel()
+        tapsEnd = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard !Task.isCancelled else { return }
+            self?.finishTaps()
+        }
+    }
+
+    private func finishTaps() {
+        tapsEnd?.cancel()
+        let list = taps
+        taps = []
+        guard list.count >= 4 else {
+            if !list.isEmpty { adjustMessage = "Bata ao menos 4 vezes, uma em cada batida." }
+            return
+        }
+        edit(.init(action: "tap", taps: list))
+    }
+
+    /// Recomeça o Ajuste: o mapa volta a ser o do Songsterr; o atual vai para o histórico do pacote e para o Desfazer.
+    func restartFromSongsterr() {
+        guard !saving, let current = tempoMap else { return }
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                let original = try await Backend.shared.originalTempo(id)
+                show(try await Backend.shared.putTempo(id, original))
+                undoStack.append(current)
+                redoStack.removeAll()
+            } catch {
+                adjustMessage = error.localizedDescription
+            }
+        }
     }
 
     func undo() {

@@ -88,6 +88,14 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(404, "Esta música ainda não tem mapa de tempo.")
         return read_json(found.file(entry["file"]))
 
+    @app.get("/api/songs/{song_id}/tempo-map/original")
+    def original_tempo_map(song_id: str) -> dict:
+        """O mapa como veio do Songsterr, para recomeçar o Ajuste (o app o grava com `PUT`, que guarda o atual)."""
+        found = song(song_id).original_tempo_map()
+        if found is None:
+            raise HTTPException(404, "Esta música ainda não tem mapa de tempo.")
+        return found
+
     @app.post("/api/songs/{song_id}/tempo-map/edit")
     def edit_tempo_map(song_id: str, gesture: dict = Body(...)) -> dict:
         """Um gesto do Ajuste sobre o mapa gravado (`tempomap.anchor_edit`: move ou release de uma batida); o

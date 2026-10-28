@@ -268,7 +268,7 @@
     if (!state.points.length || !state.anchors.length) {
       return null;
     }
-    return core.followX(state.anchors, core.secondsToTick(state.points, seconds));
+    return core.xAtSeconds(state.points, state.anchors, seconds, state.layoutWidth / state.span);
   }
 
   // O cursor fica nos 40 % e a pauta corre sob ele, na velocidade da Fita. A pauta anda por `transform` (frações de

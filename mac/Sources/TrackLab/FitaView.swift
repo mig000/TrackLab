@@ -145,6 +145,14 @@ struct FitaView: View {
             anchorMark(in: &context, x: x(point.seconds), height: height, color: .orange)
         }
 
+        // Os toques do Bater junto em curso: marcas laranja embaixo.
+        for tap in model.taps where tap >= start && tap <= end {
+            var mark = Path()
+            mark.move(to: CGPoint(x: x(tap), y: height - 18))
+            mark.addLine(to: CGPoint(x: x(tap), y: height))
+            context.stroke(mark, with: .color(.orange), lineWidth: 2)
+        }
+
         // A batida sendo arrastada: de onde saiu, apagada; para onde vai, com a diferença em milissegundos.
         if let held {
             var from = Path()

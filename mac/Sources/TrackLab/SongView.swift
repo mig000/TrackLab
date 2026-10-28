@@ -108,13 +108,18 @@ struct AdjustBar: View {
             Button { model.downbeatHere() } label: { Label("O 1 é aqui", systemImage: "metronome") }
                 .keyboardShortcut("u", modifiers: [])
                 .help("U: tocando, aperte no tempo forte; o começo de compasso mais perto vem até o toque")
+            Button { model.tap() } label: { Label("Bater junto", systemImage: "hand.tap") }
+                .keyboardShortcut("t", modifiers: [])
+                .help("T: com a música tocando, aperte em cada batida de um trecho; quando parar, as batidas dele viram os seus toques")
             Button { model.undo() } label: { Label("Desfazer", systemImage: "arrow.uturn.backward") }
                 .disabled(!model.canUndo)
                 .help("⌘Z")
             Button { model.redo() } label: { Label("Refazer", systemImage: "arrow.uturn.forward") }
                 .disabled(!model.canRedo)
                 .help("⇧⌘Z")
-            Text(model.adjustMessage ?? "Arraste uma batida na Fita até onde ela soa; duplo clique prende ou solta.")
+            Text(model.adjustMessage ?? (model.taps.isEmpty
+                    ? "Arraste uma batida na Fita até onde ela soa; duplo clique prende ou solta."
+                    : "\(model.taps.count) toques: continue batendo; ao parar, o trecho é regravado."))
                 .font(.caption)
                 .foregroundStyle(model.adjustMessage == nil ? Color.secondary : Color.orange)
                 .lineLimit(1)
@@ -123,6 +128,11 @@ struct AdjustBar: View {
             Text(model.anchorCount == 1 ? "1 âncora" : "\(model.anchorCount) âncoras")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
+            Button { model.restartFromSongsterr() } label: {
+                Label("Recomeçar do Songsterr", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(model.saving)
+            .help("Volta ao mapa como veio do Songsterr; o atual fica no histórico da música e no Desfazer")
             Button("Concluir") { model.adjusting = false }
         }
         .buttonStyle(.borderless)
