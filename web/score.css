@@ -73,3 +73,8 @@ body {
   text-align: center;
   padding: 24px;
 }
+
+/* O app rola a pauta sob o cursor; a barra de rolagem só atrapalharia. */
+#viewport::-webkit-scrollbar {
+  display: none;
+}

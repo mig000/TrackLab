@@ -20,7 +20,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     let webView: WKWebView
     private weak var engine: StemEngine?
     var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double]) -> Void)?
-    var onRendered: ((_ ms: Int) -> Void)?
+    var onRendered: ((_ ms: Int, _ height: Double?) -> Void)?
     var onError: ((String) -> Void)?
     private(set) var ready = false
     private var pending: [String: Any]?
@@ -150,7 +150,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 let ticks = (body["barTicks"] as? [NSNumber] ?? []).map(\.doubleValue)
                 onLoaded?(list, ticks)
             case "rendered":
-                onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0)
+                onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
             case "seek":
                 if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { engine?.seek(to: seconds) }
             case "error":

@@ -47,6 +47,11 @@ test("âncoras: no mesmo tique fica a nota, não a barra", () => {
   assert.equal(core.tickAtX(anchors, 0), 0);
 });
 
+test("âncoras do loop: no mesmo tique fica a barra", () => {
+  const anchors = core.cleanAnchors([[3840, 300], [3840, 316], [0, 120], [0, 136], [960, 173], [7680, 480]], true);
+  assert.deepEqual(anchors, [[0, 120], [960, 173], [3840, 300], [7680, 480]]);
+});
+
 test("relógio extrapolado e avisos pequenos ignorados", () => {
   let clock = core.nextClock(null, { seconds: 10, playing: true, rate: 1 }, 1000, 0.04);
   assert.equal(core.estimate(clock, 2000), 11);
@@ -87,6 +92,7 @@ if (files.length) {
           // A régua do motor soma as fórmulas de compasso desde zero: o alphaTab tem de concordar.
           assert.equal(master.start, tick);
           tick += master.calculateDuration();
+          raw.push([master.start, masterBounds.realBounds.x]);
           raw.push([tick, masterBounds.realBounds.x + masterBounds.realBounds.w]);
           for (const bar of masterBounds.bars) {
             for (const beat of bar.beats) {
@@ -101,6 +107,11 @@ if (files.length) {
       }
       const firstBeat = renderer.boundsLookup.staffSystems[0].bars[1].bars[0].beats[0];
       assert.equal(core.xAtTick(anchors, score.masterBars[1].start), firstBeat.onNotesX);
+      // O loop do compasso 2 começa na barra dele, antes da primeira nota.
+      const bars = core.cleanAnchors(raw, true);
+      const barStart = renderer.boundsLookup.staffSystems[0].bars[1].realBounds.x;
+      assert.ok(Math.abs(core.xAtTick(bars, score.masterBars[1].start) - barStart) < 1);
+      assert.ok(barStart < firstBeat.onNotesX);
     });
   }
 }

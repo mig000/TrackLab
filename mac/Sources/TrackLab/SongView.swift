@@ -31,10 +31,10 @@ struct SongView: View {
                     Text(message).foregroundStyle(.secondary).padding().background(.background)
                 }
             }
-            .frame(minHeight: 180)
+            .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
             Divider()
             FitaView(model: model, span: $span)
-                .frame(height: 120)
+                .frame(minHeight: 120, maxHeight: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             Divider()
@@ -53,6 +53,14 @@ struct SongView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.detail?.title ?? "").font(.title2.weight(.semibold))
                 Text(model.detail?.artist ?? "").foregroundStyle(.secondary)
+                let notes = (model.detail?.warnings ?? []) + [model.notice].compactMap { $0 }
+                if !notes.isEmpty {
+                    Text(notes.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .help(notes.joined(separator: "\n"))
+                }
             }
             Spacer()
             if model.scoreTracks.count > 1 {
@@ -66,18 +74,6 @@ struct SongView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .overlay(alignment: .bottomLeading) {
-            let notes = (model.detail?.warnings ?? []) + [model.notice].compactMap { $0 }
-            if !notes.isEmpty {
-                Text(notes.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .lineLimit(1)
-                    .padding(.horizontal, 16)
-                    .offset(y: 4)
-                    .help(notes.joined(separator: "\n"))
-            }
-        }
     }
 }
 
@@ -90,19 +86,27 @@ struct TransportBar: View {
         HStack(spacing: 14) {
             Button { engine.toStart() } label: { Image(systemName: "backward.end.fill") }
                 .help("Voltar ao começo (do loop)")
+                .accessibilityLabel("Voltar ao começo")
                 .keyboardShortcut(.home, modifiers: [])
             Button { engine.skip(-5) } label: { Image(systemName: "gobackward.5") }
+                .help("Voltar 5 segundos")
+                .accessibilityLabel("Voltar 5 segundos")
                 .keyboardShortcut(.leftArrow, modifiers: [])
             Button { engine.toggle() } label: {
                 Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill").frame(width: 22)
             }
+            .accessibilityLabel(engine.isPlaying ? "Pausar" : "Tocar")
             .keyboardShortcut(.space, modifiers: [])
             Button { engine.skip(5) } label: { Image(systemName: "goforward.5") }
+                .help("Avançar 5 segundos")
+                .accessibilityLabel("Avançar 5 segundos")
                 .keyboardShortcut(.rightArrow, modifiers: [])
             TimelineView(.periodic(from: .now, by: 0.2)) { _ in
                 Text(clock(engine.currentTime, engine.duration))
                     .font(.body.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    // Largura fixa: o loop ao lado não pula quando aparece o compasso.
+                    .frame(minWidth: 200, alignment: .leading)
             }
             Divider().frame(height: 18)
             Button { model.toggleBarLoop() } label: {
@@ -160,28 +164,33 @@ struct MixerBar: View {
                 }
                 Spacer()
             } else {
-                Picker("Ouvir", selection: Binding(get: { engine.useStems }, set: { engine.useStems = $0 })) {
-                    Text("Original").tag(false)
-                    Text("Faixas").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 150)
-                Picker("Mix", selection: Binding(get: { model.preset }, set: { if let p = $0 { model.apply(p) } })) {
-                    ForEach(MixPreset.allCases) { preset in Text(preset.label).tag(Optional(preset)) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 330)
-                .disabled(!engine.useStems)
-                ScrollView(.horizontal, showsIndicators: false) {
+                // Duas linhas: as escolhas em cima e as seis faixas embaixo, repartindo a largura (numa linha só,
+                // Teclado e Outros ficavam fora da janela).
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 16) {
+                        Picker("Ouvir", selection: Binding(get: { engine.useStems }, set: { engine.useStems = $0 })) {
+                            Text("Original").tag(false)
+                            Text("Faixas").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 150)
+                        Picker("Mix", selection: Binding(get: { model.preset }, set: { if let p = $0 { model.apply(p) } })) {
+                            ForEach(MixPreset.allCases) { preset in Text(preset.label).tag(Optional(preset)) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 330)
+                        .disabled(!engine.useStems)
+                        Spacer()
+                    }
                     HStack(spacing: 14) {
                         ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
                             StemStrip(model: model, stem: stem)
                         }
                     }
+                    .disabled(!engine.useStems)
                 }
-                .disabled(!engine.useStems)
             }
         }
     }
@@ -205,7 +214,7 @@ private struct StemStrip: View {
             Slider(value: Binding(get: { Double(entry.volume) }, set: { model.setVolume(stem.rawValue, Float($0)) }), in: 0...1.5)
                 .controlSize(.mini)
         }
-        .frame(width: 130)
+        .frame(minWidth: 90, maxWidth: 180)
         .opacity(entry.muted && !entry.solo ? 0.55 : 1)
     }
 }

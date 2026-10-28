@@ -48,6 +48,7 @@
     scale: 1,
     points: [],
     anchors: [],
+    barAnchors: [],
     clock: null,
     loop: null,
     renderStarted: 0,
@@ -145,7 +146,7 @@
     return bytes;
   }
 
-  // Pares [tique, x] das batidas desenhadas e do fim de cada compasso, em coordenadas de #sheet.
+  // Pares [tique, x] das batidas desenhadas e das barras de cada compasso (início e fim), em coordenadas de #sheet.
   function collectAnchors() {
     const lookup = state.api && state.api.renderer.boundsLookup;
     if (!lookup) {
@@ -160,6 +161,7 @@
         const master = state.score.masterBars[masterBounds.index];
         if (master) {
           const end = master.start + master.calculateDuration();
+          points.push([master.start, masterBounds.realBounds.x + left]);
           points.push([end, masterBounds.realBounds.x + masterBounds.realBounds.w + left]);
         }
         for (const bar of masterBounds.bars) {
@@ -169,11 +171,13 @@
         }
       }
     }
-    return core.cleanAnchors(points);
+    return points;
   }
 
   function afterRender() {
-    state.anchors = collectAnchors();
+    const points = collectAnchors();
+    state.anchors = core.cleanAnchors(points);
+    state.barAnchors = core.cleanAnchors(points, true);
     const width = Math.ceil(tabElement.scrollWidth);
     sheet.style.width = width + "px";
     state.lastScroll = -1;
@@ -187,11 +191,11 @@
     });
   }
 
-  function xAtSeconds(seconds) {
-    if (!state.points.length || !state.anchors.length) {
+  function xAtSeconds(seconds, anchors = state.anchors) {
+    if (!state.points.length || !anchors.length) {
       return null;
     }
-    return core.xAtTick(state.anchors, core.secondsToTick(state.points, seconds));
+    return core.xAtTick(anchors, core.secondsToTick(state.points, seconds));
   }
 
   function draw(force) {
@@ -219,8 +223,8 @@
       loopBox.hidden = true;
       return;
     }
-    const a = xAtSeconds(state.loop[0]);
-    const b = xAtSeconds(state.loop[1]);
+    const a = xAtSeconds(state.loop[0], state.barAnchors);
+    const b = xAtSeconds(state.loop[1], state.barAnchors);
     if (a === null || b === null || b <= a) {
       loopBox.hidden = true;
       return;

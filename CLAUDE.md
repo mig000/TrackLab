@@ -50,12 +50,15 @@ lê a porta do stdout (`TRACKLAB_URL` aponta para outro motor). `StemEngine`: o 
 AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6); o loop é agendado no
 player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), sem seek a cada volta. `SongModel`
 abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
-original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas. TrackLabCore
+original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas; o relógio é lido
+direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A partitura ganha só a altura
+da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. TrackLabCore
 (modelos, `TempoGrid`, `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
 
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.
-- O iMac não tem uv nem checkouts; o BackingLab 2 Intel (build 43) instalado lá não deve ser alterado.
+- O iMac tem uv e este checkout em `~/Claude/TrackLab` (desde 28/10); o BackingLab 2 Intel (build 43) instalado lá não
+  deve ser alterado.
 - A nuvem não tem Swift: o app só compila no iMac (Swift 6.2; `test.sh` usa o Xcode 26.3 de lá, porque as CLT 26
   não trazem o módulo Testing).
 - Primeira prova real (28/10, iMac): Sunshine of Your Love do Songsterr em 92 s, Demucs 6s 82,5 s na GPU sem recair

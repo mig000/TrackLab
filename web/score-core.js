@@ -72,10 +72,13 @@
     return piecewise(points, tick, (p) => p.tick, (p) => p.seconds);
   }
 
-  // Âncoras [tique, x] da pauta desenhada, em ordem de tique; x nunca volta. Num tique repetido (o fim de um
-  // compasso e a primeira batida do seguinte) fica o maior x: o cursor no ataque da nota, não na barra.
-  function cleanAnchors(anchors) {
-    const sorted = anchors.filter((a) => Number.isFinite(a[0]) && Number.isFinite(a[1])).sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+  // Âncoras [tique, x] da pauta desenhada, em ordem de tique; x nunca volta. Num tique repetido (a barra de um
+  // compasso e a primeira batida dele) fica o maior x: o cursor no ataque da nota. Com `atBar`, fica o menor: o
+  // loop começa e termina nas barras.
+  function cleanAnchors(anchors, atBar) {
+    const sorted = anchors
+      .filter((a) => Number.isFinite(a[0]) && Number.isFinite(a[1]))
+      .sort((a, b) => a[0] - b[0] || (atBar ? a[1] - b[1] : b[1] - a[1]));
     const out = [];
     for (const a of sorted) {
       const last = out[out.length - 1];

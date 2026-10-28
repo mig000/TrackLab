@@ -16,20 +16,24 @@ struct FitaView: View {
     static let spans: ClosedRange<Double> = 3...40
 
     var body: some View {
-        let engine = model.engine
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: !engine.isPlaying)) { _ in
-            GeometryReader { geometry in
-                let now = engine.currentTime
-                let start = now - span * Self.playheadAt
-                Canvas { context, size in
-                    draw(in: &context, size: size, start: start, now: now)
-                }
-                .contentShape(Rectangle())
-                .gesture(loopGesture(width: geometry.size.width, start: start))
+        // O relógio é lido direto na TimelineView e entra no Canvas: dentro de um GeometryReader a Fita não era
+        // redesenhada a cada quadro e ficava parada enquanto a música tocava.
+        GeometryReader { geometry in
+            TimelineView(.animation(minimumInterval: 1 / 60, paused: !model.engine.isPlaying)) { _ in
+                tape(width: geometry.size.width, now: model.engine.currentTime)
             }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func tape(width: Double, now: Double) -> some View {
+        let start = now - span * Self.playheadAt
+        return Canvas { context, size in
+            draw(in: &context, size: size, start: start, now: now)
+        }
+        .contentShape(Rectangle())
+        .gesture(loopGesture(width: width, start: start))
     }
 
     private func time(at x: Double, width: Double, start: Double) -> Double {

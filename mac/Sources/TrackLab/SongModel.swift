@@ -28,6 +28,8 @@ final class SongModel {
         didSet { if scoreTrack != oldValue { bridge.showTrack(scoreTrack) } }
     }
     private(set) var scoreMessage: String?
+    /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
+    private(set) var scoreHeight: Double?
     private(set) var notice: String?
     /// A separação em curso (o id da tarefa e a última mensagem dela).
     private(set) var separating: (job: String, message: String, progress: Double?)?
@@ -42,7 +44,10 @@ final class SongModel {
             scoreTracks = tracks
             grid = TempoGrid(points: grid.points, barTicks: ticks)
         }
-        bridge.onRendered = { [weak self] _ in self?.scoreMessage = nil }
+        bridge.onRendered = { [weak self] _, height in
+            self?.scoreMessage = nil
+            if let height, height > 0 { self?.scoreHeight = height }
+        }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
     }
 
