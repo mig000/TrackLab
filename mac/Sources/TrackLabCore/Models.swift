@@ -228,6 +228,50 @@ public struct SearchResult: Codable, Identifiable, Hashable, Sendable {
     public let artist: String
     public let title: String
     public let tracks: Int
+    /// A mesma música na biblioteca de multitracks, se houver.
+    public let multitrack: MultitrackSong?
+}
+
+/// Uma música da biblioteca de multitracks (`GET /api/multitracks/search`): as faixas da gravação, por instrumento.
+public struct MultitrackSong: Codable, Identifiable, Hashable, Sendable {
+    public let id: Int
+    public let path: String
+    public let artist: String?
+    public let title: String
+    public let album: String?
+    public let year: String?
+    /// `clonehero` (pasta com song.ini), `mogg` (todas as faixas num arquivo) ou `stems` (faixas soltas).
+    public let format: String
+    public let collection: String
+    public let kinds: [String]
+
+    /// Os instrumentos em português, na ordem do mixer.
+    public var instruments: [String] {
+        let names = ["guitar": "Guitarra", "rhythm": "Base/baixo", "bass": "Baixo", "drums": "Bateria",
+                     "vocals": "Voz", "keys": "Teclados", "backing": "Banda", "other": "Outros"]
+        let order = ["guitar", "rhythm", "bass", "drums", "vocals", "keys", "backing", "other"]
+        return order.filter(kinds.contains).compactMap { names[$0] }
+    }
+
+    public var formatLabel: String {
+        switch format {
+        case "clonehero": "Clone Hero"
+        case "mogg": "Rock Band (.mogg)"
+        default: "Faixas de estúdio"
+        }
+    }
+}
+
+/// O índice de multitracks (`GET /api/multitracks`): onde está a biblioteca, se o HD está ligado e o que o índice tem.
+public struct MultitrackStatus: Codable, Hashable, Sendable {
+    public let root: String
+    public let available: Bool
+    public let count: Int
+    public let scanned: String?
+}
+
+public struct MultitrackSearch: Codable, Sendable {
+    public let results: [MultitrackSong]
 }
 
 public struct SearchResponse: Codable, Sendable {

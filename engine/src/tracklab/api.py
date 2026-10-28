@@ -8,7 +8,7 @@ from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import __version__, home, package, songsterr, stems, tempomap
+from . import __version__, home, multitracks, package, songsterr, stems, tempomap
 from .errors import PackageError, TrackLabError
 from .jobs import JobManager
 from .media.peaks import peaks
@@ -51,7 +51,29 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
 
     @app.get("/api/songsterr/search")
     def search(q: str) -> dict:
-        return {"results": songsterr.search(q)}
+        """Os resultados do Songsterr, cada um com a música da biblioteca de multitracks que é ela (ou null)."""
+        return {"results": [{**item, "multitrack": multitracks.match(item["artist"], item["title"])}
+                            for item in songsterr.search(q)]}
+
+    @app.get("/api/multitracks")
+    def multitrack_status() -> dict:
+        """Onde está a biblioteca de multitracks, se o HD está ligado e quantas músicas o índice tem."""
+        return multitracks.status()
+
+    @app.post("/api/multitracks/scan", status_code=202)
+    def multitrack_scan() -> dict:
+        """Refaz o índice inteiro, na fila (o HD externo leva minutos)."""
+        def work(progress, cancel):
+            folder = multitracks.root()
+            progress("multitracks", f"Lendo {folder}…", None)
+            found = multitracks.scan(folder, progress=progress, cancel=cancel)
+            return multitracks.build(found, folder)
+
+        return _job(jobs.submit("multitracks", work))
+
+    @app.get("/api/multitracks/search")
+    def multitrack_search(q: str) -> dict:
+        return {"results": multitracks.search(q)}
 
     @app.post("/api/songs/import", status_code=202)
     def import_song(request: ImportRequest) -> dict:

@@ -8,6 +8,8 @@ import TrackLabCore
 final class LibraryModel {
     /// A seleção da barra lateral que mostra o Para hoje em vez de uma música.
     static let today = "today"
+    /// A seleção que mostra a biblioteca de multitracks.
+    static let multitracks = "multitracks"
 
     /// As coleções da barra lateral: todas, as que falta conferir a sincronização, uma afinação.
     enum Collection: Hashable {
@@ -44,22 +46,49 @@ final class LibraryModel {
 
     var today: [TodayItem] { TodayPlan.items(songs) }
 
+    /// O índice de multitracks e a varredura em curso (a mensagem da fila).
+    private(set) var multitrackStatus: MultitrackStatus?
+    private(set) var indexing: String?
+
+    func refreshMultitracks() async {
+        multitrackStatus = try? await Backend.shared.multitrackStatus()
+    }
+
+    /// Refaz o índice da biblioteca de multitracks, na fila do motor; leva minutos no HD externo.
+    func indexMultitracks() async {
+        guard indexing == nil else { return }
+        do {
+            let ticket = try await Backend.shared.scanMultitracks()
+            indexing = "Na fila…"
+            while true {
+                try await Task.sleep(for: .seconds(1))
+                let job = try await Backend.shared.job(ticket.id)
+                indexing = job.last?.message ?? "Lendo a biblioteca…"
+                guard job.finished else { continue }
+                indexing = nil
+                if job.status == "error" { loadError = job.error ?? "A indexação dos multitracks falhou." }
+                await refreshMultitracks()
+                return
+            }
+        } catch {
+            indexing = nil
+            loadError = error.localizedDescription
+        }
+    }
+
     var collections: [Collection] {
         [.all, .needsSync] + Set(songs.map(\.tuningName)).sorted().map { .tuning($0) }
     }
 
     /// As músicas da coleção e da busca (título, artista, afinação, trecho), por estado.
     var grouped: [(status: StudyStatus, songs: [SongSummary])] {
-        let words = search.lowercased().split(separator: " ").map(String.init)
         let shown = songs.filter { song in
             switch collection {
             case .all: break
             case .needsSync: if !song.needsSync { return false }
             case let .tuning(name): if song.tuningName != name { return false }
             }
-            let text = ([song.displayTitle, song.artist ?? "", song.tuningName, song.status.label] + song.sections.map(\.name))
-                .joined(separator: " ").lowercased()
-            return words.allSatisfy(text.contains)
+            return LibrarySearch.matches(song, search)
         }
         return StudyStatus.allCases.compactMap { status in
             let list = shown.filter { $0.status == status }

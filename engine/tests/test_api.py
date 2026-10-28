@@ -143,3 +143,17 @@ def test_status_sections_and_practice_through_the_api(client):
     listed = client.get("/api/songs").json()["songs"][0]
     assert listed["status"] == "learning" and listed["sections"][0]["best"] == 90
     assert client.post(f"/api/songs/{song_id}/sections/sec-nada/practice", json={"rate": 90}).status_code == 400
+
+
+def test_the_multitrack_index_through_the_api(client, tmp_path, monkeypatch):
+    library = tmp_path / "Multitracks" / "Rock Band" / "Cream - Sunshine Of Your Love"
+    library.mkdir(parents=True)
+    (library / "song.ini").write_text("[song]\nname = Sunshine of Your Love\nartist = Cream\n")
+    for name in ("guitar.ogg", "song.ogg"):
+        (library / name).write_bytes(b"")
+    monkeypatch.setenv("TRACKLAB_MULTITRACKS", str(tmp_path / "Multitracks"))
+    assert client.get("/api/multitracks").json()["count"] == 0
+    job = wait(client, client.post("/api/multitracks/scan").json()["id"])
+    assert job["status"] == "done" and job["result"]["count"] == 1
+    found = client.get("/api/multitracks/search", params={"q": "sunshine"}).json()["results"]
+    assert [(s["artist"], s["kinds"]) for s in found] == [("Cream", ["backing", "guitar"])]

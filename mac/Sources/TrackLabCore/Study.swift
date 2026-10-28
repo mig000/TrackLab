@@ -133,6 +133,25 @@ public struct SpeedTrainer: Sendable, Equatable {
     }
 }
 
+/// A busca do repertório: cada palavra digitada precisa ser o começo de uma palavra da música (título, artista,
+/// afinação, estado, trechos), sem diferença de acento ou maiúscula: "conferen" acha "Conferência", "whi roo" acha
+/// "White Room".
+public enum LibrarySearch {
+    public static func words(_ text: String) -> [String] {
+        text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "pt_BR"))
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+    }
+
+    public static func matches(_ song: SongSummary, _ query: String) -> Bool {
+        let wanted = words(query)
+        guard !wanted.isEmpty else { return true }
+        let have = words(([song.displayTitle, song.artist ?? "", song.tuningName, song.status.label]
+            + song.sections.map(\.name)).joined(separator: " "))
+        return wanted.allSatisfy { word in have.contains { $0.hasPrefix(word) } }
+    }
+}
+
 /// Um item do Para hoje: um trecho (ou a música inteira) e por que ele subiu para hoje.
 public struct TodayItem: Identifiable, Hashable, Sendable {
     public let songID: String

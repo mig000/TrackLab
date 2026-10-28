@@ -104,6 +104,8 @@ struct RootView: View {
         } detail: {
             if library.selection == LibraryModel.today {
                 TodayView(library: library, importing: $importing)
+            } else if library.selection == LibraryModel.multitracks {
+                MultitracksView(library: library)
             } else if let song {
                 SongView(model: song).id(song.id)
             } else {
@@ -124,6 +126,7 @@ struct RootView: View {
         do {
             try await Backend.shared.connect()
             await library.refresh()
+            await library.refreshMultitracks()
             // O app abre no que tocar hoje.
             if library.selection == nil { library.selection = LibraryModel.today }
             phase = .ready
@@ -141,7 +144,7 @@ struct RootView: View {
         }
         song?.close()
         song = nil
-        guard let id, id != LibraryModel.today else { return }
+        guard let id, id != LibraryModel.today, id != LibraryModel.multitracks else { return }
         let model = SongModel(id: id)
         model.startSection = section
         let library = library
@@ -170,6 +173,11 @@ private struct Sidebar: View {
                     Section(group.status.label) {
                         ForEach(group.songs) { song in SongRow(song: song).tag(song.id) }
                     }
+                }
+                Section("Fontes") {
+                    Label("Multitracks", systemImage: "square.stack.3d.up")
+                        .badge(library.multitrackStatus?.count ?? 0)
+                        .tag(LibraryModel.multitracks)
                 }
             }
             .searchable(text: Binding(get: { library.search }, set: { library.search = $0 }), placement: .sidebar,

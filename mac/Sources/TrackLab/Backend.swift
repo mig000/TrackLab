@@ -178,6 +178,19 @@ final class Backend {
         try await send("POST", "songs/\(id)/tempo-map/edit", body: gesture)
     }
 
+    // MARK: - Multitracks
+
+    func multitrackStatus() async throws -> MultitrackStatus { try await get("multitracks") }
+
+    func scanMultitracks() async throws -> JobTicket {
+        try await send("POST", "multitracks/scan", body: Optional<String>.none)
+    }
+
+    func searchMultitracks(_ text: String) async throws -> [MultitrackSong] {
+        let found: MultitrackSearch = try await get("multitracks/search", query: [URLQueryItem(name: "q", value: text)])
+        return found.results
+    }
+
     // MARK: - Repertório
 
     func setStatus(_ id: String, _ status: StudyStatus) async throws -> StudyStatus {

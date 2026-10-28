@@ -33,6 +33,12 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   (nome, from e to em tiques, meta e recorde em %, última vez, histórico); `PUT songs/{id}/status`,
   `PUT songs/{id}/sections` (o treino de cada trecho continua pelo id) e `POST songs/{id}/sections/{sid}/practice`.
   O resumo de `GET songs` traz estado, trechos, afinação da guitarra, compassos e conferidos.
+- `multitracks.py`: o índice da biblioteca de multitracks (`TRACKLAB_MULTITRACKS`, `~/TrackLab/config.json` →
+  `multitracks`, ou `/Volumes/HD Externo WD/Multitracks`): pastas com song.ini (Clone Hero / Rock Band), arquivos
+  .mogg e pastas de faixas soltas, cada faixa com o instrumento pelo nome do arquivo; SQLite com FTS5 (sem acento,
+  pelo começo das palavras) em `~/TrackLab/multitracks.sqlite`, refeito inteiro por `POST multitracks/scan` (na
+  fila: ~6 min no HD frio, ~40 s com cache; 4.459 músicas em 28/10). A busca do Songsterr marca o resultado que está
+  na biblioteca (mesmo título e artista, sem acento nem parênteses).
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
@@ -83,7 +89,8 @@ Repertório (Fase 3): o app abre no Para hoje (`TodayView`: trechos perto da met
 revisão do repertório a cada 7; músicas novas já conferidas). A barra lateral agrupa por estado, com busca e coleções
 (sincronização a conferir, afinação). Na música: o estado no cabeçalho, os trechos acima da TAB (do loop, ou das seções
 do Guitar Pro), um clique liga o loop do trecho no recorde (ou 70 %); Limpo! (⏎) conta três seguidos e sobe 5 % até a
-meta. Ainda não: busca FTS5 e o índice de multitracks do BackingLab.
+meta. A busca da barra lateral é sem acento, pelo começo das palavras (`LibrarySearch`). "Fontes › Multitracks"
+consulta o índice; usar as faixas da gravação no lugar das do Demucs é a Fase 4.
 
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.

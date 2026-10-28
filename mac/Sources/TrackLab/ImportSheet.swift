@@ -40,6 +40,16 @@ struct ImportSheet: View {
                         Text("\(result.artist) · \(result.tracks) pistas").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let multitrack = result.multitrack {
+                        Text("Multitrack")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.green)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.green.opacity(0.15)))
+                            .help("Na biblioteca de multitracks: \(multitrack.instruments.joined(separator: ", ")) "
+                                + "(\(multitrack.formatLabel), \(multitrack.collection))")
+                    }
                     Button("Importar") { start(String(result.id), title: "\(result.artist) — \(result.title)") }
                 }
             }

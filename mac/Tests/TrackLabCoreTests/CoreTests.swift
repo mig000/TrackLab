@@ -204,3 +204,19 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let old = try JSONDecoder().decode(SongSummary.self, from: Data(#"{"id": "s", "folder": "f"}"#.utf8))
     #expect(old.status == .want && old.sections.isEmpty && !old.hasAudio)
 }
+
+
+@Test func buscaSemAcentoPorComecoDePalavra() {
+    let song = SongSummary(id: "a", title: "White Room", artist: "Cream", folder: "a", hasAudio: true, stems: [],
+                           activeStems: nil, updated: nil, status: .repertoire,
+                           sections: [StudySection(name: "Solo de guitarra", from: 0, to: 1), StudySection(name: "Introdução", from: 1, to: 2)],
+                           tuning: [63, 58, 54, 49, 44, 39])
+    #expect(LibrarySearch.matches(song, "whi roo"))
+    #expect(LibrarySearch.matches(song, "CREAM"))
+    #expect(LibrarySearch.matches(song, "introducao"))
+    #expect(LibrarySearch.matches(song, "mi bemol"))
+    #expect(LibrarySearch.matches(song, "no repertorio"))
+    #expect(LibrarySearch.matches(song, ""))
+    #expect(!LibrarySearch.matches(song, "oom"))
+    #expect(!LibrarySearch.matches(song, "white sunshine"))
+}
