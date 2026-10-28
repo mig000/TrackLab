@@ -110,6 +110,13 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         found = song(song_id)
         return found.save_tempo_map(tempomap.normalize_tempo_map(document))
 
+    @app.put("/api/songs/{song_id}/checked")
+    def checked(song_id: str, body: dict = Body(...)) -> dict:
+        """Os compassos conferidos no Ajuste (`{"bars": [1, 2, …]}`), no lugar dos que estavam."""
+        if not isinstance(body.get("bars"), list):
+            raise HTTPException(400, "Envie os compassos conferidos em bars.")
+        return {"bars": song(song_id).set_checked_bars(body["bars"])}
+
     @app.get("/api/songs/{song_id}/files/{relative:path}")
     def song_file(song_id: str, relative: str):
         found = song(song_id)

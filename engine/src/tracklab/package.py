@@ -127,6 +127,16 @@ class SongPackage:
             self.update(record)
             return tempo_map
 
+    def set_checked_bars(self, bars: list[int]) -> list[int]:
+        """Os compassos (números a partir de 1) que a pessoa conferiu no Ajuste, guardados no manifesto."""
+        clean = sorted({int(bar) for bar in bars if isinstance(bar, int) and not isinstance(bar, bool) and bar >= 1})
+
+        def record(data: dict) -> None:
+            data["checkedBars"] = clean
+
+        self.update(record)
+        return clean
+
     def original_tempo_map(self) -> dict | None:
         """O mapa como veio do Songsterr: o guardado antes do primeiro ajuste, ou o atual se nunca houve ajuste."""
         for relative in (TEMPO_ORIGINAL, TEMPO_MAP):

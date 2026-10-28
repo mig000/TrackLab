@@ -118,3 +118,12 @@ def test_a_gesture_the_map_cannot_take_is_refused_and_nothing_changes(client):
     assert refused.status_code == 400 and "âncoras" in refused.json()["detail"]
     assert client.put(f"/api/songs/{song_id}/tempo-map", json={"points": [{"tick": 0, "seconds": 1}]}).status_code == 400
     assert client.post("/api/songs/song-nada/tempo-map/edit", json={"tick": 0, "seconds": 1}).status_code == 404
+
+
+def test_checked_bars_are_kept_in_the_manifest(client):
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    assert client.put(f"/api/songs/{song_id}/checked", json={"bars": [3, 1, 3, 0, "x", 2]}).json() == {"bars": [1, 2, 3]}
+    assert client.get(f"/api/songs/{song_id}").json()["checkedBars"] == [1, 2, 3]
+    assert client.put(f"/api/songs/{song_id}/checked", json={}).status_code == 400

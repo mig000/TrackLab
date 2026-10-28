@@ -50,6 +50,9 @@ final class SongModel {
     var canUndo: Bool { !undoStack.isEmpty && !saving }
     var canRedo: Bool { !redoStack.isEmpty && !saving }
     var anchorCount: Int { grid.points.filter(\.isAnchor).count }
+    /// Os compassos (a partir de 1) já conferidos no Ajuste.
+    private(set) var checkedBars: Set<Int> = []
+    var barCount: Int { max(0, grid.bars.count - 1) }
     /// Bater junto: os toques do trecho em curso, em segundos ouvidos.
     private(set) var taps: [Double] = []
     @ObservationIgnored private var tapsEnd: Task<Void, Never>?
@@ -86,6 +89,7 @@ final class SongModel {
         do {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
+            checkedBars = Set(detail.checkedBars)
             if let map = try await Backend.shared.tempoMap(id) {
                 tempoMap = map
                 grid = TempoGrid(points: map.points)
@@ -160,6 +164,17 @@ final class SongModel {
         engine.mix[stem, default: StemMix()].solo.toggle()
     }
 
+    // MARK: - Rolagem
+
+    /// Dois dedos ou a roda do mouse sobre a TAB ou a Fita: a música anda o deslocamento, na escala da tela (`span`
+    /// segundos em `width` pontos), como se a fita fosse puxada. Tocando, pausa: rolar é para conferir.
+    func scrub(dx: Double, dy: Double, width: Double, span: Double) {
+        let delta = abs(dx) >= abs(dy) ? dx : dy
+        guard delta != 0, width > 0 else { return }
+        if engine.isPlaying { engine.pause() }
+        engine.seek(to: engine.currentTime - delta / width * span)
+    }
+
     // MARK: - Loop
 
     func setLoop(_ range: ClosedRange<Double>?) {
@@ -232,6 +247,39 @@ final class SongModel {
             return
         }
         edit(.init(action: "tap", taps: list))
+    }
+
+    /// Metade e Dobro: menos ou mais batidas no mapa, sem mudar o tempo (o passo do arrasto e do Bater junto).
+    func halveBeats() { edit(.init(action: "half")) }
+    func doubleBeats() { edit(.init(action: "double")) }
+
+    /// Os compassos do trecho a conferir: os do loop, ou o que está tocando.
+    var currentBars: [Int] {
+        let starts = grid.bars
+        guard starts.count >= 2 else { return [] }
+        if let loop = engine.loop {
+            let inside = (0..<(starts.count - 1)).filter { starts[$0] >= loop.lowerBound - 0.01 && starts[$0] < loop.upperBound - 0.01 }
+            if !inside.isEmpty { return inside.map { $0 + 1 } }
+        }
+        return grid.bar(at: engine.currentTime).map { [$0] } ?? []
+    }
+
+    /// Trecho conferido: marca os compassos do trecho (o loop, ou o que toca); se já estavam todos, desmarca.
+    func toggleChecked() {
+        let bars = currentBars
+        guard !bars.isEmpty else { return }
+        var next = checkedBars
+        if bars.allSatisfy(next.contains) { next.subtract(bars) } else { next.formUnion(bars) }
+        let before = checkedBars
+        checkedBars = next
+        Task {
+            do {
+                checkedBars = Set(try await Backend.shared.putChecked(id, bars: next.sorted()))
+            } catch {
+                checkedBars = before
+                adjustMessage = error.localizedDescription
+            }
+        }
     }
 
     /// Recomeça o Ajuste: o mapa volta a ser o do Songsterr; o atual vai para o histórico do pacote e para o Desfazer.

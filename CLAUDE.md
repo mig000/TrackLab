@@ -21,12 +21,14 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   score/tempo-map.json, audio/source.flac, stems/<chave>/, peaks/). Um pacote nasce numa pasta oculta e só ganha o
   nome quando está inteiro; cada separação idem dentro de `stems/`. `save_tempo_map` grava o mapa ajustado e guarda
   o anterior em `score/tempo-map-history/` (as últimas 200 versões); antes do primeiro ajuste, copia o do Songsterr
-  para `score/tempo-map-original.json` (o "Recomeçar do Songsterr" do Ajuste).
+  para `score/tempo-map-original.json` (o "Recomeçar do Songsterr" do Ajuste). Os compassos conferidos ficam no
+  manifesto (`checkedBars`, `PUT songs/{id}/checked`).
 - `tempomap.py`: o contrato do mapa de batida do TabLab (tiques a 960 por semínima, pontos anchor / detected /
   interpolated, âncoras com alcance de 8 batidas), copiado do backend do TabLab (`integracao`), mais
   `from_bar_starts` (os pontos do Songsterr: início de cada compasso vira `detected`, as batidas de dentro
-  `interpolated`) e `tap_beats` (Bater junto: um toque por batida a partir da mais perto do primeiro; as pontas viram
-  âncoras, as de dentro ficam nos toques).
+  `interpolated`), `tap_beats` (Bater junto: um toque por batida a partir da mais perto do primeiro; as pontas viram
+  âncoras, as de dentro ficam nos toques) e `halve_beats` / `double_beats` (Metade e Dobro: a densidade das batidas,
+  sem mudar o tempo; âncoras e pontos ouvidos ficam).
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
@@ -66,8 +68,10 @@ Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no m
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
 (um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta), ⇧ + arrastar na TAB
 desliza só a onda da Fita sob as linhas, a TAB e a grade paradas; ao soltar, a batida mais perto do cursor anda o
-mesmo deslocamento (o som que ficou sob a linha é o daquela posição da TAB); ⌘Z / ⇧⌘Z pelo
-menu Editar (sem ajuste a desfazer, vão para a cadeia de respondedores). TrackLabCore (modelos, `TempoGrid`,
+mesmo deslocamento (o som que ficou sob a linha é o daquela posição da TAB); Metade e Dobro; Conferido marca os
+compassos do loop (ou o que toca), com faixa verde na Fita; ⌘Z / ⇧⌘Z pelo menu Editar (sem ajuste a desfazer, vão
+para a cadeia de respondedores). Dois dedos ou a roda do mouse sobre a TAB ou a Fita andam pela música na escala da
+tela e pausam (`ScrollCatcher`: um monitor local de rolagem, sem pegar cliques). TrackLabCore (modelos, `TempoGrid`,
 `mixGains`, `MixPreset`, `PlaybackPlan`) tem os testes.
 
 ## Ambiente

@@ -97,9 +97,12 @@ public struct SongDetail: Codable, Hashable, Sendable {
     public let stems: [String: StemSet]
     public let activeStems: String?
     public let warnings: [String]
+    /// Os compassos (a partir de 1) conferidos no Ajuste.
+    public let checkedBars: [Int]
 
     public init(id: String, title: String?, artist: String?, folder: String, score: ScoreEntry?, audio: AudioEntry?,
-                tempoMap: TempoEntry?, stems: [String: StemSet], activeStems: String?, warnings: [String]) {
+                tempoMap: TempoEntry?, stems: [String: StemSet], activeStems: String?, warnings: [String],
+                checkedBars: [Int] = []) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -110,10 +113,11 @@ public struct SongDetail: Codable, Hashable, Sendable {
         self.stems = stems
         self.activeStems = activeStems
         self.warnings = warnings
+        self.checkedBars = checkedBars
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings
+        case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings, checkedBars
     }
 
     public init(from decoder: Decoder) throws {
@@ -128,6 +132,7 @@ public struct SongDetail: Codable, Hashable, Sendable {
         stems = try c.decodeIfPresent([String: StemSet].self, forKey: .stems) ?? [:]
         activeStems = try c.decodeIfPresent(String.self, forKey: .activeStems)
         warnings = try c.decodeIfPresent([String].self, forKey: .warnings) ?? []
+        checkedBars = try c.decodeIfPresent([Int].self, forKey: .checkedBars) ?? []
     }
 
     /// A separação ativa, se houver.

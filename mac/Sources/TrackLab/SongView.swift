@@ -31,6 +31,7 @@ struct SongView: View {
                     Text(message).foregroundStyle(.secondary).padding().background(.background)
                 }
             }
+            .background(ScrollCatcher(onScroll: scrub))
             // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
             .padding(.horizontal, 12)
             .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
@@ -43,6 +44,7 @@ struct SongView: View {
                 Divider()
             }
             FitaView(model: model, span: $span)
+                .background(ScrollCatcher(onScroll: scrub))
                 .frame(minHeight: 120, maxHeight: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -55,6 +57,11 @@ struct SongView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
         }
+    }
+
+    private func scrub(dx: Double, dy: Double, width: Double) -> Bool {
+        model.scrub(dx: dx, dy: dy, width: width, span: span)
+        return true
     }
 
     private var header: some View {
@@ -97,49 +104,65 @@ struct SongView: View {
 struct AdjustBar: View {
     let model: SongModel
 
+    static let guide = "Arraste uma batida na Fita até onde ela soa: ela vira âncora e as vizinhas acompanham. "
+        + "⇧ + arraste na TAB: só a onda anda com o mouse, sob as linhas e a TAB paradas; ponha o ataque da nota do "
+        + "cursor sob a linha e solte: a batida mais perto do cursor vai para esse som. Duplo clique numa batida prende "
+        + "ou solta. Dois dedos ou a roda do mouse andam pela música."
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Text("Ajuste")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(.orange.opacity(0.15)))
+                .help(Self.guide)
             Button { model.downbeatHere() } label: { Label("O 1 é aqui", systemImage: "metronome") }
                 .keyboardShortcut("u", modifiers: [])
                 .help("U: tocando, aperte no tempo forte; o começo de compasso mais perto vem até o toque")
             Button { model.tap() } label: { Label("Bater junto", systemImage: "hand.tap") }
                 .keyboardShortcut("t", modifiers: [])
                 .help("T: com a música tocando, aperte em cada batida de um trecho; quando parar, as batidas dele viram os seus toques")
+            Button("Metade") { model.halveBeats() }
+                .help("Metade das batidas no mapa (o tempo não muda): o arrasto e o Bater junto vão de duas em duas")
+            Button("Dobro") { model.doubleBeats() }
+                .help("O dobro de batidas no mapa (o tempo não muda): uma no meio de cada uma")
             Button { model.undo() } label: { Label("Desfazer", systemImage: "arrow.uturn.backward") }
                 .disabled(!model.canUndo)
                 .help("⌘Z")
             Button { model.redo() } label: { Label("Refazer", systemImage: "arrow.uturn.forward") }
                 .disabled(!model.canRedo)
                 .help("⇧⌘Z")
-            Text(model.adjustMessage ?? (model.taps.isEmpty
-                    ? "Arraste uma batida na Fita até onde ela soa, ou ⇧ + arraste a onda até a linha; duplo clique prende ou solta."
-                    : "\(model.taps.count) toques: continue batendo; ao parar, o trecho é regravado."))
-                .font(.caption)
-                .foregroundStyle(model.adjustMessage == nil ? Color.secondary : Color.orange)
-                .lineLimit(1)
-                .help("Arraste uma batida na Fita até onde ela soa: ela vira âncora e as vizinhas acompanham. "
-                    + "⇧ + arraste na TAB: só a onda anda com o mouse, sob as linhas e a TAB paradas; ponha o ataque da nota "
-                    + "do cursor sob a linha e solte: a batida mais perto do cursor vai para esse som. "
-                    + "Duplo clique numa batida prende ou solta.")
-            Spacer()
+            // Só o que pede atenção: um aviso do motor ou os toques do Bater junto em curso; o guia fica no "Ajuste".
+            if let message = model.adjustMessage {
+                Text(message).font(.caption).foregroundStyle(.orange).lineLimit(1).help(message)
+            } else if !model.taps.isEmpty {
+                Text("\(model.taps.count) toques: continue batendo; ao parar, o trecho é regravado.")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
             if model.saving { ProgressView().controlSize(.small) }
             Text(model.anchorCount == 1 ? "1 âncora" : "\(model.anchorCount) âncoras")
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
-            Button { model.restartFromSongsterr() } label: {
-                Label("Recomeçar do Songsterr", systemImage: "arrow.counterclockwise")
+            let current = model.currentBars
+            let done = !current.isEmpty && current.allSatisfy(model.checkedBars.contains)
+            Button { model.toggleChecked() } label: {
+                Label("Conferido \(model.checkedBars.count)/\(model.barCount)",
+                      systemImage: done ? "checkmark.circle.fill" : "checkmark.circle")
+                    .monospacedDigit()
             }
-            .disabled(model.saving)
-            .help("Volta ao mapa como veio do Songsterr; o atual fica no histórico da música e no Desfazer")
+            .foregroundStyle(done ? Color.green : Color.primary)
+            .help("Marca como conferidos os compassos do loop (ou o que está tocando); de novo, desmarca")
+            Button { model.restartFromSongsterr() } label: { Label("Recomeçar", systemImage: "arrow.counterclockwise") }
+                .disabled(model.saving)
+                .help("Recomeçar do Songsterr: volta ao mapa como veio de lá; o atual fica no histórico da música e no Desfazer")
             Button("Concluir") { model.adjusting = false }
         }
         .buttonStyle(.borderless)
+        .lineLimit(1)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

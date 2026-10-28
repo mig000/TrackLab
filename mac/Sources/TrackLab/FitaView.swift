@@ -142,6 +142,13 @@ struct FitaView: View {
                          with: .color(.orange.opacity(0.85)))
         }
 
+        // Os compassos conferidos: uma faixa verde no alto.
+        for (index, bar) in bars.enumerated() where index + 1 < bars.count && model.checkedBars.contains(index + 1) {
+            let next = bars[index + 1]
+            guard next > start && bar < end else { continue }
+            context.fill(Path(CGRect(x: x(bar), y: 0, width: x(next) - x(bar), height: 4)), with: .color(.green.opacity(0.8)))
+        }
+
         // As âncoras: uma linha laranja com um triângulo no alto.
         for point in model.grid.points where point.isAnchor && point.seconds >= start && point.seconds <= end {
             anchorMark(in: &context, x: x(point.seconds), height: height, color: .orange)

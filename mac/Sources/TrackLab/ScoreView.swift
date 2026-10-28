@@ -34,6 +34,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private var adjusting = false
     private var timer: Timer?
     private var observer: UUID?
+    /// Um aviso de relógio por vez: rolando, o trackpad manda dezenas por segundo e eles fariam fila atrás do desenho
+    /// da Fita (a TAB só chegava quando a rolagem parava). Os que chegam no meio viram um só, o mais novo.
+    private var clockInFlight = false
+    private var clockPending = false
 
     init(engine: StemEngine) {
         let config = WKWebViewConfiguration()
@@ -116,9 +120,24 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
 
     func pushClock() {
         guard ready, let engine else { return }
-        call("window.tracklab.clock(seconds, playing, rate, delay)",
-             ["seconds": engine.currentTime, "playing": engine.isPlaying, "rate": Double(engine.rate),
-              "delay": engine.startDelay])
+        if clockInFlight {
+            clockPending = true
+            return
+        }
+        clockInFlight = true
+        let arguments: [String: Any] = ["seconds": engine.currentTime, "playing": engine.isPlaying,
+                                        "rate": Double(engine.rate), "delay": engine.startDelay]
+        webView.callAsyncJavaScript("window.tracklab.clock(seconds, playing, rate, delay); return null;",
+                                    arguments: arguments, in: nil, in: .page) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.clockInFlight = false
+                if self.clockPending {
+                    self.clockPending = false
+                    self.pushClock()
+                }
+            }
+        }
     }
 
     private func sendPending() {

@@ -2,7 +2,8 @@
 
 import pytest
 
-from tracklab.tempomap import RhythmError, anchor_edit, map_of, move_anchor, release_anchor, tap_beats
+from tracklab.tempomap import (RhythmError, anchor_edit, double_beats, halve_beats, map_of, move_anchor,
+                               release_anchor, tap_beats)
 
 
 def grid(seconds: list[float], anchors: tuple[int, ...] = ()) -> dict:
@@ -74,3 +75,19 @@ def test_taps_go_through_the_gesture_and_need_order_and_enough_of_them():
         tap_beats(before, [1.0, 1.5, 1.45, 2.0])
     with pytest.raises(RhythmError, match="toques"):
         anchor_edit({"tempoMap": before, "action": "tap"})
+
+
+def test_double_and_half_change_the_beats_not_the_time():
+    bars = {"schemaVersion": 1, "source": "reference", "points": [
+        {"tick": 960 * k, "seconds": 0.5 * k, "kind": "detected" if k % 4 == 0 else "interpolated"} for k in range(9)]}
+    doubled = double_beats(bars)
+    assert [p["tick"] for p in doubled["points"]] == [480 * k for k in range(17)]
+    assert all(map_of(doubled).seconds(t) == map_of(bars).seconds(t) for t in range(0, 7681, 240))
+    halved = halve_beats(bars)
+    # De cada início de compasso, sai uma interpolada a cada duas: ficam o 1 e o 3.
+    assert [p["tick"] for p in halved["points"]] == [0, 1920, 3840, 5760, 7680]
+    assert halve_beats(doubled)["points"] == bars["points"]
+    # Âncoras e toques ficam, mesmo fora do passo.
+    anchored = move_anchor(bars, 960, 0.55)
+    assert 960 in [p["tick"] for p in halve_beats(anchored)["points"]]
+    assert anchor_edit({"tempoMap": bars, "action": "double"}) == doubled

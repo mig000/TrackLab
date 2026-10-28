@@ -236,14 +236,51 @@ def map_from(raw: dict) -> dict:
     raise RhythmError("Envie o mapa de batida (tempoMap) ou a régua (ruler) de onde o gesto parte.")
 
 
+def double_beats(tempo_map: dict) -> dict:
+    """Dobro: uma batida `interpolated` no meio de cada par de pontos. O tempo não muda (o mapa já era reto entre
+    eles); muda o que se pega no Ajuste e o passo do Bater junto."""
+    clean = normalize_tempo_map(tempo_map)
+    points = clean["points"]
+    doubled = []
+    for a, b in zip(points, points[1:]):
+        doubled.append(a)
+        doubled.append({"tick": (a["tick"] + b["tick"]) / 2, "seconds": (a["seconds"] + b["seconds"]) / 2,
+                        "kind": "interpolated"})
+    doubled.append(points[-1])
+    return normalize_tempo_map(dict(clean, points=doubled))
+
+
+def halve_beats(tempo_map: dict) -> dict:
+    """Metade: sai uma batida `interpolated` a cada duas, contadas a partir de cada ponto que não é interpolado (o
+    início de compasso do Songsterr, uma âncora, um toque). Âncoras e pontos ouvidos nunca saem."""
+    clean = normalize_tempo_map(tempo_map)
+    kept = []
+    count = 0
+    for point in clean["points"]:
+        if point["kind"] != "interpolated":
+            count = 0
+            kept.append(point)
+            continue
+        count += 1
+        if count % 2 == 0:
+            kept.append(point)
+    if len(kept) < 2:
+        raise RhythmError("O mapa ficaria sem batidas.")
+    return normalize_tempo_map(dict(clean, points=kept))
+
+
 def anchor_edit(raw: dict) -> dict:
     """Um gesto da régua sobre o mapa enviado pelo app (que guarda o mapa e o Desfazer): `move` leva a batida do
     `tick` a `seconds` como âncora, puxando o lado sem âncora até `reach` batidas (padrão 8), ou o resto inteiro com
-    `pull`; `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`). Sem
-    `tempoMap`, parte da reta da régua (`ruler`)."""
+    `pull`; `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`);
+    `half` e `double` mudam a densidade das batidas. Sem `tempoMap`, parte da reta da régua (`ruler`)."""
     if not isinstance(raw, dict):
         raise RhythmError("Envie o gesto como um objeto com tempoMap, tick e seconds.")
     tempo_map = map_from(raw)
+    if raw.get("action") == "half":
+        return halve_beats(tempo_map)
+    if raw.get("action") == "double":
+        return double_beats(tempo_map)
     if raw.get("action") == "tap":
         if not isinstance(raw.get("taps"), list):
             raise RhythmError("Para bater junto, envie os toques (taps) em segundos.")
@@ -254,7 +291,7 @@ def anchor_edit(raw: dict) -> dict:
     if raw.get("action", "move") == "release":
         return release_anchor(tempo_map, tick)
     if raw.get("action", "move") != "move":
-        raise RhythmError("O gesto é move, release ou tap.")
+        raise RhythmError("O gesto é move, release, tap, half ou double.")
     if not _number(raw.get("seconds")):
         raise RhythmError("Para mover a batida, envie o segundo (seconds) em que ela cai.")
     reach = None

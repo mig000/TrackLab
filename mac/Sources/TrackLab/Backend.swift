@@ -178,6 +178,13 @@ final class Backend {
         try await send("POST", "songs/\(id)/tempo-map/edit", body: gesture)
     }
 
+    /// Os compassos conferidos no Ajuste, no lugar dos que estavam; devolve os gravados.
+    func putChecked(_ id: String, bars: [Int]) async throws -> [Int] {
+        struct Body: Codable { let bars: [Int] }
+        let saved: Body = try await send("PUT", "songs/\(id)/checked", body: Body(bars: bars))
+        return saved.bars
+    }
+
     /// O mapa como veio do Songsterr (antes do primeiro ajuste).
     func originalTempo(_ id: String) async throws -> TempoMapDocument {
         try await get("songs/\(id)/tempo-map/original")
