@@ -337,11 +337,13 @@ struct MixerBar: View {
         HStack(alignment: .center, spacing: 16) {
             if engine.stemIDs.isEmpty {
                 Text("Só o áudio original.").foregroundStyle(.secondary)
-                if let job = model.separating {
-                    ProgressView(value: job.progress ?? 0).frame(width: 140)
-                    Text(job.message).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                if model.stemJob != nil {
+                    StemJobView(model: model)
                 } else if model.detail?.audio != nil {
                     Button("Separar as faixas (Demucs 6s)") { Task { await model.separate() } }
+                    if model.multitrack != nil {
+                        Button("Faixas da multitrack") { Task { await model.improve(.multitrack) } }
+                    }
                 }
                 Spacer()
             } else {
@@ -363,7 +365,13 @@ struct MixerBar: View {
                         .labelsHidden()
                         .frame(width: 330)
                         .disabled(!engine.useStems)
+                        StemSourcePicker(model: model)
                         Spacer()
+                        if model.stemJob != nil {
+                            StemJobView(model: model)
+                        } else {
+                            ImproveMenu(model: model)
+                        }
                     }
                     HStack(spacing: 14) {
                         ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
@@ -397,5 +405,96 @@ private struct StemStrip: View {
         }
         .frame(minWidth: 90, maxWidth: 180)
         .opacity(entry.muted && !entry.solo ? 0.55 : 1)
+    }
+}
+
+/// A separação que toca (Demucs, multitrack, MVSEP) e o A/B entre a atual e a anterior (ou a recém-chegada).
+private struct StemSourcePicker: View {
+    let model: SongModel
+
+    var body: some View {
+        if let detail = model.detail, detail.stems.count > 1 {
+            HStack(spacing: 6) {
+                Picker("Faixas", selection: Binding(get: { detail.activeStems ?? "" },
+                                                    set: { key in Task { await model.useStems(key) } })) {
+                    ForEach(detail.stemKeys, id: \.self) { key in
+                        Text(detail.stems[key]?.label ?? key).tag(key)
+                    }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help(detail.active.map { "\($0.label): \($0.detail)" } ?? "")
+                Button {
+                    model.toggleAB()
+                } label: {
+                    Text("A/B")
+                }
+                .keyboardShortcut("b", modifiers: [])
+                .disabled(model.compareKey == nil)
+                .help(model.compareKey.flatMap { detail.stems[$0]?.label }.map {
+                    "B: troca para \($0) no mesmo ponto, tocando, com a mesma mixagem"
+                } ?? "Escolha outra separação para comparar")
+            }
+        }
+    }
+}
+
+/// Faixas melhores: a multitrack da biblioteca (quando a música está lá) e a guitarra do MVSEP, com a cota do dia.
+private struct ImproveMenu: View {
+    let model: SongModel
+
+    var body: some View {
+        let detail = model.detail
+        let has = { (provider: String, model: String?) in
+            detail?.stems.values.contains { $0.provider == provider && (model == nil || $0.model == model) } ?? false
+        }
+        let left = model.mvsepUsage?.left
+        Menu("Melhorar as faixas") {
+            if let multitrack = model.multitrack {
+                Button("Faixas da multitrack · \(multitrack.formatLabel)") { Task { await model.improve(.multitrack) } }
+                    .disabled(has("multitrack", nil) || multitrack.format == "mogg")
+            } else {
+                Text("Esta música não está na biblioteca de multitracks")
+            }
+            Divider()
+            Button("Seis faixas do MVSEP (BS-RoFormer SW)") { Task { await model.improve(.mvsep(63)) } }
+                .disabled(has("mvsep", "mvsep63") || left == 0)
+            Button("Guitarra do MVSEP") { Task { await model.improve(.mvsep(31)) } }
+                .disabled(has("mvsep", "mvsep31") || left == 0)
+            Button("Guitarra solo e base do MVSEP") { Task { await model.improve(.mvsep(101)) } }
+                .disabled(has("mvsep", "mvsep101") || left == 0)
+            if let usage = model.mvsepUsage {
+                Text("MVSEP: \(usage.left) de \(usage.limit) conversões hoje")
+            }
+            if !has("demucs", nil) {
+                Divider()
+                Button("Demucs 6s") { Task { await model.improve(.demucs) } }
+            }
+        }
+        .fixedSize()
+        .help("A multitrack é a gravação de verdade. No MVSEP (uma conversão do dia cada): as seis faixas do "
+              + "BS-RoFormer SW; só a guitarra (o resto pelo Demucs local); ou guitarra solo e base. As faixas novas "
+              + "chegam para o A/B, sem trocar as atuais.")
+    }
+}
+
+/// A separação em curso, com o cancelar.
+private struct StemJobView: View {
+    let model: SongModel
+
+    var body: some View {
+        if let job = model.stemJob {
+            HStack(spacing: 8) {
+                if let progress = job.progress {
+                    ProgressView(value: progress).frame(width: 120)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                Text("\(job.request.label): \(job.message)")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .frame(maxWidth: 360, alignment: .leading)
+                Button("Cancelar") { model.cancelStemJob() }.controlSize(.small)
+            }
+        }
     }
 }

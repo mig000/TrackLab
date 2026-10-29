@@ -243,16 +243,29 @@ def search(text: str, limit: int = SEARCH_LIMIT, path: Path | None = None) -> li
     return [_row(row) for row in rows]
 
 
+def by_path(relative: str, path: Path | None = None) -> dict | None:
+    """A música do índice com este caminho (relativo à biblioteca), ou None."""
+    target = Path(path or database())
+    if not target.is_file():
+        return None
+    with _connect(target) as connection:
+        row = connection.execute("SELECT * FROM songs WHERE path = ?", (relative,)).fetchone()
+    return _row(row) if row else None
+
+
 def match(artist: str, title: str, path: Path | None = None) -> dict | None:
     """A música da biblioteca que é esta (o resultado do Songsterr): o mesmo título e o mesmo artista, sem acentos,
     pontuação nem "(Live)" e parecidos."""
     want_title, want_artist = _key(title), _key(artist)
     if not want_title:
         return None
-    for found in search(f"{want_title} {want_artist}", limit=20, path=path) or search(want_title, limit=20, path=path):
-        if _key(found["title"]) == want_title and (not want_artist or _key(found["artist"] or "") == want_artist):
-            return found
-    return None
+    candidates = [found for found in (search(f"{want_title} {want_artist}", limit=20, path=path)
+                                      or search(want_title, limit=20, path=path))
+                  if _key(found["title"]) == want_title
+                  and (not want_artist or _key(found["artist"] or "") == want_artist)]
+    # Repetida na biblioteca, vale a que o TrackLab sabe importar: faixas separadas antes do .mogg.
+    candidates.sort(key=lambda found: found["format"] == "mogg")
+    return candidates[0] if candidates else None
 
 
 def _key(text: str) -> str:
@@ -267,5 +280,5 @@ def _row(row: sqlite3.Row) -> dict:
             "kinds": sorted({stem["kind"] for stem in stems})}
 
 
-__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "kind_of", "clean_name",
+__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "by_path", "kind_of", "clean_name",
            "split_name"]

@@ -229,9 +229,10 @@ final class Backend {
         try await send("PUT", "songs/\(id)/tempo-map", body: map)
     }
 
-    /// A onda do áudio original (`stem` nil) ou de uma faixa da separação ativa; nil se não houver.
-    func peaks(_ id: String, stem: String? = nil) async throws -> Peaks? {
-        let query = stem.map { [URLQueryItem(name: "stem", value: $0)] } ?? []
+    /// A onda do áudio original (`stem` nil) ou de uma faixa da separação ativa (ou de `stems`); nil se não houver.
+    func peaks(_ id: String, stem: String? = nil, stems: String? = nil) async throws -> Peaks? {
+        var query = stem.map { [URLQueryItem(name: "stem", value: $0)] } ?? []
+        if let stems { query.append(URLQueryItem(name: "stems_key", value: stems)) }
         do {
             return try await get("songs/\(id)/peaks", query: query)
         } catch BackendError.http(404, _) {
@@ -257,6 +258,36 @@ final class Backend {
         try await send("POST", "songs/\(id)/separate", body: Optional<String>.none)
     }
 
+    // MARK: - A escada de separação (Fase 4)
+
+    /// A multitrack da biblioteca que é esta música, se houver.
+    func songMultitrack(_ id: String) async throws -> MultitrackSong? {
+        struct Answer: Decodable { let multitrack: MultitrackSong? }
+        let answer: Answer = try await get("songs/\(id)/multitrack")
+        return answer.multitrack
+    }
+
+    /// As faixas da multitrack alinhadas ao vídeo, na fila.
+    func importMultitrack(_ id: String) async throws -> JobTicket {
+        try await send("POST", "songs/\(id)/stems/multitrack", body: [String: String]())
+    }
+
+    func mvsepUsage() async throws -> MVSEPUsage { try await get("mvsep") }
+
+    /// A guitarra do MVSEP (`model` 31 ou 101), na fila; a chave vai só no cabeçalho deste pedido.
+    func separateMVSEP(_ id: String, model: Int, key: String) async throws -> JobTicket {
+        struct Body: Encodable { let model: Int }
+        return try await send("POST", "songs/\(id)/stems/mvsep", body: Body(model: model),
+                              headers: ["X-MVSEP-Key": key])
+    }
+
+    /// A separação que o app toca.
+    func setActiveStems(_ id: String, key: String) async throws {
+        struct Body: Codable { let key: String }
+        struct Answer: Decodable { let activeStems: String }
+        let _: Answer = try await send("PUT", "songs/\(id)/stems/active", body: Body(key: key))
+    }
+
     func job(_ id: String) async throws -> Job { try await get("jobs/\(id)") }
 
     func cancel(_ id: String) async throws {
@@ -277,11 +308,13 @@ final class Backend {
         return try await Self.decode(data)
     }
 
-    private func send<T: Decodable, B: Encodable>(_ method: String, _ path: String, body: B?) async throws -> T {
+    private func send<T: Decodable, B: Encodable>(_ method: String, _ path: String, body: B?,
+                                                  headers: [String: String] = [:]) async throws -> T {
         guard let base else { throw BackendError.notReady }
         var request = URLRequest(url: base.appending(path: path))
         request.httpMethod = method
         request.timeoutInterval = 60
+        for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONEncoder().encode(body)

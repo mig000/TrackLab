@@ -72,7 +72,8 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(none["bass"] == StemMix(volume: 0.6))
     #expect(MixPreset.matching(none, stems: stems) == .noGuitar)
     let only = MixPreset.guitarOnly.apply(to: none, stems: stems)
-    #expect(mixGains(only).filter { $0.value > 0 }.keys.sorted() == ["guitar"])
+    #expect(none["rhythm"]?.muted == true)    // a guitarra base também sai
+    #expect(mixGains(only).filter { $0.value > 0 }.keys.sorted() == ["guitar", "rhythm"])
     #expect(MixPreset.matching(only, stems: stems) == .guitarOnly)
     #expect(MixPreset.matching(MixPreset.full.apply(to: only, stems: stems), stems: stems) == .full)
 }
@@ -219,4 +220,25 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(LibrarySearch.matches(song, ""))
     #expect(!LibrarySearch.matches(song, "oom"))
     #expect(!LibrarySearch.matches(song, "white sunshine"))
+}
+
+@Test func separacoesNaOrdemDaEscada() throws {
+    let json = #"""
+    {"id": "s", "folder": "/f", "activeStems": "demucs6s-a",
+     "stems": {
+       "mvsep101-c": {"provider": "mvsep", "model": "mvsep101", "name": "MVSEP Solo e base", "files": {}},
+       "mvsep63-e": {"provider": "mvsep", "model": "mvsep63", "name": "MVSEP 6 faixas (SW)", "files": {}},
+       "mvsep31-b": {"provider": "mvsep", "model": "mvsep31", "name": "MVSEP Guitar", "files": {"guitar": "g"}},
+       "multitrack-d": {"provider": "multitrack", "model": "multitrack", "library": "Pack/Cream - X",
+                        "alignment": {"offset": 0.75, "speed": 0.9917, "agreed": 14, "windows": 24},
+                        "files": {"guitar": "g", "bass": "b"}},
+       "demucs6s-a": {"provider": "demucs", "model": "htdemucs_6s", "files": {"guitar": "g"}}}}
+    """#
+    let song = try JSONDecoder().decode(SongDetail.self, from: Data(json.utf8))
+    #expect(song.stemKeys == ["demucs6s-a", "multitrack-d", "mvsep63-e", "mvsep31-b", "mvsep101-c"])
+    #expect(song.stemKeys.map { song.stems[$0]!.label }
+            == ["Demucs 6s", "Multitrack", "MVSEP 6 faixas (SW)", "MVSEP Guitar", "MVSEP Solo e base"])
+    #expect(song.stems["multitrack-d"]!.detail
+            == "Pack/Cream - X · começa +0.750 s no vídeo · velocidade corrigida -0.830 % · 14 de 24 trechos de acordo")
+    #expect(song.active?.label == "Demucs 6s")
 }

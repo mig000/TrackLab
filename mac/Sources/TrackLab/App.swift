@@ -29,6 +29,7 @@ struct TrackLabApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
         }
+        Settings { SettingsView() }
     }
 }
 

@@ -157,3 +157,43 @@ def test_the_multitrack_index_through_the_api(client, tmp_path, monkeypatch):
     assert job["status"] == "done" and job["result"]["count"] == 1
     found = client.get("/api/multitracks/search", params={"q": "sunshine"}).json()["results"]
     assert [(s["artist"], s["kinds"]) for s in found] == [("Cream", ["backing", "guitar"])]
+
+
+def test_stem_sources_through_the_api(tmp_path, monkeypatch):
+    from test_stem_sources import FakeMVSEP, KEY
+
+    monkeypatch.setattr(demucs, "separator_version", lambda model=demucs.MODEL: "v")
+    monkeypatch.setenv("TRACKLAB_MULTITRACKS", str(tmp_path / "vazia"))
+    jobs = JobManager(tmp_path / "jobs-home")
+    servers = []
+
+    class Session:
+        def __getattr__(self, name):
+            return getattr(servers[0], name)
+
+    app = create_app(jobs, source=FakeSource([guitar_track(2)], points=[0.0, 2.0, 4.0]), separate_run=fake_run([]),
+                     mvsep_session=Session(), mvsep_pause=lambda _: None)
+    with TestClient(app) as client:
+        job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+        song_id = job["result"]["song"]["id"]
+        first = job["result"]["stems"]["key"]
+        found = package.find(song_id)
+        servers.append(FakeMVSEP(found.file(found.manifest["audio"]["file"])))
+        assert client.get(f"/api/songs/{song_id}/multitrack").json() == {"multitrack": None}
+        assert client.post(f"/api/songs/{song_id}/stems/multitrack", json={}).status_code == 404
+        refused = client.post(f"/api/songs/{song_id}/stems/mvsep", json={"model": 31})
+        assert refused.status_code == 400 and "chave" in refused.json()["detail"]
+        assert client.post(f"/api/songs/{song_id}/stems/mvsep", json={"model": 7},
+                           headers={"X-MVSEP-Key": KEY}).status_code == 400
+        started = client.post(f"/api/songs/{song_id}/stems/mvsep", json={"model": 31}, headers={"X-MVSEP-Key": KEY})
+        done = wait(client, started.json()["id"])
+        assert done["status"] == "done", done
+        key = done["result"]["key"]
+        detail = client.get(f"/api/songs/{song_id}").json()
+        assert detail["activeStems"] == first and detail["stems"][key]["provider"] == "mvsep"
+        assert client.get("/api/mvsep").json()["usedToday"] == 1
+        wave = client.get(f"/api/songs/{song_id}/peaks", params={"stem": "guitar", "stems_key": key})
+        assert wave.status_code == 200
+        assert client.put(f"/api/songs/{song_id}/stems/active", json={"key": key}).json() == {"activeStems": key}
+        assert client.put(f"/api/songs/{song_id}/stems/active", json={"key": "nada"}).status_code == 400
+    jobs.close()

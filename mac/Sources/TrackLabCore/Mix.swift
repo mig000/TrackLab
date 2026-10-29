@@ -1,14 +1,19 @@
 import Foundation
 
-/// As faixas da separação na ordem do mixer, com o nome que o app mostra.
+/// As faixas da separação na ordem do mixer, com o nome que o app mostra. `rhythm` é a guitarra base, quando a
+/// separação (o MVSEP 101, uma multitrack) a dá à parte.
 public enum Stem: String, CaseIterable, Identifiable, Sendable {
-    case guitar, bass, drums, vocals, piano, other
+    case guitar, rhythm, bass, drums, vocals, piano, other
 
     public var id: String { rawValue }
+
+    /// As guitarras: "Sem guitarra" cala todas.
+    public var isGuitar: Bool { self == .guitar || self == .rhythm }
 
     public var label: String {
         switch self {
         case .guitar: "Guitarra"
+        case .rhythm: "Base"
         case .bass: "Baixo"
         case .drums: "Bateria"
         case .vocals: "Voz"
@@ -62,9 +67,10 @@ public enum MixPreset: String, CaseIterable, Identifiable, Sendable {
         for id in stems {
             var entry = mix[id] ?? StemMix()
             entry.solo = false
+            let guitar = Stem(rawValue: id)?.isGuitar ?? false
             switch self {
-            case .noGuitar: entry.muted = id == Stem.guitar.rawValue
-            case .guitarOnly: entry.muted = id != Stem.guitar.rawValue
+            case .noGuitar: entry.muted = guitar
+            case .guitarOnly: entry.muted = !guitar
             case .full: entry.muted = false
             }
             result[id] = entry

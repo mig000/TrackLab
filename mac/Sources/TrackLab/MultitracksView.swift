@@ -2,7 +2,7 @@ import SwiftUI
 import TrackLabCore
 
 /// A biblioteca de multitracks: as músicas com as faixas da gravação, achadas pelo índice do motor (sem acento, pelo
-/// começo das palavras). Daqui elas ainda só se consultam; usar as faixas no lugar das do Demucs é a Fase 4.
+/// começo das palavras). Daqui elas se consultam; as faixas entram numa música pelo mixer dela (Melhorar as faixas).
 struct MultitracksView: View {
     let library: LibraryModel
     @Local private var text = ""

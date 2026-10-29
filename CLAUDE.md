@@ -39,6 +39,19 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   pelo começo das palavras) em `~/TrackLab/multitracks.sqlite`, refeito inteiro por `POST multitracks/scan` (na
   fila: ~6 min no HD frio, ~40 s com cache; 4.459 músicas em 28/10). A busca do Songsterr marca o resultado que está
   na biblioteca (mesmo título e artista, sem acento nem parênteses).
+- Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/` e só vira a ativa sem A/B se não
+  houver outra (`PUT songs/{id}/stems/active`). `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
+  em 24 trechos, consenso numa reta: deslocamento e velocidade até 2 %, depois uma passada fina; ganho pela energia);
+  sem consenso é outra gravação e nada entra. Medido em 28/10: Highway Star +0,39 %, Purple Haze −0,83 %, American
+  Woman 72,8 s de introdução a mais no vídeo; o cover do GH3 da Sunshine é recusado. Entre transferências sobra uma
+  oscilação de poucos ms (inaudível: as faixas tocam no lugar do vídeo). `media/multitrack.py` monta as faixas
+  (`rhythm` do Clone Hero é a base se o song.ini tem `diff_rhythm`, senão o baixo; crowd fica fora; .mogg ainda não
+  entra); `POST songs/{id}/stems/multitrack`. `media/mvsep.py` (do `mvsep_worker.py` do BackingLab 2): 63 (BS Roformer SW,
+  as seis faixas numa conversão, sem Demucs), 31 (MVSep Guitar, o mesmo SW só na guitarra) e 101 (solo e base), WAV 16
+  bits, sem reenvio automático; no 31 e no 101 o resto da banda é o Demucs local sobre original − guitarras (no 31 a
+  guitarra leva o que o Demucs achou de guitarra no resto). A chave vem do app no
+  cabeçalho `X-MVSEP-Key` de `POST songs/{id}/stems/mvsep`; a cota do dia fica em `~/TrackLab/mvsep.json`
+  (`GET mvsep`). Nunca separa duas vezes a mesma música com o mesmo modelo.
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
@@ -90,7 +103,13 @@ revisão do repertório a cada 7; músicas novas já conferidas). A barra latera
 (sincronização a conferir, afinação). Na música: o estado no cabeçalho, os trechos acima da TAB (do loop, ou das seções
 do Guitar Pro), um clique liga o loop do trecho no recorde (ou 70 %); Limpo! (⏎) conta três seguidos e sobe 5 % até a
 meta. A busca da barra lateral é sem acento, pelo começo das palavras (`LibrarySearch`). "Fontes › Multitracks"
-consulta o índice; usar as faixas da gravação no lugar das do Demucs é a Fase 4.
+consulta o índice.
+
+Escada de separação (Fase 4): no mixer, o seletor de faixas (Demucs 6s, Multitrack, MVSEP 6 faixas, MVSEP Guitar, MVSEP Solo e base) e
+o A/B (B) trocam a separação no mesmo ponto, tocando, com a mesma mixagem; "Melhorar as faixas" pede a multitrack ou o
+MVSEP (com a cota do dia) e a nova chega como o outro lado do A/B. A faixa `rhythm` (Base) entra no mixer e "Sem
+guitarra" cala as duas. A chave do MVSEP fica nas Chaves do macOS (TrackLab › Ajustes, ⌘,); o app ad hoc pede
+permissão para lê-la de novo a cada build.
 
 ## Ambiente
 - A nuvem não alcança songsterr.com nem huggingface.co: a importação real e a separação se provam no iMac.

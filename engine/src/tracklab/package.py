@@ -70,8 +70,9 @@ class SongPackage:
             atomic_json(self.path / MANIFEST, data)
             return data
 
-    def add_stems(self, key: str, build) -> dict:
-        """Separação publicada de uma vez: `build(pasta)` grava as faixas e devolve o recibo; só então a pasta entra."""
+    def add_stems(self, key: str, build, *, activate: bool = True) -> dict:
+        """Separação publicada de uma vez: `build(pasta)` grava as faixas e devolve o recibo; só então a pasta entra.
+        Com `activate` falso, a nova só vira a ativa se não houver outra (as de qualidade esperam o A/B do app)."""
         if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", key):
             raise PackageError(f"Chave de faixas inválida: {key}.")
         stems = self.path / "stems"
@@ -94,10 +95,21 @@ class SongPackage:
                 "provider": receipt.get("provider", "demucs"), "model": receipt.get("model"),
                 "device": receipt.get("device"), "seconds": receipt.get("seconds"),
                 "created": receipt.get("created", now_iso()), "files": files,
-                **({"fallback": receipt["fallback"]} if receipt.get("fallback") else {})}
-            data["activeStems"] = key
+                **{name: receipt[name] for name in ("fallback", "name", "library", "alignment") if receipt.get(name)}}
+            if activate or data.get("activeStems") not in data["stems"]:
+                data["activeStems"] = key
 
         return self.update(record)
+
+    def set_active_stems(self, key: str) -> str:
+        """A separação que o app toca (o A/B escolhe entre as que existem)."""
+        def record(data: dict) -> None:
+            if key not in data.get("stems", {}):
+                raise PackageError(f"Esta música não tem a separação {key}.")
+            data["activeStems"] = key
+
+        self.update(record)
+        return key
 
     def save_tempo_map(self, tempo_map: dict) -> dict:
         """Grava o mapa (já conferido) como o atual; o anterior vai para `score/tempo-map-history/`, numerado, e

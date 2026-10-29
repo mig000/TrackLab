@@ -31,8 +31,13 @@ final class SongModel {
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
     private(set) var scoreHeight: Double?
     private(set) var notice: String?
-    /// A separação em curso (o id da tarefa e a última mensagem dela).
-    private(set) var separating: (job: String, message: String, progress: Double?)?
+    /// A separação em curso (o id da tarefa, o que ela faz e a última mensagem).
+    private(set) var stemJob: (job: String, request: StemRequest, message: String, progress: Double?)?
+    /// A multitrack da biblioteca que é esta música (para "Faixas da multitrack").
+    private(set) var multitrack: MultitrackSong?
+    private(set) var mvsepUsage: MVSEPUsage?
+    /// O outro lado do A/B: a separação que estava tocando antes, ou a nova que acabou de chegar.
+    private(set) var compareKey: String?
 
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
     var adjusting = false {
@@ -113,9 +118,10 @@ final class SongModel {
                 tempoMap = map
                 grid = TempoGrid(points: map.points)
             }
-            try loadAudio(detail)
+            try loadAudio(detail, keepMix: false)
             loadScore(detail)
             phase = .ready
+            Task { await loadSources() }
             if let start = startSection, let section = sections.first(where: { $0.id == start }) { activate(section) }
             startSection = nil
             await loadPeaks(detail)
@@ -124,7 +130,7 @@ final class SongModel {
         }
     }
 
-    private func loadAudio(_ detail: SongDetail) throws {
+    private func loadAudio(_ detail: SongDetail, keepMix: Bool) throws {
         var files: [(id: String, url: URL)] = []
         if let audio = detail.audio { files.append((StemEngine.sourceID, detail.url(audio.file))) }
         let active = detail.active?.files ?? [:]
@@ -135,13 +141,17 @@ final class SongModel {
             notice = "Esta música não tem áudio: só a partitura."
             return
         }
+        let preset = preset
         try engine.load(files)
-        if !active.isEmpty {
+        if active.isEmpty {
+            engine.useStems = false
+        } else if keepMix {
+            // A/B: a mesma escuta na separação nova (o atalho de antes vale para as faixas que ela tem, a Base inclusa).
+            if let preset { apply(preset) }
+        } else {
             engine.useStems = true
             // Abre pronta para tocar junto: a banda sem a guitarra.
             engine.mix = MixPreset.noGuitar.apply(to: engine.mix, stems: engine.stemIDs)
-        } else {
-            engine.useStems = false
         }
     }
 
@@ -162,9 +172,18 @@ final class SongModel {
 
     private func loadPeaks(_ detail: SongDetail) async {
         if detail.audio != nil { sourcePeaks = try? await Backend.shared.peaks(id) }
-        if detail.active?.files[Stem.guitar.rawValue] != nil {
-            guitarPeaks = try? await Backend.shared.peaks(id, stem: Stem.guitar.rawValue)
-        }
+        await loadGuitarPeaks(detail)
+    }
+
+    private func loadGuitarPeaks(_ detail: SongDetail) async {
+        guitarPeaks = detail.active?.files[Stem.guitar.rawValue] != nil
+            ? try? await Backend.shared.peaks(id, stem: Stem.guitar.rawValue) : nil
+    }
+
+    /// A multitrack que casa com a música e a cota do MVSEP, para o menu de faixas melhores.
+    private func loadSources() async {
+        multitrack = try? await Backend.shared.songMultitrack(id)
+        mvsepUsage = try? await Backend.shared.mvsepUsage()
     }
 
     // MARK: - Mixer
@@ -490,31 +509,106 @@ final class SongModel {
         bridge.setTempo(map.points)
     }
 
-    // MARK: - Separação
+    // MARK: - Separação (a escada da Fase 4)
 
-    func separate() async {
-        guard separating == nil else { return }
+    /// A separação que toca agora (uma das guardadas): o áudio é recarregado no mesmo ponto, tocando se tocava, com
+    /// a mesma mixagem. A anterior fica como o outro lado do A/B.
+    func useStems(_ key: String) async {
+        guard let detail, key != detail.activeStems, detail.stems[key] != nil, stemSwitching == false else { return }
+        stemSwitching = true
+        defer { stemSwitching = false }
         do {
-            let ticket = try await Backend.shared.separate(id)
-            separating = (ticket.id, "Na fila…", nil)
+            try await Backend.shared.setActiveStems(id, key: key)
+            let fresh = try await Backend.shared.song(id)
+            let previous = detail.activeStems
+            let wasPlaying = engine.isPlaying
+            self.detail = fresh
+            try loadAudio(fresh, keepMix: true)
+            engine.useStems = true
+            if wasPlaying { engine.play() }
+            compareKey = previous
+            await loadGuitarPeaks(fresh)
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+
+    @ObservationIgnored private var stemSwitching = false
+
+    /// B: troca entre as duas separações do A/B.
+    func toggleAB() {
+        guard let compareKey else { return }
+        Task { await useStems(compareKey) }
+    }
+
+    enum StemRequest: Equatable {
+        case demucs
+        case multitrack
+        case mvsep(Int)
+
+        var label: String {
+            switch self {
+            case .demucs: "Demucs 6s"
+            case .multitrack: "Multitrack"
+            case .mvsep(63): "MVSEP 6 faixas"
+            case .mvsep(101): "MVSEP solo e base"
+            case .mvsep: "MVSEP Guitar"
+            }
+        }
+    }
+
+    func separate() async { await improve(.demucs) }
+
+    /// Pede faixas (o Demucs, a multitrack ou o MVSEP) e acompanha a fila; a nova separação vira o outro lado do A/B
+    /// (ou a ativa, se não havia nenhuma).
+    func improve(_ request: StemRequest) async {
+        guard stemJob == nil else { return }
+        do {
+            let ticket: JobTicket
+            switch request {
+            case .demucs:
+                ticket = try await Backend.shared.separate(id)
+            case .multitrack:
+                ticket = try await Backend.shared.importMultitrack(id)
+            case let .mvsep(model):
+                guard let key = MVSEPKey.read() else {
+                    notice = "Falta a chave do MVSEP: TrackLab › Ajustes (⌘,)."
+                    return
+                }
+                ticket = try await Backend.shared.separateMVSEP(id, model: model, key: key)
+            }
+            stemJob = (ticket.id, request, "Na fila…", nil)
             while true {
                 try await Task.sleep(for: .milliseconds(500))
                 let job = try await Backend.shared.job(ticket.id)
-                separating = (ticket.id, job.last?.message ?? "Separando…", job.last?.progress)
+                stemJob = (ticket.id, request, job.last?.message ?? "Trabalhando…", job.last?.progress)
                 guard job.finished else { continue }
-                separating = nil
-                if job.status == "done" {
-                    let position = engine.currentTime
-                    await load()
-                    engine.seek(to: position)
-                } else {
-                    notice = job.error ?? "A separação não terminou."
+                stemJob = nil
+                if case .mvsep = request { mvsepUsage = try? await Backend.shared.mvsepUsage() }
+                guard job.status == "done" else {
+                    notice = job.error ?? "\(request.label): não terminou."
+                    return
+                }
+                let previous = detail
+                let fresh = try await Backend.shared.song(id)
+                self.detail = fresh
+                if previous?.activeStems != fresh.activeStems {
+                    try loadAudio(fresh, keepMix: false)
+                    await loadGuitarPeaks(fresh)
+                } else if let added = fresh.stemKeys.first(where: { previous?.stems[$0] == nil }) {
+                    compareKey = added
+                    notice = "\(fresh.stems[added]?.label ?? request.label) pronta: compare com A/B (B)."
                 }
                 return
             }
         } catch {
-            separating = nil
+            stemJob = nil
             notice = error.localizedDescription
         }
+    }
+
+    func cancelStemJob() {
+        guard let job = stemJob?.job else { return }
+        Task { try? await Backend.shared.cancel(job) }
     }
 }

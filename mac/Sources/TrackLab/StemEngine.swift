@@ -104,8 +104,8 @@ final class StemEngine {
 
     /// Carrega o original e as faixas (id → arquivo). A posição fica onde estava, dentro da duração nova.
     func load(_ files: [(id: String, url: URL)]) throws {
+        stop()   // tocando, guarda o ponto ouvido em `anchorTime`: o A/B recarrega no mesmo lugar
         let position = anchorTime
-        stop()
         for track in tracks.values {
             engine.disconnectNodeOutput(track.player)
             engine.detach(track.player)

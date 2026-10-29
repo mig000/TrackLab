@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import platform
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import __version__, home, multitracks, package, songsterr, stems, tempomap
 from .errors import PackageError, TrackLabError
 from .jobs import JobManager
+from .media import mvsep
 from .media.peaks import peaks
 from .util import atomic_json, read_json
 
@@ -22,7 +23,8 @@ class ImportRequest(BaseModel):
     separate: bool = True
 
 
-def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | None = None, separate_run=None) -> FastAPI:
+def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | None = None, separate_run=None,
+               mvsep_session=None, mvsep_pause=None) -> FastAPI:
     jobs = jobs or JobManager(home.home())
     app = FastAPI(title="TrackLab", version=__version__)
     app.state.jobs = jobs
@@ -154,6 +156,52 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(400, "Envie os compassos conferidos em bars.")
         return {"bars": song(song_id).set_checked_bars(body["bars"])}
 
+    @app.get("/api/songs/{song_id}/multitrack")
+    def song_multitrack(song_id: str) -> dict:
+        """A música da biblioteca de multitracks que é esta (mesmo título e artista), ou null."""
+        manifest = song(song_id).manifest
+        return {"multitrack": multitracks.match(manifest.get("artist") or "", manifest.get("title") or "")}
+
+    @app.post("/api/songs/{song_id}/stems/multitrack", status_code=202)
+    def stems_multitrack(song_id: str, body: dict = Body(default={})) -> dict:
+        """As faixas da multitrack (`path` do índice; sem ele, a que casa com a música) alinhadas ao vídeo, na fila."""
+        manifest = song(song_id).manifest
+        wanted = body.get("path")
+        entry = (multitracks.by_path(str(wanted)) if wanted
+                 else multitracks.match(manifest.get("artist") or "", manifest.get("title") or ""))
+        if entry is None:
+            raise HTTPException(404, "Esta música não está na biblioteca de multitracks.")
+
+        def work(progress, cancel):
+            return stems.import_multitrack(package.find(song_id), entry, progress=progress, cancel=cancel)
+
+        return _job(jobs.submit("multitrack", work, project=song_id))
+
+    @app.get("/api/mvsep")
+    def mvsep_usage() -> dict:
+        """Quantas conversões do MVSEP o TrackLab já usou hoje e os modelos que ele sabe pedir."""
+        return {**mvsep.usage(), "models": [{"id": k, "name": v["name"]} for k, v in mvsep.MODELS.items()]}
+
+    @app.post("/api/songs/{song_id}/stems/mvsep", status_code=202)
+    def stems_mvsep(song_id: str, body: dict = Body(default={}),
+                    x_mvsep_key: str | None = Header(default=None)) -> dict:
+        """A guitarra do MVSEP (`model` 31 ou 101) com o resto pelo Demucs local, na fila; a chave vem no cabeçalho
+        `X-MVSEP-Key` e só vive na tarefa."""
+        song(song_id)
+        model = mvsep.check_model(body.get("model", 31))
+        key = mvsep.check_key(x_mvsep_key)
+
+        def work(progress, cancel):
+            return stems.separate_mvsep(package.find(song_id), key=key, model=model, progress=progress, cancel=cancel,
+                                        session=mvsep_session, demucs_run=separate_run, pause=mvsep_pause)
+
+        return _job(jobs.submit("mvsep", work, project=song_id))
+
+    @app.put("/api/songs/{song_id}/stems/active")
+    def active_stems(song_id: str, body: dict = Body(...)) -> dict:
+        """A separação que o app toca (`{"key": …}`)."""
+        return {"activeStems": song(song_id).set_active_stems(str(body.get("key") or ""))}
+
     @app.get("/api/songs/{song_id}/files/{relative:path}")
     def song_file(song_id: str, relative: str):
         found = song(song_id)
@@ -163,8 +211,9 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         return FileResponse(path)
 
     @app.get("/api/songs/{song_id}/peaks")
-    def song_peaks(song_id: str, stem: str | None = None) -> dict:
-        """A onda da Fita: do áudio original, ou de uma faixa da separação ativa; guardada em `peaks/`."""
+    def song_peaks(song_id: str, stem: str | None = None, stems_key: str | None = None) -> dict:
+        """A onda da Fita: do áudio original, ou de uma faixa da separação ativa (ou da `stems_key`); guardada em
+        `peaks/`."""
         found = song(song_id)
         manifest = found.manifest
         if stem is None:
@@ -172,11 +221,11 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
                 raise HTTPException(404, "Esta música não tem áudio.")
             relative, name = manifest["audio"]["file"], "source"
         else:
-            active = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {})
-            relative = active.get("files", {}).get(stem)
+            chosen = stems_key or manifest.get("activeStems") or ""
+            relative = manifest.get("stems", {}).get(chosen, {}).get("files", {}).get(stem)
             if relative is None:
-                raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
-            name = f"{manifest['activeStems']}-{stem}"
+                raise HTTPException(404, f"Não há a faixa {stem} nesta separação.")
+            name = f"{chosen}-{stem}"
         cache = found.file(f"peaks/{name}.json")
         if cache.is_file():
             return read_json(cache)

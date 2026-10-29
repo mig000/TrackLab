@@ -115,14 +115,94 @@ public struct StemSet: Codable, Hashable, Sendable {
     public let seconds: Double?
     public let files: [String: String]
     public let fallback: String?
+    /// O nome do modelo do MVSEP, ou artista e título da multitrack.
+    public let name: String?
+    public let created: String?
+    /// A multitrack: o caminho na biblioteca e onde ela caiu no vídeo.
+    public let library: String?
+    public let alignment: StemAlignment?
 
-    public init(provider: String?, model: String?, device: String?, seconds: Double?, files: [String: String], fallback: String?) {
+    public init(provider: String?, model: String?, device: String?, seconds: Double?, files: [String: String],
+                fallback: String?, name: String? = nil, created: String? = nil, library: String? = nil,
+                alignment: StemAlignment? = nil) {
         self.provider = provider
         self.model = model
         self.device = device
         self.seconds = seconds
         self.files = files
         self.fallback = fallback
+        self.name = name
+        self.created = created
+        self.library = library
+        self.alignment = alignment
+    }
+
+    /// Como o mixer chama a separação.
+    public var label: String {
+        switch provider {
+        case "demucs", nil: "Demucs 6s"
+        case "multitrack": "Multitrack"
+        case "mvsep": name ?? "MVSEP"
+        default: model ?? provider ?? "Faixas"
+        }
+    }
+
+    /// O degrau da escada (Demucs, multitrack, MVSEP): a ordem do seletor.
+    public var rank: Int {
+        switch provider {
+        case "demucs", nil: 0
+        case "multitrack": 1
+        case "mvsep": ["mvsep63": 2, "mvsep31": 3, "mvsep101": 4][model ?? ""] ?? 5
+        default: 4
+        }
+    }
+
+    /// O que a dica do seletor conta: de onde veio e, na multitrack, onde caiu no vídeo.
+    public var detail: String {
+        var parts: [String] = []
+        if let library { parts.append(library) }
+        if let alignment {
+            parts.append(String(format: "começa %+.3f s no vídeo", alignment.offset))
+            if abs(alignment.speed - 1) > 0.00001 {
+                parts.append(String(format: "velocidade corrigida %.3f %%", (alignment.speed - 1) * 100))
+            }
+            if let agreed = alignment.agreed, let windows = alignment.windows {
+                parts.append("\(agreed) de \(windows) trechos de acordo")
+            }
+        }
+        if provider == "mvsep" {
+            parts.append(model == "mvsep63" ? "as seis faixas do MVSEP" : "resto da banda pelo Demucs local")
+        }
+        if let fallback { parts.append(fallback) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Onde a multitrack caiu sobre o áudio do vídeo.
+public struct StemAlignment: Codable, Hashable, Sendable {
+    public let offset: Double
+    public let speed: Double
+    public let agreed: Int?
+    public let windows: Int?
+
+    public init(offset: Double, speed: Double = 1, agreed: Int? = nil, windows: Int? = nil) {
+        self.offset = offset
+        self.speed = speed
+        self.agreed = agreed
+        self.windows = windows
+    }
+}
+
+/// Quantas conversões do MVSEP o TrackLab usou hoje.
+public struct MVSEPUsage: Codable, Hashable, Sendable {
+    public let usedToday: Int
+    public let limit: Int
+    public let left: Int
+
+    public init(usedToday: Int, limit: Int, left: Int) {
+        self.usedToday = usedToday
+        self.limit = limit
+        self.left = left
     }
 }
 
@@ -185,6 +265,15 @@ public struct SongDetail: Codable, Hashable, Sendable {
 
     /// A separação ativa, se houver.
     public var active: StemSet? { activeStems.flatMap { stems[$0] } }
+
+    /// As separações guardadas, na ordem da escada (Demucs, multitrack, MVSEP) e depois da mais nova.
+    public var stemKeys: [String] {
+        stems.keys.sorted { a, b in
+            let (x, y) = (stems[a]!, stems[b]!)
+            if x.rank != y.rank { return x.rank < y.rank }
+            return (x.created ?? "", a) < (y.created ?? "", b)
+        }
+    }
 
     /// Um arquivo do pacote no disco.
     public func url(_ relative: String) -> URL {
