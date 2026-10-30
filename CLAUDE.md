@@ -162,7 +162,11 @@ Sunshine eram 22 das 75, quase sempre um vibrato que a TAB não escreve) e notas
 vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
 notas, pista ou mapa; a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
 com o espectro) vão de uma a outra: escolhem a nota, levam a agulha e dizem o que o som tem; o monitor de teclas da
-edição (`TabEditKeys`) fica na tela da música. Sunshine (lead): 56 de 1.657 notas. Mover a nota no tempo, que a
+edição (`TabEditKeys`) fica na tela da música. Sunshine (lead): 56 de 1.657 notas, 45 com a afinação descontada.
+Afinação da gravação (`RecordingTuning`): a mediana do desvio do meio das notas paradas (sem bend escrito, fora de
+acorde, a menos de 0,6 semitom), com ao menos 20 notas, refeita quando a pista termina de ser medida. O app guarda as
+curvas como vieram e desconta a afinação delas (pontos, faixas, F, arrastar, suspeitas) e desce o espectro o mesmo
+tanto; a Fita mostra "gravação +17 cents" no canto a partir de 5 cents. Medido em 30/10: Sunshine +17, White Room +5. Mover a nota no tempo, que a
 Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a

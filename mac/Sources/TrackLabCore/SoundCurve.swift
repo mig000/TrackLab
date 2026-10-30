@@ -310,3 +310,53 @@ extension SoundNote {
         return [.bend(fit.quarterTones)]
     }
 }
+
+extension PitchCurve {
+    /// A mesma curva `semitones` acima (abaixo, se negativo): a afinação da gravação descontada.
+    public func shifted(by semitones: Double) -> PitchCurve {
+        semitones == 0 ? self : PitchCurve(from: from, hop: hop, values: values.map { $0.map { $0 + semitones } })
+    }
+}
+
+/// A afinação da gravação: quanto as notas soam acima (ou abaixo) do Lá 440, em semitons (+0,35 = 35 cents). Muita
+/// gravação antiga foi feita com a fita mais rápida ou a banda afinada entre si; sem descontar, os pontos ficam sempre
+/// no alto da faixa, um bend parece maior e uma nota a meio caminho vira suspeita.
+public enum RecordingTuning {
+    public struct Sample: Sendable {
+        public let curve: PitchCurve
+        public let start: Double
+        public let end: Double
+        public let pitch: Int
+        /// Sem bend escrito e fora de acorde: a altura parada diz a afinação.
+        public let plain: Bool
+
+        public init(curve: PitchCurve, start: Double, end: Double, pitch: Int, plain: Bool) {
+            self.curve = curve
+            self.start = start
+            self.end = end
+            self.pitch = pitch
+            self.plain = plain
+        }
+    }
+
+    /// A mediana do desvio das notas paradas (o meio de cada uma, sem o ataque e o fim; a mediana dos pontos), das
+    /// que ficam a menos de 0,6 semitom da escrita; nil com menos de `minimum` notas.
+    public static func estimate(_ samples: [Sample], minimum: Int = 20) -> Double? {
+        var deviations: [Double] = []
+        for sample in samples where sample.plain {
+            let length = sample.end - sample.start
+            let from = sample.start + 0.25 * length
+            let to = sample.end - 0.25 * length
+            var middle: [Double] = []
+            for (k, value) in sample.curve.values.enumerated() {
+                let t = sample.curve.from + Double(k) * sample.curve.hop
+                if let value, t >= from, t <= to { middle.append(value) }
+            }
+            guard middle.count >= 5 else { continue }
+            let deviation = SoundNote.percentile(middle, 0.5) - Double(sample.pitch)
+            if abs(deviation) < 0.6 { deviations.append(deviation) }
+        }
+        guard deviations.count >= minimum else { return nil }
+        return SoundNote.percentile(deviations, 0.5)
+    }
+}

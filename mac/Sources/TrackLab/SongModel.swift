@@ -321,11 +321,48 @@ final class SongModel {
         }
         let chords = Set(batch.filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
         guard let curves = try? await Backend.shared.pitchCurves(id, notes: list) else { return }
-        for item in list {
+        for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
-            soundNotes[item.key] = SoundNote(curve: curve, start: item.start, end: item.end,
-                                             pitch: Double(item.pitch), chord: chords.contains(item.key))
+            let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
+                               chord: chords.contains(item.key), plain: note.bend.isEmpty)
+            rawCurves[item.key] = raw
+            soundNotes[item.key] = raw.sound(tuning: tuning)
         }
+        pitchCurvesVersion += 1
+    }
+
+    /// A curva como veio do motor (na altura da gravação) e o que a nota precisa para virar `SoundNote`.
+    private struct RawCurve {
+        let curve: PitchCurve
+        let start: Double
+        let end: Double
+        let pitch: Int
+        let chord: Bool
+        let plain: Bool
+
+        func sound(tuning: Double) -> SoundNote {
+            SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord)
+        }
+    }
+
+    @ObservationIgnored private var rawCurves: [String: RawCurve] = [:]
+    /// A afinação da gravação (semitons acima do Lá 440, `RecordingTuning`), medida nas notas paradas da música e
+    /// descontada das curvas, do espectro, do encaixe e das suspeitas. Zero até haver notas bastantes.
+    private(set) var tuning = 0.0
+
+    /// Com as curvas da pista medidas: a afinação de novo e, se mudou, as `SoundNote` refeitas com ela.
+    private func updateTuning() {
+        // Só as notas de agora (uma nota editada ou um mapa novo deixam curvas de chaves que não existem mais).
+        var current: Set<String> = []
+        for (track, notes) in scoreNotes.enumerated() { notes.forEach { current.insert(curveKey($0, track: track)) } }
+        rawCurves = rawCurves.filter { current.contains($0.key) }
+        let samples = rawCurves.values.map {
+            RecordingTuning.Sample(curve: $0.curve, start: $0.start, end: $0.end, pitch: $0.pitch, plain: $0.plain && !$0.chord)
+        }
+        let found = RecordingTuning.estimate(samples) ?? 0
+        guard abs(found - tuning) >= 0.02 else { return }
+        tuning = found
+        soundNotes = rawCurves.mapValues { $0.sound(tuning: found) }
         pitchCurvesVersion += 1
     }
 
@@ -348,6 +385,7 @@ final class SongModel {
                     await fetchCurves(batch, track: track)
                 }
             }
+            if !Task.isCancelled { updateTuning() }
         }
     }
 
@@ -804,7 +842,7 @@ final class SongModel {
             let chord = scoreNotes.indices.contains(track)
                 && scoreNotes[track].contains { $0.tick == note.tick && $0.string != note.string }
             let fit = curves?[key].map {
-                SoundNote(curve: $0, start: start, end: end, pitch: Double(pitch), chord: chord)
+                SoundNote(curve: $0.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord)
             }?.fit
             if let fit, abs(Double(fit.base) - Double(pitch)) <= 1 {
                 apply(fit, to: note, center: Double(pitch))

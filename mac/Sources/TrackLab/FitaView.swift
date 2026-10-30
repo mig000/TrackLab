@@ -51,8 +51,10 @@ struct FitaView: View {
         let pitches = model.fitaMode == .spectrum ? pitchWindow(gridStart: start) : nil
         return ZStack(alignment: .topLeading) {
             if let pitches {
+                // As notas estão na afinação da gravação descontada: o espectro desce o mesmo tanto.
                 SpectrumLayerView(image: model.spectrumImage, start: start - model.soundShift, span: span,
-                                  pitches: pitches, spectrum: model.spectrum)
+                                  pitches: (pitches.lowerBound + model.tuning)...(pitches.upperBound + model.tuning),
+                                  spectrum: model.spectrum)
                     .padding(.top, Self.waveStrip)
             }
             Canvas { context, size in
@@ -395,13 +397,23 @@ struct FitaView: View {
         if let index = model.scoreSecond { bands(second, track: index, rgb: (91, 155, 255)) }
         bands(main, track: model.scoreTrack, rgb: (245, 181, 68))
         // Quantas suspeitas a pista tem (a música toda), no canto: Tab vai de uma a outra.
+        // E a afinação da gravação, quando passa de 5 cents (descontada em tudo o que está na tela).
         let suspects = model.suspects(track: model.scoreTrack).count
-        if suspects > 0 || model.measuring {
-            let text = suspects == 0 ? "Medindo o som das notas…"
-                : "\(suspects) nota\(suspects == 1 ? "" : "s") suspeita\(suspects == 1 ? "" : "s")\(model.measuring ? "…" : "") · Tab"
-            context.draw(Text(text).font(.caption.weight(.medium))
-                            .foregroundStyle(suspects > 0 ? Color(red: 1, green: 0.45, blue: 0.45) : .secondary),
-                         at: CGPoint(x: width - 8, y: 6), anchor: .topTrailing)
+        let cents = Int((model.tuning * 100).rounded())
+        var info: [Text] = []
+        if abs(cents) >= 5 {
+            info.append(Text("gravação \(cents > 0 ? "+" : "−")\(abs(cents)) cents").foregroundStyle(.secondary))
+        }
+        if suspects > 0 {
+            info.append(Text("\(suspects) nota\(suspects == 1 ? "" : "s") suspeita\(suspects == 1 ? "" : "s")"
+                             + "\(model.measuring ? "…" : "") · Tab")
+                .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.45)))
+        } else if model.measuring {
+            info.append(Text("Medindo o som das notas…").foregroundStyle(.secondary))
+        }
+        if let first = info.first {
+            let line = info.dropFirst().reduce(first) { $0 + Text("   ") + $1 }
+            context.draw(line.font(.caption.weight(.medium)), at: CGPoint(x: width - 8, y: 6), anchor: .topTrailing)
         }
 
         // O teclado à esquerda (o da Lente): as teclas brancas e pretas de cada semitom, os Dós e os Mis com nome.

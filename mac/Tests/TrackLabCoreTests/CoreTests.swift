@@ -388,3 +388,24 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     let wavy = SoundNote(curve: soundCurve(1, 2) { 60 + 0.15 * (1 - cos(2 * .pi * 6 * ($0 - 1))) }, start: 1, end: 2, pitch: 60)
     #expect(wavy.disagreements(with: plain).isEmpty)
 }
+
+@Test func afinacaoDaGravacao() throws {
+    // Trinta notas paradas 35 cents acima do escrito (com o ataque subindo de baixo) e duas fora (uma nota errada, um
+    // bend): a afinação é +0,35.
+    var samples: [RecordingTuning.Sample] = []
+    for i in 0..<30 {
+        let start = Double(i)
+        let pitch = 50 + i % 12
+        samples.append(.init(curve: soundCurve(start, start + 0.5) { $0 < start + 0.05 ? Double(pitch) - 0.5 : Double(pitch) + 0.35 },
+                             start: start, end: start + 0.5, pitch: pitch, plain: true))
+    }
+    samples.append(.init(curve: soundCurve(40, 40.5) { _ in 63 }, start: 40, end: 40.5, pitch: 60, plain: true))
+    samples.append(.init(curve: soundCurve(41, 41.5) { _ in 62 }, start: 41, end: 41.5, pitch: 60, plain: false))
+    let tuning = try #require(RecordingTuning.estimate(samples))
+    #expect(abs(tuning - 0.35) < 0.01)
+    // Poucas notas: nada a dizer.
+    #expect(RecordingTuning.estimate(Array(samples.prefix(5))) == nil)
+    // Descontada, a nota que soava 35 cents acima fica no lugar.
+    let curve = samples[0].curve.shifted(by: -tuning)
+    #expect(abs((curve.values.last ?? 0)! - 50) < 0.01)
+}
