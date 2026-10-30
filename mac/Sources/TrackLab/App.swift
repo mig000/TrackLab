@@ -9,11 +9,15 @@ typealias Local<Value> = SwiftUI.State<Value>
 @main
 struct TrackLabApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    /// A aparência do app (Visualizar › Aparência): a do sistema, clara (papel: a TAB preta e a Lente em tinta) ou
+    /// escura.
+    @AppStorage("appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup("TrackLab") {
             RootView()
                 .frame(minWidth: 980, minHeight: 640)
+                .onChange(of: appearance, initial: true) { Self.apply(appearance) }
         }
         .defaultSize(width: 1320, height: 860)
         .commands {
@@ -27,10 +31,17 @@ struct TrackLabApp: App {
                     .keyboardShortcut("+")
                 Button("Afastar") { NotificationCenter.default.post(name: .zoomOut, object: nil) }
                     .keyboardShortcut("-")
+                Button("TAB em páginas ou na faixa") { NotificationCenter.default.post(name: .togglePage, object: nil) }
+                    .keyboardShortcut("p", modifiers: [.command, .option])
                 Button("Mostrar ou esconder a onda") { NotificationCenter.default.post(name: .toggleWave, object: nil) }
                     .keyboardShortcut("1", modifiers: [.command, .option])
                 Button("Mostrar ou esconder a lente") { NotificationCenter.default.post(name: .toggleLens, object: nil) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
+                Picker("Aparência", selection: $appearance) {
+                    Text("Do sistema").tag("system")
+                    Text("Clara (papel)").tag("light")
+                    Text("Escura").tag("dark")
+                }
                 // ⌥⌘M: ⌘M é o Minimizar do macOS.
                 Button("Mostrar ou esconder o mixer") { NotificationCenter.default.post(name: .toggleMixer, object: nil) }
                     .keyboardShortcut("m", modifiers: [.command, .option])
@@ -53,6 +64,7 @@ extension Notification.Name {
     static let zoomOut = Notification.Name("TrackLab.zoomOut")
     static let toggleMixer = Notification.Name("TrackLab.toggleMixer")
     static let toggleWave = Notification.Name("TrackLab.toggleWave")
+    static let togglePage = Notification.Name("TrackLab.togglePage")
     static let toggleLens = Notification.Name("TrackLab.toggleLens")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
 }
@@ -113,7 +125,9 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .importSong)) { _ in
             if phase == .ready { importing = true }
         }
-        .sheet(isPresented: $importing) { ImportSheet(library: library) }
+        .sheet(isPresented: $importing, onDismiss: { library.importFrom = nil }) {
+            ImportSheet(library: library, multitrack: library.importFrom)
+        }
     }
 
     private var split: some View {
@@ -271,5 +285,16 @@ private struct ImportRow: View {
             }
         }
         .selectionDisabled()
+    }
+}
+
+extension TrackLabApp {
+    /// A aparência escolhida em todo o app (a página da partitura e a Lente seguem o esquema de cores da janela).
+    static func apply(_ appearance: String) {
+        NSApp.appearance = switch appearance {
+        case "light": NSAppearance(named: .aqua)
+        case "dark": NSAppearance(named: .darkAqua)
+        default: nil
+        }
     }
 }

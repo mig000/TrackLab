@@ -128,3 +128,22 @@ body {
 #sheet.editing {
   cursor: default;
 }
+
+/* O modo página: a partitura em sistemas de cima para baixo, rolando na vertical; o cursor marca a batida que toca. */
+body.page #sheet {
+  cursor: pointer;
+  transform: none !important;
+}
+
+#page-cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  margin-left: -1px;
+  border-radius: 2px;
+  background: var(--cursor);
+  pointer-events: none;
+  z-index: 3;
+  will-change: transform;
+}

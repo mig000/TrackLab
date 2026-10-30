@@ -179,4 +179,13 @@ if (files.length) {
     });
   }
 }
+test("modo página: a batida que toca pelo tique", () => {
+  const ticks = [0, 480, 960, 1920];
+  assert.equal(core.beatIndexAt(ticks, -1), -1);
+  assert.equal(core.beatIndexAt(ticks, 0), 0);
+  assert.equal(core.beatIndexAt(ticks, 959), 1);
+  assert.equal(core.beatIndexAt(ticks, 960), 2);
+  assert.equal(core.beatIndexAt(ticks, 5000), 3);
+});
+
 console.log(`${passed} verificações passaram`);

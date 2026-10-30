@@ -46,9 +46,10 @@ struct SongView: View {
             .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
             // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
             .padding(.horizontal, 12)
-            .frame(minHeight: tabHeight > 0 ? tabHeight : 120,
+            // Em páginas, sem altura escolhida, a TAB divide o espaço com as camadas (a música toda não cabe).
+            .frame(minHeight: tabHeight > 0 ? min(tabHeight, 160) : 120,
                    maxHeight: tabHeight > 0 ? tabHeight
-                       : lanes ? model.scoreHeight.map { max(120, $0 + 16) } ?? .infinity : .infinity)
+                       : lanes && !model.scorePage ? model.scoreHeight.map { max(120, $0 + 16) } ?? .infinity : .infinity)
             .background(GeometryReader { proxy in
                 Color.clear.onChange(of: proxy.size.height, initial: true) { tabMeasured = proxy.size.height }
             })
@@ -75,8 +76,10 @@ struct SongView: View {
             if model.waveVisible {
                 FitaView(model: model, span: $span)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
-                    .frame(minHeight: model.lensVisible ? waveHeight : 80,
-                           maxHeight: model.lensVisible ? waveHeight : .infinity)
+                    // Com a Lente embaixo, a altura do divisor, mas encolhe se a janela não comporta tudo (a soma das
+                    // mínimas passava da janela e empurrava o cabeçalho e o mixer para fora).
+                    .frame(minHeight: 60, maxHeight: model.lensVisible ? waveHeight : .infinity)
+                    .layoutPriority(model.lensVisible ? 1 : 0)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
@@ -88,7 +91,7 @@ struct SongView: View {
             if model.lensVisible {
                 FitaView(model: model, span: $span, lens: true, strip: !model.waveVisible)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
-                    .frame(minHeight: 120, maxHeight: .infinity)
+                    .frame(minHeight: 90, maxHeight: .infinity)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
@@ -105,6 +108,7 @@ struct SongView: View {
         }
         .background(TabEditKeys(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
         // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
         .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
@@ -160,6 +164,12 @@ struct SongView: View {
             .disabled(model.detail?.score == nil)
             .help("⌘E: clique numa nota da TAB e mude casa, corda e articulações (teclas ou a paleta); o Guitar Pro "
                   + "editado fica guardado na música, e o original do Songsterr também")
+            Toggle(isOn: Binding(get: { model.scorePage }, set: { model.scorePage = $0 })) {
+                Label("Página", systemImage: "doc.plaintext")
+            }
+            .toggleStyle(.button)
+            .help("⌥⌘P: a TAB em páginas, de cima para baixo, com o cursor na batida que toca; de novo, a faixa que "
+                  + "corre com a Fita")
             if model.scoreTracks.count > 1 {
                 Picker("Pista", selection: Binding(get: { model.scoreTrack }, set: { model.scoreTrack = $0 })) {
                     ForEach(model.scoreTracks, id: \.index) { track in
@@ -167,14 +177,21 @@ struct SongView: View {
                     }
                 }
                 .frame(maxWidth: 260)
-                Picker("Com", selection: Binding(get: { model.scoreSecond }, set: { model.scoreSecond = $0 })) {
-                    Text("Nenhuma").tag(Int?.none)
+                // As outras pistas: quantas quiser, embaixo da principal na ordem em que foram marcadas.
+                Menu(model.scoreOthers.isEmpty ? "Com: nenhuma" : "Com: \(model.scoreOthers.count) pista\(model.scoreOthers.count == 1 ? "" : "s")") {
                     ForEach(model.scoreTracks.filter { $0.index != model.scoreTrack }, id: \.index) { track in
-                        Text(track.name).tag(Int?.some(track.index))
+                        Toggle(track.name, isOn: Binding(get: { model.scoreOthers.contains(track.index) }, set: { on in
+                            if on { model.scoreOthers.append(track.index) } else { model.scoreOthers.removeAll { $0 == track.index } }
+                        }))
+                    }
+                    if !model.scoreOthers.isEmpty {
+                        Divider()
+                        Button("Só a principal") { model.scoreOthers = [] }
                     }
                 }
-                .frame(maxWidth: 220)
-                .help("Uma segunda pista embaixo da principal, nos mesmos compassos (a bateria aparece em partitura)")
+                .fixedSize()
+                .help("Outras pistas embaixo da principal, nos mesmos compassos (a bateria aparece em partitura); na "
+                      + "Lente, cada uma na sua cor")
             }
         }
         .padding(.horizontal, 16)

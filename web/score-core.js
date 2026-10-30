@@ -66,6 +66,18 @@
     return out;
   }
 
+  // No modo página: o índice da última batida (em ordem de tique) que já começou em `tick`; -1 antes da primeira.
+  function beatIndexAt(ticks, tick) {
+    let low = 0;
+    let high = ticks.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (ticks[middle] <= tick + 1e-6) low = middle + 1;
+      else high = middle;
+    }
+    return low - 1;
+  }
+
   function secondsToTick(points, seconds) {
     return piecewise(points, seconds, (p) => p.seconds, (p) => p.tick);
   }
@@ -245,6 +257,7 @@
     showPreferences,
     cleanPoints,
     secondsToTick,
+    beatIndexAt,
     tickToSeconds,
     cleanAnchors,
     tickAtX,

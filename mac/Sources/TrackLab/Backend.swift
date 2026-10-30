@@ -297,9 +297,9 @@ final class Backend {
         return answer.multitrack
     }
 
-    /// As faixas da multitrack alinhadas ao vídeo, na fila.
-    func importMultitrack(_ id: String) async throws -> JobTicket {
-        try await send("POST", "songs/\(id)/stems/multitrack", body: [String: String]())
+    /// As faixas da multitrack alinhadas ao vídeo, na fila: a do índice em `path`, ou a que casa com a música.
+    func importMultitrack(_ id: String, path: String? = nil) async throws -> JobTicket {
+        try await send("POST", "songs/\(id)/stems/multitrack", body: path.map { ["path": $0] } ?? [String: String]())
     }
 
     func mvsepUsage() async throws -> MVSEPUsage { try await get("mvsep") }

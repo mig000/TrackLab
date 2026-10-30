@@ -12,6 +12,11 @@ enum SpectrumPalette {
         (0.0, (11, 13, 18)), (0.3, (26, 30, 42)), (0.55, (56, 61, 84)), (0.75, (118, 124, 150)),
         (0.9, (192, 196, 210)), (1.0, (246, 247, 250)),
     ]
+    /// No papel (a aparência clara): do quase branco ao quase preto, a mesma escala de tinta.
+    static let paperStops: [(at: Double, rgb: (Double, Double, Double))] = [
+        (0.0, (250, 248, 243)), (0.3, (233, 229, 220)), (0.55, (196, 190, 177)), (0.75, (128, 122, 112)),
+        (0.9, (64, 60, 56)), (1.0, (18, 17, 16)),
+    ]
     static let gamma = 1.35
     static let range = 150.0
     static let minimumHigh = 120.0
@@ -21,15 +26,15 @@ enum SpectrumPalette {
     static let around = 2.0
 
     /// Feita fora da thread principal: numa música de 5 min, são uns 10 milhões de pixels.
-    static func image(_ spectrum: Spectrum) async -> CGImage? {
-        await Task.detached(priority: .userInitiated) { build(spectrum) }.value
+    static func image(_ spectrum: Spectrum, paper: Bool = false) async -> CGImage? {
+        await Task.detached(priority: .userInitiated) { build(spectrum, paper: paper) }.value
     }
 
-    static func build(_ spectrum: Spectrum) -> CGImage? {
+    static func build(_ spectrum: Spectrum, paper: Bool = false) -> CGImage? {
         let frames = spectrum.frames
         let rows = spectrum.rows
         let height = rows * rowScale
-        let colors = table()
+        let colors = table(paper ? paperStops : stops)
         let highs = localHighs(spectrum)
         var pixels = [UInt32](repeating: 0, count: frames * height)
         spectrum.data.withUnsafeBufferPointer { data in
@@ -89,7 +94,7 @@ enum SpectrumPalette {
     }
 
     /// As cores de 0 (a base) a 1 (o topo), em 1024 degraus.
-    static func table() -> [UInt32] {
+    static func table(_ stops: [(at: Double, rgb: (Double, Double, Double))] = stops) -> [UInt32] {
         (0..<1024).map { step in
             let t = pow(Double(step) / 1023, gamma)
             let upper = stops.firstIndex { $0.at >= t } ?? stops.count - 1

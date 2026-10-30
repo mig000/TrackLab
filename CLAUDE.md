@@ -206,7 +206,16 @@ Mixer na ponta do transporte (ou ⌥⌘M, Visualizar) esconde o mixer e a Fita g
 ←→ nota, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo
-outro. No cabeçalho, "Com" escolhe a segunda pista da partitura. No mixer, a linha
+outro. No cabeçalho, "Com" marca quantas outras pistas quiser embaixo da principal (`scoreOthers`, `others([…])` na
+página; a largura vem do masterBar, então todas seguem a Fita); na Lente cada uma tem a sua cor (`otherColors`) e todas
+são medidas. "Página" (⌥⌘P, `scorePage` guardado) desenha a TAB em páginas (`LayoutMode.Page`): sem as larguras da
+Fita, um cursor próprio que anda contínuo de nota a nota no tempo, como o da faixa (`pageBeats`, `beatIndexAt`, o
+`onNotesX` de cada batida e a caixa do sistema pelo `boundsLookup`; pulando de nota em nota parecia uma batida
+atrasado), a página rola até o sistema novo assim que o cursor entra nele e o clique leva a música até a batida; o loop e o ⇧-arrasto ficam na faixa. Visualizar ›
+Aparência: do sistema, clara (papel: a Lente com a paleta de tinta `paperStops`, as marcas escuras, o âmbar mais
+escuro e o fundo da Fita creme) ou escura. Fontes › Multitracks › "Procurar a TAB" abre a busca do Songsterr com o
+nome da multitrack; a música importada vem sem o Demucs e com as faixas dela (`importMultitrack(path:)`), a não ser
+num .mogg. No mixer, a linha
 TAB tem uma faixa por pista sintetizada (ids `tab:<pista>`, caladas ao chegar), que soa por cima do original ou das
 faixas; um solo vale para tudo (cala o original também). A WKWebView da partitura (`ScoreWebView`) não aceita o foco
 do teclado: com ele, engolia espaço, setas e letras depois de um clique na TAB e os atalhos do transporte paravam; um

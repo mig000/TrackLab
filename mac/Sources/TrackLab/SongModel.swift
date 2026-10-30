@@ -31,20 +31,23 @@ final class SongModel {
     var scoreTrack = 0 {
         didSet {
             guard scoreTrack != oldValue else { return }
-            if scoreSecond == scoreTrack { scoreSecond = nil }
+            if scoreOthers.contains(scoreTrack) { scoreOthers.removeAll { $0 == scoreTrack } }
             bridge.showTrack(scoreTrack)
             measureLater()
             Task { await loadSpectrum() }
         }
     }
-    /// Uma segunda pista embaixo da principal (a base, o baixo, a bateria…), nos mesmos compassos.
-    var scoreSecond: Int? {
+    /// As outras pistas embaixo da principal (a base, o baixo, a bateria…), quantas quiser, nos mesmos compassos.
+    var scoreOthers: [Int] = [] {
         didSet {
-            guard scoreSecond != oldValue else { return }
-            bridge.showSecond(scoreSecond)
+            guard scoreOthers != oldValue else { return }
+            bridge.showOthers(scoreOthers)
             measureLater()
         }
     }
+
+    /// A principal e as outras pistas à vista, nessa ordem (as que a Lente desenha e mede).
+    var shownTracks: [Int] { [scoreTrack] + scoreOthers.filter { $0 != scoreTrack } }
     private(set) var scoreMessage: String?
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
     private(set) var scoreHeight: Double?
@@ -89,6 +92,13 @@ final class SongModel {
     /// A Fita mostra a onda ou o espectro (com as notas da TAB por cima).
     /// As camadas da tela embaixo da TAB, cada uma à vista ou não (guardado entre as músicas e as aberturas): a Onda e
     /// a Lente (o espectro com as notas, que mede as curvas).
+    /// A TAB em páginas (ler a música de cima para baixo, com o cursor na batida) ou na faixa da Fita (guardado).
+    var scorePage = UserDefaults.standard.bool(forKey: "scorePage") {
+        didSet {
+            UserDefaults.standard.set(scorePage, forKey: "scorePage")
+            bridge.showPage(scorePage)
+        }
+    }
     var waveVisible = UserDefaults.standard.object(forKey: "waveVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(waveVisible, forKey: "waveVisible") }
     }
@@ -275,7 +285,7 @@ final class SongModel {
             let data = try Data(contentsOf: detail.url(score.file))
             let first = score.tracks.first(where: \.isGuitar)?.index ?? 0
             scoreTrack = first
-            bridge.load(gp: data, track: first, points: grid.points)
+            bridge.load(gp: data, track: first, points: grid.points, page: scorePage)
         } catch {
             scoreMessage = "Não consegui ler a partitura: \(error.localizedDescription)"
         }
@@ -407,7 +417,7 @@ final class SongModel {
             guard let self, !Task.isCancelled else { return }
             measuring = true
             defer { measuring = false }
-            for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? [])
+            for track in shownTracks
             where scoreNotes.indices.contains(track) && pitchStem(track: track).measured {
                 while !Task.isCancelled {
                     let batch = Array(scoreNotes[track].filter { !self.curvesAsked.contains(self.curveKey($0, track: track)) }
@@ -431,7 +441,7 @@ final class SongModel {
         guard let detail, lensVisible else { return }
         let stem = pitchStem(track: scoreTrack).stem
             ?? (detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil)
-        let key = "\(detail.activeStems ?? "")/\(stem ?? "original")"
+        let key = "\(detail.activeStems ?? "")/\(stem ?? "original")/\(paper ? "papel" : "escuro")"
         guard key != spectrumKey else { return }
         spectrumKey = key
         if let kept = spectra[key] {
@@ -445,7 +455,7 @@ final class SongModel {
                 spectrumMessage = "Esta música não tem áudio para o espectro."
                 return
             }
-            let image = await SpectrumPalette.image(found)
+            let image = await SpectrumPalette.image(found, paper: paper)
             guard spectrumKey == key else { return }
             if spectra.count >= 2 { spectra.removeAll() }
             if let image { spectra[key] = (found, image) }
@@ -458,6 +468,10 @@ final class SongModel {
     }
 
     @ObservationIgnored private var spectrumKey: String?
+    /// A Lente no papel (a aparência clara): a imagem do espectro é feita de novo com a paleta de tinta.
+    @ObservationIgnored var paper = false {
+        didSet { if paper != oldValue { Task { await loadSpectrum() } } }
+    }
     @ObservationIgnored private var spectra: [String: (spectrum: Spectrum, image: CGImage)] = [:]
 
     // MARK: - Metrônomo e afinação
@@ -705,7 +719,7 @@ final class SongModel {
         let key = [pitchCurvesVersion, notesVersion]
         if let offsetCache, offsetCache.key == key { return offsetCache.offsets }
         var notes: [(start: Double, attack: Double?)] = []
-        for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? []) where scoreNotes.indices.contains(track) {
+        for track in shownTracks where scoreNotes.indices.contains(track) {
             for note in scoreNotes[track] {
                 guard let sound = soundNotes[curveKey(note, track: track)], !sound.chord else { continue }
                 notes.append((grid.seconds(at: note.tick), sound.curve.attack))

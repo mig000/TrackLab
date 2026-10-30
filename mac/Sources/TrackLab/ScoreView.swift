@@ -81,11 +81,18 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
 
     // MARK: - Do app para a página
 
-    /// O Guitar Pro (os bytes do arquivo), a pista e o mapa de tempo; guardados até a página dizer `ready`.
-    func load(gp: Data, track: Int, points: [TempoPoint]) {
+    /// O Guitar Pro (os bytes do arquivo), a pista, o mapa de tempo e o modo página; guardados até a página dizer
+    /// `ready`.
+    func load(gp: Data, track: Int, points: [TempoPoint], page: Bool = false) {
         self.points = Self.encode(points)
-        pending = ["gp": gp.base64EncodedString(), "track": track, "points": self.points]
+        pending = ["gp": gp.base64EncodedString(), "track": track, "points": self.points, "page": page]
         if ready { sendPending() }
+    }
+
+    /// A partitura em páginas (sistemas de cima para baixo, com o cursor na batida) ou na faixa horizontal da Fita.
+    func showPage(_ page: Bool) {
+        pending?["page"] = page
+        call("window.tracklab.page(value)", ["value": page])
     }
 
     func showTrack(_ index: Int) {
@@ -93,10 +100,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.track(index)", ["index": index])
     }
 
-    /// A segunda pista, embaixo da primeira nos mesmos compassos (nil: nenhuma).
-    func showSecond(_ index: Int?) {
-        pending?["second"] = index ?? NSNull()
-        call("window.tracklab.second(index)", ["index": index ?? NSNull()])
+    /// As outras pistas, embaixo da principal nos mesmos compassos, na ordem dada (vazia: só a principal).
+    func showOthers(_ list: [Int]) {
+        pending?["others"] = list
+        call("window.tracklab.others(list)", ["list": list])
     }
 
     func setTempo(_ points: [TempoPoint]) {

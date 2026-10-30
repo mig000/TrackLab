@@ -5,6 +5,8 @@ import TrackLabCore
 /// do vídeo vinculado, mapa de tempo, separação) e o progresso aparece na barra lateral.
 struct ImportSheet: View {
     let library: LibraryModel
+    /// Vindo de Fontes › Multitracks: a busca abre com o artista e o título dela e a música entra com as faixas dela.
+    var multitrack: MultitrackSong?
     @Environment(\.dismiss) private var dismiss
     @Local private var text = ""
     @Local private var results: [SearchResult] = []
@@ -19,6 +21,12 @@ struct ImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Importar do Songsterr").font(.title3.weight(.semibold))
+            if let multitrack {
+                Label("Com as faixas da multitrack: \(multitrack.instruments.joined(separator: ", ")) "
+                      + "(\(multitrack.formatLabel), \(multitrack.collection))", systemImage: "square.stack.3d.up")
+                    .font(.callout)
+                    .foregroundStyle(.green)
+            }
             HStack {
                 TextField("Link do Songsterr ou nome da música", text: $text)
                     .textFieldStyle(.roundedBorder)
@@ -55,7 +63,10 @@ struct ImportSheet: View {
             }
             .frame(minHeight: 260)
             HStack {
-                Text("A música entra com a partitura, o áudio do vídeo do Songsterr e as faixas separadas na GPU.")
+                Text(multitrack.map { $0.format == "mogg" }.map { $0
+                    ? "O .mogg ainda não entra: a música vem com as faixas separadas na GPU."
+                    : "A música entra com a partitura, o áudio do vídeo do Songsterr e as faixas da multitrack alinhadas a ele." }
+                    ?? "A música entra com a partitura, o áudio do vídeo do Songsterr e as faixas separadas na GPU.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -64,6 +75,12 @@ struct ImportSheet: View {
         }
         .padding(20)
         .frame(width: 560)
+        .onAppear {
+            // Da multitrack: a busca já vai com o nome dela.
+            guard let multitrack, text.isEmpty else { return }
+            text = [multitrack.artist, multitrack.title].compactMap { $0 }.joined(separator: " ")
+            submit()
+        }
     }
 
     private func submit() {
@@ -87,7 +104,8 @@ struct ImportSheet: View {
     }
 
     private func start(_ reference: String, title: String) {
-        Task { await library.importSong(reference, title: title) }
+        let multitrack = multitrack
+        Task { await library.importSong(reference, title: title, multitrack: multitrack) }
         dismiss()
     }
 }

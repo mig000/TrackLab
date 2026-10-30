@@ -2,7 +2,8 @@ import SwiftUI
 import TrackLabCore
 
 /// A biblioteca de multitracks: as músicas com as faixas da gravação, achadas pelo índice do motor (sem acento, pelo
-/// começo das palavras). Daqui elas se consultam; as faixas entram numa música pelo mixer dela (Melhorar as faixas).
+/// começo das palavras). "Procurar a TAB" abre a busca do Songsterr com o nome dela, e a música importada nasce com as
+/// faixas dela; numa música que já existe, elas entram pelo mixer (Melhorar as faixas).
 struct MultitracksView: View {
     let library: LibraryModel
     @Local private var text = ""
@@ -58,6 +59,18 @@ struct MultitracksView: View {
     }
 
     private func row(_ song: MultitrackSong) -> some View {
+        HStack {
+            details(song)
+            Spacer()
+            Button("Procurar a TAB") {
+                library.importFrom = song
+                NotificationCenter.default.post(name: .importSong, object: nil)
+            }
+            .help("Procura a música no Songsterr; ao importar, ela vem com as faixas desta multitrack alinhadas ao vídeo")
+        }
+    }
+
+    private func details(_ song: MultitrackSong) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(song.title).fontWeight(.medium)
             Text([song.artist, song.album, song.year].compactMap { $0 }.joined(separator: " · "))

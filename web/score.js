@@ -15,7 +15,7 @@
 // redo, clear. A página responde `selection {…}` (ou null) e, 1,5 s depois da última mudança, `save {gp}` (o Guitar
 // Pro 7 em base64) e `notes` (as notas novas, para o espectro).
 //
-// Do app para a página: load({gp, track, points}), track(n), second(n | null), tempo(points),
+// Do app para a página: load({gp, track, points, others, page}), track(n), others([n…]), page(sim), tempo(points),
 // clock(s, playing, rate, delay),
 // span(segundos), adjusting(sim), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
 // Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks, sections},
@@ -37,6 +37,7 @@
   let tabElement = document.getElementById("tab");
   const cursor = document.getElementById("cursor");
   const loopBox = document.getElementById("loop");
+  const pageCursor = document.getElementById("page-cursor");
   const message = document.getElementById("message");
 
   // Diferença entre o relógio extrapolado e um aviso do app abaixo da qual o aviso é ignorado.
@@ -71,7 +72,13 @@
     score: null,
     track: 0,
     // A segunda pista, desenhada embaixo da primeira (null: nenhuma).
-    second: null,
+    others: [],
+    // O modo página: a partitura em sistemas, de cima para baixo; as batidas da pista principal (tique e a batida do
+    // alphaTab) para o cursor.
+    page: false,
+    pageBeats: [],
+    pageTicks: [],
+    pageSystem: null,
     theme: "light",
     scale: 1,
     points: [],
@@ -131,7 +138,7 @@
     settings.core.enableLazyLoading = false;
     // As caixas de cada nota, para escolher a nota com o clique na edição.
     settings.core.includeNoteBounds = true;
-    settings.display.layoutMode = alphaTab.LayoutMode.Horizontal;
+    settings.display.layoutMode = state.page ? alphaTab.LayoutMode.Page : alphaTab.LayoutMode.Horizontal;
     // Cada pauta diz o que mostra (showPreferences): TAB nas de cordas, partitura na bateria. Com o perfil "só TAB"
     // a bateria, que não tem TAB, quebrava o desenho.
     settings.display.staveProfile = alphaTab.StaveProfile.Default;
@@ -202,6 +209,16 @@
     }
     const next = createApi();
     const tracks = shownTracks();
+    if (state.page) {
+      // Em páginas o alphaTab quebra os sistemas na largura da janela: sem as larguras da escala da Fita.
+      state.measuring = false;
+      next.element.style.marginLeft = "0px";
+      if (!again) {
+        state.renderStarted = performance.now();
+      }
+      whenFontsLoaded(next.api, () => next.api.renderScore(state.score, tracks));
+      return;
+    }
     state.measuring = !state.before;
     tracks.forEach(sizeBars);
     next.element.style.marginLeft = lead() + "px";
@@ -211,12 +228,15 @@
     whenFontsLoaded(next.api, () => next.api.renderScore(state.score, tracks));
   }
 
-  // A pista principal e, se houver, a segunda (diferente da principal).
+  // A pista principal e as outras escolhidas, embaixo dela nos mesmos compassos (sem repetir nem passar do fim).
   function shownTracks() {
     const last = state.score.tracks.length - 1;
     const track = Math.min(Math.max(0, state.track), last);
-    const second = state.second;
-    return Number.isInteger(second) && second >= 0 && second <= last && second !== track ? [track, second] : [track];
+    const list = [track];
+    for (const other of state.others) {
+      if (Number.isInteger(other) && other >= 0 && other <= last && !list.includes(other)) list.push(other);
+    }
+    return list;
   }
 
 
@@ -331,6 +351,10 @@
     tabElement = next.element;
     tabElement.classList.remove("pending");
     state.renderedSpan = next.span;
+    if (state.page) {
+      afterPageRender();
+      return;
+    }
     // O desenho novo já está na escala de agora: a #sheet perde o esticamento antes de medir (com ele, a margem da
     // esquerda saía multiplicada pelo zoom e a TAB descolava da Fita).
     sheet.style.transform = `translate3d(${-state.scroll}px, 0, 0)` +
@@ -349,6 +373,82 @@
       height: Math.ceil(tabElement.scrollHeight),
       ms: Math.round(performance.now() - state.renderStarted),
     });
+  }
+
+  // O desenho em páginas na tela: a folha na largura da janela, as batidas da pista principal para o cursor.
+  function afterPageRender() {
+    state.layoutWidth = viewport.clientWidth;
+    sheet.style.width = "100%";
+    sheet.style.height = Math.ceil(tabElement.scrollHeight) + "px";
+    state.anchors = [];
+    cursor.hidden = true;
+    loopBox.hidden = true;
+    const staff = state.score.tracks[shownTracks()[0]].staves.find((s) => s.tuning && s.tuning.length)
+      || state.score.tracks[shownTracks()[0]].staves[0];
+    const beats = [];
+    for (const bar of staff.bars) {
+      for (const beat of bar.voices[0].beats) beats.push(beat);
+    }
+    beats.sort((a, b) => a.absolutePlaybackStart - b.absolutePlaybackStart);
+    state.pageBeats = beats;
+    state.pageTicks = beats.map((b) => b.absolutePlaybackStart);
+    state.pageSystem = null;
+    drawSelection();
+    drawPage(true);
+    post({
+      type: "rendered",
+      bars: state.score.masterBars.length,
+      height: Math.ceil(tabElement.scrollHeight),
+      ms: Math.round(performance.now() - state.renderStarted),
+    });
+  }
+
+  // O cursor do modo página: anda contínuo como o da faixa, de uma nota à seguinte no tempo (até o fim do sistema
+  // quando a seguinte está no próximo), na altura do sistema. Quando entra num sistema novo, a página rola até ele
+  // ficar no alto (antes pulava de nota em nota e só rolava quando o sistema já tinha saído da vista).
+  function drawPage(force, now = performance.now()) {
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!lookup || !state.points.length || !state.pageBeats.length) {
+      pageCursor.hidden = true;
+      return;
+    }
+    const tick = core.secondsToTick(state.points, core.estimate(state.clock, now, state.loop));
+    // Antes da primeira batida (a introdução do vídeo), o cursor espera nela.
+    const index = Math.max(0, core.beatIndexAt(state.pageTicks, tick));
+    const bounds = lookup.findBeat(state.pageBeats[index]);
+    if (!bounds) {
+      pageCursor.hidden = true;
+      return;
+    }
+    const systemBounds = bounds.barBounds.masterBarBounds.staffSystemBounds;
+    const system = systemBounds.visualBounds;
+    let x = bounds.onNotesX;
+    const nextBeat = state.pageBeats[index + 1];
+    const next = nextBeat ? lookup.findBeat(nextBeat) : null;
+    const from = state.pageTicks[index];
+    const to = nextBeat ? state.pageTicks[index + 1] : from;
+    if (to > from && tick > from) {
+      const sameSystem = next && next.barBounds.masterBarBounds.staffSystemBounds === systemBounds;
+      const end = sameSystem ? next.onNotesX : system.x + system.w;
+      x += (end - x) * Math.min(1, (tick - from) / (to - from));
+    }
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    const page = sheet.getBoundingClientRect();
+    const left = surface.left - page.left + x;
+    const top = surface.top - page.top + system.y;
+    pageCursor.hidden = false;
+    pageCursor.style.transform = `translate3d(${left}px, ${top}px, 0)`;
+    pageCursor.style.height = system.h + "px";
+    if (force || systemBounds !== state.pageSystem) {
+      state.pageSystem = systemBounds;
+      const view = viewport.scrollTop;
+      const wanted = Math.max(0, top - 16);
+      const outside = top < view || top + system.h > view + viewport.clientHeight;
+      if (force ? outside : Math.abs(view - wanted) > 2) {
+        viewport.scrollTo({ top: wanted, behavior: force ? "auto" : "smooth" });
+      }
+    }
   }
 
   // Quanto a camada na tela está esticada: com o zoom mudando, o desenho antigo na escala nova até o novo chegar.
@@ -370,6 +470,10 @@
   // arredonda e alterna passos de 1 e 2 px) e o cursor fica fora dela. `now`: a hora do quadro
   // (requestAnimationFrame), para os passos saírem iguais.
   function draw(force, now = performance.now()) {
+    if (state.page) {
+      drawPage(force, now);
+      return;
+    }
     const seconds = core.estimate(state.clock, now, state.loop);
     const x = xAtSeconds(seconds);
     if (x === null) {
@@ -397,7 +501,7 @@
   }
 
   function drawLoop() {
-    if (!state.loop) {
+    if (!state.loop || state.page) {
       loopBox.hidden = true;
       return;
     }
@@ -429,6 +533,16 @@
       pick(event);
       return;
     }
+    if (state.page) {
+      // Em páginas: a música vai até a batida clicada.
+      const api = state.api;
+      const lookup = api && api.renderer.boundsLookup;
+      if (!lookup || !state.points.length) return;
+      const surface = api.canvasElement.element.getBoundingClientRect();
+      const beat = lookup.getBeatAtPos(event.clientX - surface.left, event.clientY - surface.top);
+      if (beat) post({ type: "seek", seconds: Math.max(0, core.tickToSeconds(state.points, beat.absolutePlaybackStart)) });
+      return;
+    }
     if (!state.anchors.length || !state.points.length) {
       return;
     }
@@ -439,7 +553,7 @@
 
   // ⇧ + arrastar, no Ajuste: nada se mexe na pauta; o app desliza a onda da Fita com o mouse.
   sheet.addEventListener("pointerdown", (event) => {
-    if (!state.adjusting || !event.shiftKey || !state.anchors.length) {
+    if (state.page || !state.adjusting || !event.shiftKey || !state.anchors.length) {
       return;
     }
     state.shiftDrag = { from: event.clientX, dx: 0 };
@@ -654,6 +768,18 @@
     }
   });
 
+  // Liga ou desliga o modo página: a folha volta ao começo e o cursor certo aparece.
+  function setPage(value) {
+    state.page = value;
+    document.body.classList.toggle("page", value);
+    pageCursor.hidden = true;
+    cursor.hidden = value;
+    state.before = null;
+    state.scroll = 0;
+    viewport.scrollTop = 0;
+    if (!value) sheet.style.transform = "";
+  }
+
   window.tracklab = {
     load(payload) {
       try {
@@ -671,7 +797,8 @@
       state.undo = [];
       state.redo = [];
       state.track = Number.isInteger(payload.track) ? payload.track : 0;
-      state.second = Number.isInteger(payload.second) ? payload.second : null;
+      state.others = Array.isArray(payload.others) ? payload.others.filter(Number.isInteger) : [];
+      setPage(Boolean(payload.page));
       state.points = core.cleanPoints(payload.points);
       const masters = state.score.masterBars;
       const last = masters[masters.length - 1];
@@ -702,12 +829,21 @@
       state.before = null;
       render();
     },
-    second(index) {
-      const value = Number.isInteger(index) ? index : null;
-      if (value === state.second) {
+    page(value) {
+      if (Boolean(value) === state.page) {
         return;
       }
-      state.second = value;
+      setPage(Boolean(value));
+      if (state.score) {
+        render();
+      }
+    },
+    others(list) {
+      const value = Array.isArray(list) ? list.filter(Number.isInteger) : [];
+      if (JSON.stringify(value) === JSON.stringify(state.others)) {
+        return;
+      }
+      state.others = value;
       if (state.score) {
         state.before = null;
         render();
@@ -729,6 +865,8 @@
         return;
       }
       state.span = seconds;
+      // Em páginas a escala da Fita não vale: nada a redesenhar.
+      if (state.page) return;
       // Na hora: a camada na tela estica para a escala nova (acompanha a Fita); o desenho novo vem quando o zoom para.
       drawLoop();
       draw(true);

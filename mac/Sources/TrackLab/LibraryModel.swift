@@ -48,6 +48,9 @@ final class LibraryModel {
     var collection = Collection.all
     /// O trecho a abrir na próxima música selecionada (um item do Para hoje).
     var pendingSection: String?
+    /// A multitrack de onde a próxima importação parte (Fontes › Multitracks › Procurar a TAB): a busca do Songsterr
+    /// abre com o nome dela e a música nasce com as faixas dela, sem o Demucs.
+    var importFrom: MultitrackSong?
 
     var today: [TodayItem] { TodayPlan.items(songs) }
 
@@ -147,18 +150,26 @@ final class LibraryModel {
         }
     }
 
-    /// Importa uma música do Songsterr (link ou número) e separa as faixas; quando termina, a seleciona.
-    func importSong(_ reference: String, title: String) async {
+    /// Importa uma música do Songsterr (link ou número) e separa as faixas; quando termina, a seleciona. Com uma
+    /// `multitrack` (de uma pasta de faixas ou do Clone Hero), as faixas são as dela, alinhadas ao vídeo, no lugar do
+    /// Demucs; se ela não casar com o vídeo, a música fica sem separação e o mixer oferece o Demucs.
+    func importSong(_ reference: String, title: String, multitrack: MultitrackSong? = nil) async {
+        let own = multitrack.map { $0.format != "mogg" } ?? false
         do {
-            let ticket = try await Backend.shared.importSong(reference)
+            let ticket = try await Backend.shared.importSong(reference, separate: !own)
             imports.append(Importing(id: ticket.id, title: title, message: "Na fila…"))
-            await follow(ticket.id)
+            guard let song = await follow(ticket.id), own, let multitrack else { return }
+            let aligned = try await Backend.shared.importMultitrack(song, path: multitrack.path)
+            imports.append(Importing(id: aligned.id, title: title, message: "Alinhando a multitrack ao vídeo…"))
+            await follow(aligned.id)
         } catch {
             imports.append(Importing(id: UUID().uuidString, title: title, message: "", error: error.localizedDescription, done: true))
         }
     }
 
-    private func follow(_ id: String) async {
+    /// Acompanha a tarefa até o fim; devolve a música dela (selecionada) se deu certo.
+    @discardableResult
+    private func follow(_ id: String) async -> String? {
         while true {
             do {
                 try await Task.sleep(for: .milliseconds(500))
@@ -177,13 +188,13 @@ final class LibraryModel {
                 await refresh()
                 if let song = job.result?.song { selection = song.id }
                 if job.status == "done", job.result?.warning == nil { imports.removeAll { $0.id == id } }
-                return
+                return job.status == "done" ? job.result?.song?.id : nil
             } catch {
                 update(id) {
                     $0.done = true
                     $0.error = error.localizedDescription
                 }
-                return
+                return nil
             }
         }
     }

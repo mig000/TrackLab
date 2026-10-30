@@ -21,6 +21,12 @@ struct FitaView: View {
     @Local private var held: (point: TempoPoint, to: Double)?
     /// No espectro: a nota pega na faixa e quantos semitons ela já andou.
     @Local private var grabbed: (note: ScoreNote, track: Int, semitones: Int)?
+    @Environment(\.colorScheme) private var scheme
+
+    /// A aparência clara (papel): a Lente em tinta, as marcas por cima escuras.
+    private var paper: Bool { scheme == .light }
+    /// A cor das linhas e marcas por cima do espectro: branca no escuro, preta no papel.
+    private var ink: Color { paper ? .black : .white }
 
     static let playheadAt = 0.4
     static let spans: ClosedRange<Double> = 3...40
@@ -41,7 +47,9 @@ struct FitaView: View {
                 tape(size: geometry.size, now: model.engine.songTime(atHost: host))
             }
         }
-        .background(Color(nsColor: .underPageBackgroundColor))
+        // No papel, o fundo é o da página (branco); no escuro, o de baixo da página, como antes.
+        .background(paper ? Color(red: 0.98, green: 0.973, blue: 0.953) : Color(nsColor: .underPageBackgroundColor))
+        .onChange(of: scheme, initial: true) { if lens { model.paper = paper } }
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
@@ -275,7 +283,6 @@ struct FitaView: View {
             return
         }
         let main = model.scoreNotes.indices.contains(model.scoreTrack) ? model.scoreNotes[model.scoreTrack] : []
-        let second = model.scoreSecond.flatMap { model.scoreNotes.indices.contains($0) ? model.scoreNotes[$0] : nil } ?? []
         let lowPitch = pitches.lowerBound
         let highPitch = pitches.upperBound
         func y(_ pitch: Double) -> Double { height - (pitch - lowPitch) / (highPitch - lowPitch) * height }
@@ -286,12 +293,12 @@ struct FitaView: View {
         for beat in model.grid.beats where beat >= gridStart && beat <= gridStart + span {
             beatLines.addRect(CGRect(x: gx(beat), y: 0, width: 1, height: height))
         }
-        context.fill(beatLines, with: .color(.white.opacity(0.07)))
+        context.fill(beatLines, with: .color(ink.opacity(paper ? 0.1 : 0.07)))
         var barLines = Path()
         for bar in model.grid.bars where bar >= gridStart && bar <= gridStart + span {
             barLines.addRect(CGRect(x: gx(bar), y: 0, width: 1, height: height))
         }
-        context.fill(barLines, with: .color(.white.opacity(0.3)))
+        context.fill(barLines, with: .color(ink.opacity(paper ? 0.35 : 0.3)))
 
         // As notas como na Lente: faixas que seguem o som (o vibrato e o bend copiados da curva quando ela os tem; senão
         // a escrita), com o traço do ataque na ponta e, por cima, os pontos laranja da altura que soa. Cada pista num
@@ -395,10 +402,10 @@ struct FitaView: View {
                 glow.stroke(chosen.shape, with: .color(color), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
             }
             context.fill(attacks, with: .color(color))
-            context.fill(timing, with: .color(.white.opacity(0.75)))
+            context.fill(timing, with: .color(ink.opacity(0.75)))
             let red = Color(red: 1, green: 0.36, blue: 0.36)
             context.stroke(suspect, with: .color(red), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
-            let orange = Color(red: 1, green: 138 / 255, blue: 61 / 255)
+            let orange = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 138 / 255, blue: 61 / 255)
             context.fill(dots, with: .color(orange.opacity(0.55)))
             if let line = chosen?.line {
                 if semitone >= 20 {
@@ -409,8 +416,12 @@ struct FitaView: View {
             }
             if !visible.isEmpty { model.askCurves(visible, track: track) }
         }
-        if let index = model.scoreSecond { bands(second, track: index, rgb: (91, 155, 255)) }
-        bands(main, track: model.scoreTrack, rgb: (245, 181, 68))
+        // As outras pistas, cada uma na sua cor (a primeira em azul, como a segunda da Lente), embaixo da principal.
+        for (order, index) in model.shownTracks.dropFirst().enumerated() where model.scoreNotes.indices.contains(index) {
+            bands(model.scoreNotes[index], track: index, rgb: Self.otherColors[order % Self.otherColors.count])
+        }
+        // A principal em âmbar (mais escuro no papel, para ler sobre o claro).
+        bands(main, track: model.scoreTrack, rgb: paper ? (196, 118, 10) : (245, 181, 68))
         // No Ajuste, no alto de cada compasso: quanto os ataques chegam depois (+) ou antes (−) do mapa, de 25 ms para
         // cima (A leva o 1 até eles).
         if model.adjusting {
@@ -464,12 +475,12 @@ struct FitaView: View {
                 rules.addRect(CGRect(x: gutter, y: y1.rounded(), width: width - gutter, height: 1))
             }
         }
-        context.fill(whiteKeys, with: .color(Color(red: 0.13, green: 0.15, blue: 0.19)))
-        context.fill(blackKeys, with: .color(Color(red: 0.04, green: 0.05, blue: 0.07)))
-        context.fill(rules, with: .color(.white.opacity(0.04)))
+        context.fill(whiteKeys, with: .color(paper ? Color(white: 0.97) : Color(red: 0.13, green: 0.15, blue: 0.19)))
+        context.fill(blackKeys, with: .color(paper ? Color(white: 0.25) : Color(red: 0.04, green: 0.05, blue: 0.07)))
+        context.fill(rules, with: .color(ink.opacity(0.04)))
         for (name, isC, at) in keyNames {
             context.draw(Text(name).font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(isC ? Color(white: 0.65) : Color(white: 0.45)), at: at, anchor: .leading)
+                .foregroundStyle(paper ? Color(white: isC ? 0.25 : 0.45) : Color(white: isC ? 0.65 : 0.45)), at: at, anchor: .leading)
         }
     }
 
@@ -478,17 +489,20 @@ struct FitaView: View {
     private func pitchWindow(gridStart: Double) -> ClosedRange<Double>? {
         guard let spectrum = model.spectrum else { return nil }
         let main = model.scoreNotes.indices.contains(model.scoreTrack) ? model.scoreNotes[model.scoreTrack] : []
-        let second = model.scoreSecond.flatMap { model.scoreNotes.indices.contains($0) ? model.scoreNotes[$0] : nil } ?? []
+        let others = model.shownTracks.dropFirst().flatMap { model.scoreNotes.indices.contains($0) ? model.scoreNotes[$0] : [] }
         let limits = spectrum.low...spectrum.pitch(row: Double(spectrum.rows - 1))
         let target = model.pitchZoom
             ? Self.zoomTarget(main, grid: model.grid, at: model.engine.currentTime, limits: limits)
-            : Self.pitchTarget(main + second, grid: model.grid, from: gridStart - span * 0.5, to: gridStart + span * 1.5,
+            : Self.pitchTarget(main + others, grid: model.grid, from: gridStart - span * 0.5, to: gridStart + span * 1.5,
                                limits: limits)
         return model.pitchWindow.update(target: target, easing: model.engine.isPlaying)
     }
 
     /// A faixa da onda em cima do espectro.
     static let waveStrip = 30.0
+    /// As cores das outras pistas na Lente, pela ordem em que foram escolhidas (a principal é âmbar).
+    static let otherColors: [(Double, Double, Double)] = [(91, 155, 255), (110, 205, 140), (190, 130, 255),
+                                                          (255, 120, 170), (90, 210, 210)]
     /// A faixa da onda em cima da Lente; sem ela (a Onda à vista noutra camada), zero.
     private var stripHeight: Double { lens && strip ? Self.waveStrip : 0 }
 
@@ -512,8 +526,7 @@ struct FitaView: View {
         let reach = Self.bandWidth(semitone: semitone) / 2 + 3
         let t = start + point.x / max(size.width, 1) * span
         let slack = 2 / max(Double(size.width), 1) * span
-        let tracks = [model.scoreTrack] + (model.scoreSecond.map { [$0] } ?? [])
-        for track in tracks where model.scoreNotes.indices.contains(track) {
+        for track in model.shownTracks where model.scoreNotes.indices.contains(track) {
             for note in model.scoreNotes[track] {
                 let s0 = model.grid.seconds(at: note.tick)
                 let s1 = model.grid.seconds(at: note.tick + note.duration)
