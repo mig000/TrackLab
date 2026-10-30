@@ -813,7 +813,8 @@
     const note = selectedNote();
     post({
       type: "selection",
-      note: note ? edit.describe(alphaTab, note) : null,
+      note: note ? Object.assign(edit.describe(alphaTab, note), { place: placeName(note.beat.absolutePlaybackStart) })
+        : null,
       canUndo: state.undo.length > 0,
       canRedo: state.redo.length > 0,
     });

@@ -608,9 +608,21 @@
   }
 
   // O que o app mostra da nota escolhida: a pista, a corda (1 é a mais aguda), a casa, a altura e as articulações.
+  // A nota escolhida para o app: onde está, a figura da batida e, para cada corda da TAB (1, a mais aguda, primeiro), a
+  // casa em que a mesma altura cai nela (null fora do braço ou com a corda ocupada por outra nota da batida).
   function describe(at, note) {
-    return { track: note.beat.voice.bar.staff.track.index, string: tabString(note), fret: note.fret,
-      pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note) };
+    const staff = note.beat.voice.bar.staff;
+    const pitch = openPitch(staff, note.string) + note.fret;
+    const strings = [];
+    for (let tab = 1; tab <= staff.tuning.length; tab++) {
+      const alpha = staff.tuning.length - tab + 1;
+      const fret = pitch - openPitch(staff, alpha);
+      strings.push(alpha === note.string ? note.fret
+        : fret < 0 || fret > MAX_FRET || stringBusy(note.beat, alpha, note) ? null : fret);
+    }
+    return { track: staff.track.index, string: tabString(note), fret: note.fret,
+      pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note),
+      figure: figureName(note.beat.playbackDuration), strings };
   }
 
   return {

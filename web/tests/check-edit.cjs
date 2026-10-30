@@ -90,7 +90,16 @@ test("navegar pelas notas e achar a nota de novo depois da cópia", () => {
   score = edit.refinish(alphaTab, score);
   const found = edit.resolve(score, where);
   assert.equal(found.fret, b.fret);
-  assert.equal(edit.describe(alphaTab, found).string, edit.tabString(b));
+  const described = edit.describe(alphaTab, found);
+  assert.equal(described.string, edit.tabString(b));
+  // Para a coluna de edição: a figura e a casa da mesma altura em cada corda (a da nota é a casa dela).
+  assert.equal(described.strings.length, found.beat.voice.bar.staff.tuning.length);
+  assert.equal(described.strings[described.string - 1], found.fret);
+  assert.ok(typeof described.figure === "string");
+  const tuning = found.beat.voice.bar.staff.tuning;
+  described.strings.forEach((fret, i) => {
+    if (fret !== null) assert.equal(tuning[i] + fret, tuning[described.string - 1] + found.fret);
+  });
 });
 
 

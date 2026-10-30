@@ -274,14 +274,24 @@ public struct TabSelection: Hashable, Sendable {
     /// O tique em que a nota começa (para achar a faixa dela na Fita).
     public let tick: Double?
     public let techniques: [String]
+    /// Onde a nota está ("c. 24 · tempo 3 + 1/16") e a figura da batida ("colcheia").
+    public let place: String?
+    public let figure: String?
+    /// Para cada corda da TAB (a 1, a mais aguda, primeiro), a casa em que a mesma altura cai nela; nil fora do braço
+    /// ou com a corda ocupada por outra nota da batida.
+    public let strings: [Int?]
 
-    public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String]) {
+    public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String],
+                place: String? = nil, figure: String? = nil, strings: [Int?] = []) {
         self.track = track
         self.string = string
         self.fret = fret
         self.pitch = pitch
         self.tick = tick
         self.techniques = techniques
+        self.place = place
+        self.figure = figure
+        self.strings = strings
     }
 
     /// Se é esta nota da pista (a mesma batida e a mesma corda).
@@ -296,7 +306,9 @@ public struct TabSelection: Hashable, Sendable {
             return nil
         }
         self.init(track: track, string: string, fret: fret, pitch: pitch,
-                  tick: (page["tick"] as? NSNumber)?.doubleValue, techniques: page["techniques"] as? [String] ?? [])
+                  tick: (page["tick"] as? NSNumber)?.doubleValue, techniques: page["techniques"] as? [String] ?? [],
+                  place: page["place"] as? String, figure: page["figure"] as? String,
+                  strings: (page["strings"] as? [Any])?.map { ($0 as? NSNumber)?.intValue } ?? [])
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

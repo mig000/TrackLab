@@ -37,6 +37,40 @@ struct SongView: View {
             SectionsBar(model: model)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
+            // Na edição da TAB, a coluna dela à direita: a TAB, a Onda e a Lente perdem largura juntas (a mesma escala e a
+            // agulha no mesmo x nas três), sem perder altura.
+            HStack(spacing: 0) {
+                lanesColumn
+                if model.editingTab {
+                    Divider()
+                    TabEditPanel(model: model)
+                }
+            }
+            Divider()
+            TransportBar(model: model, span: $span)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            if showMixer {
+                Divider()
+                MixerBar(model: model)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
+        }
+        .background(TabEditKeys(model: model))
+        .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
+        // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
+        .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
+        // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.
+        .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in span = FitaView.clampSpan(span / 1.33) }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in span = FitaView.clampSpan(span * 1.33) }
+    }
+
+    /// A TAB, o Ajuste e as camadas embaixo dela (a Onda e a Lente), uma sobre a outra.
+    private var lanesColumn: some View {
+        VStack(spacing: 0) {
             ZStack {
                 ScoreView(bridge: model.bridge)
                 if let message = model.scoreMessage {
@@ -61,12 +95,6 @@ struct SongView: View {
                 ResizeHandle(help: "Arraste para mudar a altura da TAB; duplo clique volta à altura da pauta") { delta, start in
                     tabHeight = min(max(80, (start ?? tabMeasured) + delta), 900)
                 } begin: { tabMeasured } reset: { tabHeight = 0 }
-            }
-            if model.editingTab {
-                Divider()
-                TabEditBar(model: model)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
             }
             if !lanes { Divider() }
             if model.adjusting {
@@ -98,26 +126,7 @@ struct SongView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
-            Divider()
-            TransportBar(model: model, span: $span)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            if showMixer {
-                Divider()
-                MixerBar(model: model)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-            }
         }
-        .background(TabEditKeys(model: model))
-        .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
-        .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
-        // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
-        .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
-        // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.
-        .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in span = FitaView.clampSpan(span / 1.33) }
-        .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in span = FitaView.clampSpan(span * 1.33) }
     }
 
     /// A pinça no trackpad, sobre a TAB ou a Fita: abrir aproxima (menos segundos na largura), fechar afasta. As duas

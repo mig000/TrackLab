@@ -229,8 +229,12 @@ pergunta). O relógio do transporte é uma NSView (`ClockLabel`): um Text que mu
 restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); o botão
 Mixer na ponta do transporte (ou ⌥⌘M, Visualizar) esconde o mixer e a Fita ganha a altura; a escolha fica guardada
 (`showMixer`). Com ele fechado, o transporte mostra o que ouvir (Original ou um atalho de mixagem, `CompactMix`) e o X. Editar TAB (⌘E,
-`TabEditBar`, com Desfazer e Refazer e a linha do som sempre reservada, para escolher uma nota não mudar a altura da
-barra): a paleta de articulações embaixo da partitura e as teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+`TabEditPanel`): uma coluna de 252 pontos à direita da TAB, da Onda e da Lente (elas perdem largura juntas, não altura,
+e a agulha segue no mesmo x), com tudo à vista e a tecla de cada comando: a nota (onde está e a figura, pelo `describe`
+da página com o `placeName`; casa e meio tom com − e +; a corda, um botão por corda com a casa em que a mesma altura cai
+nela, pelos `strings` do `describe`; anterior, seguinte, apagar), as articulações em grupos, o som e o encaixe, o tempo
+(barras de duração, grade, um passo para os lados), as suspeitas e, embaixo, o aviso da página, Desfazer, Refazer e
+Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo

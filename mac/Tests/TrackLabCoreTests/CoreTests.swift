@@ -335,6 +335,14 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let note = TabSelection(page: page)
     #expect(note?.fret == 7 && note?.techniques == ["vibrato", "bend-full"] && note?.pitchName == "Ré 4")
     #expect(TabSelection(page: ["track": NSNumber(value: 1)]) == nil)
+    // Para a coluna de edição: onde está, a figura e a casa em cada corda (nil fora do braço).
+    var full = page
+    full["place"] = "c. 24 · tempo 3 + 1/16"
+    full["figure"] = "colcheia"
+    full["strings"] = [NSNumber(value: 2), NSNumber(value: 3), NSNumber(value: 7), NSNumber(value: 12), NSNull(), NSNull()]
+    let chosen = TabSelection(page: full)
+    #expect(chosen?.place == "c. 24 · tempo 3 + 1/16" && chosen?.figure == "colcheia")
+    #expect(chosen?.strings == [2, 3, 7, 12, nil, nil])
 }
 
 /// Uma curva do som a cada 8 ms de `start` a `end` pela função.
