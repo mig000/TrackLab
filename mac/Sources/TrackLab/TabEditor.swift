@@ -12,7 +12,7 @@ import TrackLabCore
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
 ///     − =           a figura da metade / do dobro             .  T  ponto / tercina          ⇧⌫  vira pausa
 ///     ⇧← ⇧→         escolhe mais uma nota para trás / para a frente (⇧ clique: até ali; ⌘ clique: põe ou tira)
-///     ⌥Espaço       ouvir: o trecho escolhido vira o loop e toca
+///     O, ⌥Espaço    ouvir: o trecho escolhido vira o loop e toca (o ⌥Espaço é o atalho global do ChatGPT)
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
 ///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
@@ -218,7 +218,7 @@ struct TabEditPanel: View {
                     .help("A nota seguinte (→)")
                 Spacer()
                 Button { model.listenSelection() } label: { Image(systemName: "ear") }
-                    .help("Ouvir: o trecho das notas escolhidas vira o loop e toca (⌥Espaço)")
+                    .help("Ouvir: o trecho das notas escolhidas vira o loop e toca (O, ou ⌥Espaço)")
                     .accessibilityLabel("Ouvir")
                 Button(role: .destructive) { model.tabEdit("delete") } label: { Image(systemName: "trash") }
                     .help("Apagar a nota, ou as escolhidas (⌫)")
@@ -607,7 +607,12 @@ struct TabEditKeys: NSViewRepresentable {
             case "r": model.toggleTechnique("let-ring")
             case "p": model.cycleTechnique(["pick-down", "pick-up"])
             case "f": model.fitToSound()
+            case "o": model.listenSelection()
             case "t": model.setFigure(triplet: !(model.tabSelection?.triplet ?? false))
+            // O − = e . pelo caractere também (outros teclados, e o que chega sem a tecla física).
+            case "-": model.stepFigure(-1)
+            case "=", "+": model.stepFigure(1)
+            case ".": model.setFigure(dotted: !(model.tabSelection?.dotted ?? false))
             case "d": model.showDurations.toggle()
             default: return false
             }

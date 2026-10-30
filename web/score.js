@@ -97,6 +97,8 @@
     cursorAt: core.CURSOR_AT,
     // Onde a pauta para enquanto a música está no loop (o app escolhe, como na Fita), ou null.
     pin: null,
+    // A pauta parada nesse começo (segundos) enquanto uma nota clicada toca, ou null.
+    hold: null,
     // O loop sendo marcado na faixa (de onde saiu, em pixels da tela).
     loopDrag: null,
     // As barras de duração na edição e a grade delas (tiques: 240 é semicolcheia, 320 tercina de colcheia…).
@@ -615,7 +617,7 @@
     const playing = state.clock && state.clock.playing;
     const width = viewport.clientWidth;
     const outside = x < state.scroll || x > state.scroll + width;
-    const fixed = core.windowStart(seconds, state.loop, state.pin);
+    const fixed = state.hold !== null ? state.hold : core.windowStart(seconds, state.loop, state.pin);
     if (playing || force || outside || fixed !== null) {
       const target = fixed === null ? core.scrollFor(x, width, state.cursorAt) : xAtSeconds(fixed);
       if (force || Math.abs(target - state.scroll) >= 0.01) {
@@ -904,6 +906,8 @@
         kind: { insert: "delete", delete: "insert", signature: "signature" }[kind] };
       state.score = result.score;
       state.points = core.reshapePoints(state.points, info.tick, info.oldLength, info.newLength);
+      // Os compassos mudaram: a clave e as fórmulas de cada um são medidas de novo no próximo desenho.
+      state.before = null;
       return true;
     });
     if (reason) {
@@ -1221,6 +1225,7 @@
       state.caret = null;
       if (step.points && step.points !== state.points) {
         state.points = step.points;
+        state.before = null;
         replace(edit.restore(alphaTab, step.score));
         // O que acontece agora é a mudança guardada no passo (a contrária da que ele desfaz).
         post({ type: "structure", points: state.points, change: step.change, ...barInfo() });
@@ -1954,9 +1959,10 @@
       state.adjusting = Boolean(value);
     },
     // A janela da Fita: onde o cursor fica na largura (fração) e onde a pauta para sobre o loop (segundos, ou null).
-    view(at, pin) {
+    view(at, pin, hold) {
       if (Number.isFinite(at)) state.cursorAt = Math.min(1, Math.max(0, at));
       state.pin = Number.isFinite(pin) ? pin : null;
+      state.hold = Number.isFinite(hold) ? hold : null;
       draw(true);
     },
     editing(value) {

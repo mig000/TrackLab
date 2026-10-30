@@ -289,6 +289,10 @@ final class StemEngine {
     /// A faixa que soa sozinha enquanto uma nota clicada toca (`audition`); nil no estudo.
     @ObservationIgnored private var auditioning: String?
     @ObservationIgnored private var auditionTask: Task<Void, Never>?
+    /// Se uma nota clicada está tocando (a tela fica parada enquanto isso).
+    private(set) var auditionActive = false
+    /// Quando a nota clicada acaba (antes de a agulha voltar ao começo dela).
+    @ObservationIgnored var onAuditionEnd: (() -> Void)?
 
     /// Uma nota clicada na edição: toca de `from` a `to` só a faixa `id` (a da pista; o original se ela não está
     /// carregada) e volta ao começo dela. Tocando, não faz nada (não interrompe o estudo); um play, um seek ou outro
@@ -298,6 +302,7 @@ final class StemEngine {
         let solo = id.flatMap { tracks[$0] == nil ? nil : $0 } ?? Self.sourceID
         seek(to: from)
         auditioning = solo
+        auditionActive = true
         applyMix()
         play()
         guard isPlaying else {
@@ -316,9 +321,11 @@ final class StemEngine {
     private func endAudition() {
         guard auditioning != nil else { return }
         auditioning = nil
+        auditionActive = false
         auditionTask?.cancel()
         auditionTask = nil
         applyMix()
+        onAuditionEnd?()
     }
 
     /// Depois de cada seek, de onde a música saiu e para onde foi (a tela decide se fica ou anda junto).

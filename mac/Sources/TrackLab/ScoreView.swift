@@ -189,12 +189,16 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     }
 
     /// A janela da Fita (`LoopView`): onde fica o cursor na largura e onde a pauta para sobre o loop.
-    func setView(at: Double, pin: Double?) {
-        guard at != cursorAt || pin != loopPin else { return }
+    /// `hold`: a pauta parada nesse começo, aconteça o que acontecer (enquanto uma nota clicada toca).
+    func setView(at: Double, pin: Double?, hold: Double? = nil) {
+        guard at != cursorAt || pin != loopPin || hold != viewHold else { return }
         cursorAt = at
         loopPin = pin
-        call("window.tracklab.view(at, pin)", ["at": at, "pin": pin ?? NSNull()])
+        viewHold = hold
+        call("window.tracklab.view(at, pin, hold)", ["at": at, "pin": pin ?? NSNull(), "hold": hold ?? NSNull()])
     }
+
+    private var viewHold: Double?
 
     private var cursorAt = 0.4
     private var loopPin: Double?

@@ -244,7 +244,7 @@ onde a onde e o trecho em tiques. Articulação (liga em todas se a principal n�
 (`transposeAll`), corda (`moveAll`, o trecho noutra posição do braço), apagar, pausa, figura e ⌥← ⌥→ valem para todas;
 as do ritmo uma batida por vez, com o finish entre uma e outra (`eachBeat`). Se uma não dá, nenhuma muda: o `change`
 volta a partitura de antes (também numa só, que um compasso refeito pela metade deixava estragada). Esc com várias deixa
-só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, ⌥Espaço) põe o loop no trecho escolhido e
+só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, O ou ⌥Espaço, que no Mac do Miguel é o atalho global do ChatGPT) põe o loop no trecho escolhido e
 toca. Nota nova: um clique numa linha da TAB sem nota (uma corda vazia de um acorde, ou uma pausa) põe o cursor de
 inserção ali (`state.caret`, o endereço da batida com a corda; a corda sai da caixa do compasso, `stringAt`, com as
 linhas igualmente espaçadas); digitar a casa (ou − + e "Pôr nota" na coluna) põe a nota (`edit.insertNote`) e a escolhe;
@@ -253,7 +253,8 @@ na grade (`placeCaret`, pelas âncoras): no meio de uma nota longa, a nota nova 
 continua ligado, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
 fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. Ouvir uma nota: o clique numa nota (na
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
-(`StemEngine.audition`: a mixagem fica de lado enquanto toca e a agulha volta ao começo; tocando, não interrompe; o
+(`StemEngine.audition`: a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
+e a agulha volta ao começo; tocando, não interrompe; o
 seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição),
 numa faixa da Lente (`RightClickCatcher`, um monitor local de `rightMouseDown`) e a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
 dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
@@ -274,7 +275,8 @@ falta vira pausa); a ligadura que chegava ao compasso de depois é desfeita. O m
 (`core.reshapePoints`): o que vem depois anda nos tiques e fica nos mesmos segundos (no mesmo lugar do áudio); um
 compasso posto reparte com o de antes o tempo dele, um apagado deixa o tempo para o de antes (o de antes encolhe ou
 estica por igual desde o último ponto não interpolado), e dentro de um compasso com outra fórmula os pontos esticam. A
-página manda `structure` (mapa, começos dos compassos, seções do GP e a mudança, `BarChange`); o app grava o mapa (vai
+página manda `structure` (mapa, começos dos compassos, seções do GP e a mudança, `BarChange`) e mede de novo a clave e as
+fórmulas de cada compasso (`state.before`; sem isso a TAB descolava da Fita depois de um compasso posto); o app grava o mapa (vai
 para o histórico do pacote), e os trechos de estudo e os compassos conferidos andam junto. O Desfazer volta a partitura
 e o mapa juntos (o passo guarda os pontos e a mudança contrária). Repetições (ritornelo, casa 1 e 2) ficaram de fora: o
 TrackLab supõe cada compasso escrito tocado uma vez (os pontos do Songsterr são um por compasso escrito, e a TAB

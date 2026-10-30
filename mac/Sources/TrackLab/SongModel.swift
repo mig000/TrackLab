@@ -115,10 +115,14 @@ final class SongModel {
         }
     }
 
-    /// O começo da tela (Fita e TAB) com a música em `now`.
+    /// O começo da tela (Fita e TAB) com a música em `now`; parada enquanto uma nota clicada toca.
     func viewStart(now: Double) -> Double {
-        LoopView.start(now: now, loop: engine.loop, span: span, at: playheadAt, pin: loopPin)
+        if engine.auditionActive, let auditionView { return auditionView }
+        return LoopView.start(now: now, loop: engine.loop, span: span, at: playheadAt, pin: loopPin)
     }
+
+    /// A tela enquanto uma nota clicada toca (ela não anda: só a agulha passa pela nota).
+    @ObservationIgnored private var auditionView: Double?
 
     private func place(at: Double, now: Double) {
         playheadAt = min(1, max(0, at))
@@ -223,6 +227,11 @@ final class SongModel {
         self.id = id
         bridge = ScoreBridge(engine: engine)
         engine.onSeek = { [weak self] from, to in self?.seeked(from: from, to: to) }
+        engine.onAuditionEnd = { [weak self] in
+            guard let self else { return }
+            auditionView = nil
+            bridge.setView(at: playheadAt, pin: loopPin)
+        }
         bridge.onLoaded = { [weak self] tracks, ticks, markers, notes in
             guard let self else { return }
             scoreTracks = tracks
@@ -1143,8 +1152,13 @@ final class SongModel {
             }
             return
         }
-        keepView = viewStart(now: engine.currentTime)
+        let view = viewStart(now: engine.currentTime)
+        keepView = view
         engine.audition(from: start, to: end, track: pitchStem(track: track).stem)
+        if engine.auditionActive {
+            auditionView = view
+            bridge.setView(at: playheadAt, pin: loopPin, hold: view)
+        }
     }
 
     // MARK: - Compassos
