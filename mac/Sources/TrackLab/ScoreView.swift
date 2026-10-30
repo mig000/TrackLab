@@ -20,9 +20,15 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     let webView: WKWebView
     private weak var engine: StemEngine?
     /// A partitura lida: as pistas, o início de cada compasso (e o fim do último) e as seções marcadas no Guitar Pro.
-    var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double], _ markers: [(tick: Double, name: String)]) -> Void)?
+    var onLoaded: ((_ tracks: [PageTrack], _ barTicks: [Double], _ markers: [(tick: Double, name: String)],
+                    _ notes: [[ScoreNote]]) -> Void)?
     var onRendered: ((_ ms: Int, _ height: Double?) -> Void)?
     var onError: ((String) -> Void)?
+    /// A edição da TAB: a nota escolhida (ou nil) e se há o que desfazer e refazer; o Guitar Pro editado para gravar;
+    /// as notas novas (para o espectro).
+    var onSelection: ((_ note: TabSelection?, _ canUndo: Bool, _ canRedo: Bool) -> Void)?
+    var onSave: ((Data) -> Void)?
+    var onNotes: (([[ScoreNote]]) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
     var onShift: ((Double) -> Void)?
     var onShiftEnd: ((Double) -> Void)?
@@ -42,7 +48,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
 
     init(engine: StemEngine) {
         let config = WKWebViewConfiguration()
-        webView = WKWebView(frame: .zero, configuration: config)
+        webView = ScoreWebView(frame: .zero, configuration: config)
         self.engine = engine
         super.init()
         config.userContentController.add(self, name: Self.handlerName)
@@ -87,6 +93,12 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.track(index)", ["index": index])
     }
 
+    /// A segunda pista, embaixo da primeira nos mesmos compassos (nil: nenhuma).
+    func showSecond(_ index: Int?) {
+        pending?["second"] = index ?? NSNull()
+        call("window.tracklab.second(index)", ["index": index ?? NSNull()])
+    }
+
     func setTempo(_ points: [TempoPoint]) {
         self.points = Self.encode(points)
         pending?["points"] = self.points
@@ -105,11 +117,43 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.theme(name)", ["name": name])
     }
 
-    /// Os segundos que a Fita mostra na largura: a página desenha os compassos na mesma escala.
+    /// Os segundos que a Fita mostra na largura: a página desenha os compassos na mesma escala. Na pinça chegam
+    /// dezenas por segundo: um aviso por vez, e os do meio viram o mais novo (como o relógio).
     func setSpan(_ seconds: Double) {
         guard seconds != span else { return }
         span = seconds
-        call("window.tracklab.span(seconds)", ["seconds": seconds])
+        guard ready else { return }
+        if spanInFlight {
+            spanPending = true
+            return
+        }
+        spanInFlight = true
+        webView.callAsyncJavaScript("window.tracklab.span(seconds); return null;", arguments: ["seconds": seconds],
+                                    in: nil, in: .page) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.spanInFlight = false
+                if self.spanPending {
+                    self.spanPending = false
+                    let latest = self.span
+                    self.span = .nan
+                    self.setSpan(latest)
+                }
+            }
+        }
+    }
+
+    private var spanInFlight = false
+    private var spanPending = false
+
+    /// A edição da TAB: um clique escolhe a nota.
+    func setEditing(_ value: Bool) {
+        call("window.tracklab.editing(value)", ["value": value])
+    }
+
+    /// Um comando da edição (`technique`, `fret`, `string`, `transpose`, `delete`, `nav`, `undo`, `redo`, `clear`).
+    func edit(_ op: String, _ value: Any? = nil) {
+        call("window.tracklab.edit(op, value)", ["op": op, "value": value ?? NSNull()])
     }
 
     /// No Ajuste a página aceita ⇧ + arrastar.
@@ -195,9 +239,19 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                           !name.isEmpty else { return nil }
                     return (tick, name)
                 }
-                onLoaded?(list, ticks, markers)
+                let notes = (body["notes"] as? [[[NSNumber]]] ?? []).map { track in
+                    ScoreNote.list(track.map { $0.map(\.doubleValue) })
+                }
+                onLoaded?(list, ticks, markers, notes)
             case "rendered":
                 onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
+            case "selection":
+                let note = (body["note"] as? [String: Any]).flatMap(TabSelection.init(page:))
+                onSelection?(note, body["canUndo"] as? Bool ?? false, body["canRedo"] as? Bool ?? false)
+            case "save":
+                if let text = body["gp"] as? String, let data = Data(base64Encoded: text) { onSave?(data) }
+            case "notes":
+                onNotes?((body["notes"] as? [[[NSNumber]]] ?? []).map { ScoreNote.list($0.map { $0.map(\.doubleValue) }) })
             case "shift":
                 onShift?((body["seconds"] as? NSNumber)?.doubleValue ?? 0)
             case "shiftEnd":
@@ -225,17 +279,29 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     }
 }
 
+/// A página da partitura sem o foco do teclado: com ele, a WKWebView engolia o espaço, as setas e as letras, e os
+/// atalhos do transporte paravam depois de um clique na TAB (as teclas da edição vêm pelo monitor do app). Um clique
+/// nela também tira o foco de um campo de texto (a busca), como um clique na Fita.
+final class ScoreWebView: WKWebView {
+    override var acceptsFirstResponder: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder is NSText { window?.makeFirstResponder(nil) }
+        super.mouseDown(with: event)
+    }
+}
+
 struct ScoreView: View {
     let bridge: ScoreBridge
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ScoreWebView(bridge: bridge, colorScheme: colorScheme)
+        ScoreWebHost(bridge: bridge, colorScheme: colorScheme)
             .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
-private struct ScoreWebView: NSViewRepresentable {
+private struct ScoreWebHost: NSViewRepresentable {
     let bridge: ScoreBridge
     let colorScheme: ColorScheme
 

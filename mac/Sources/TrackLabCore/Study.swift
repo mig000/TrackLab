@@ -28,8 +28,41 @@ public enum StudyStatus: String, CaseIterable, Identifiable, Codable, Sendable {
     public static let flow: [StudyStatus] = [.want, .learning, .polishing, .repertoire, .archived]
 }
 
+/// O tipo de um trecho, para a biblioteca de trechos (Fase 3b).
+public enum SectionKind: String, CaseIterable, Identifiable, Codable, Sendable {
+    case trecho, lick, solo, riff, base, intro, final
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .trecho: "Trecho"
+        case .lick: "Lick"
+        case .solo: "Solo"
+        case .riff: "Riff"
+        case .base: "Base"
+        case .intro: "Intro"
+        case .final: "Final"
+        }
+    }
+
+    /// O símbolo (SF Symbols) do tipo, no chip do trecho e na biblioteca.
+    public var symbol: String {
+        switch self {
+        case .trecho: "music.note.list"
+        case .lick: "bolt.fill"
+        case .solo: "flame.fill"
+        case .riff: "repeat"
+        case .base: "square.stack.fill"
+        case .intro: "arrow.right.to.line"
+        case .final: "flag.checkered"
+        }
+    }
+}
+
 /// Um trecho da música para estudar: os compassos (em tiques, que não mudam com o mapa), a meta e o recorde em % da
-/// velocidade, a última vez que foi tocado.
+/// velocidade, a última vez que foi tocado; o tipo, as etiquetas e o favorito organizam a biblioteca de trechos.
+/// `start`, `seconds` e `bpm` vêm calculados pelo motor (pelo mapa de tempo) e não voltam para ele.
 public struct StudySection: Codable, Identifiable, Hashable, Sendable {
     public var id: String?
     public var name: String
@@ -38,9 +71,18 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
     public var goal: Int
     public var best: Int?
     public var practiced: String?
+    public var kind: SectionKind
+    public var tags: [String]
+    public var favorite: Bool
+    /// Quantos compassos o trecho tem (o app conta pelas barras da partitura ao gravar).
+    public var bars: Int?
+    public var start: Double?
+    public var seconds: Double?
+    public var bpm: Double?
 
     public init(id: String? = nil, name: String, from: Double, to: Double, goal: Int = 100, best: Int? = nil,
-                practiced: String? = nil) {
+                practiced: String? = nil, kind: SectionKind = .trecho, tags: [String] = [], favorite: Bool = false,
+                bars: Int? = nil) {
         self.id = id
         self.name = name
         self.from = from
@@ -48,6 +90,32 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
         self.goal = goal
         self.best = best
         self.practiced = practiced
+        self.kind = kind
+        self.tags = tags
+        self.favorite = favorite
+        self.bars = bars
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, from, to, goal, best, practiced, kind, tags, favorite, bars, start, seconds, bpm
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        from = try c.decode(Double.self, forKey: .from)
+        to = try c.decode(Double.self, forKey: .to)
+        goal = try c.decodeIfPresent(Int.self, forKey: .goal) ?? 100
+        best = try c.decodeIfPresent(Int.self, forKey: .best)
+        practiced = try c.decodeIfPresent(String.self, forKey: .practiced)
+        kind = (try? c.decodeIfPresent(SectionKind.self, forKey: .kind)) ?? .trecho
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        bars = try c.decodeIfPresent(Int.self, forKey: .bars)
+        start = try c.decodeIfPresent(Double.self, forKey: .start)
+        seconds = try c.decodeIfPresent(Double.self, forKey: .seconds)
+        bpm = try c.decodeIfPresent(Double.self, forKey: .bpm)
     }
 
     /// O trecho ainda sem recorde começa a 70 %; depois, no recorde.
@@ -58,6 +126,16 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
     public func daysSincePracticed(now: Date) -> Int? {
         guard let practiced, let date = StudyDates.parse(practiced) else { return nil }
         return max(0, Calendar.current.dateComponents([.day], from: date, to: now).day ?? 0)
+    }
+
+    /// As etiquetas de um texto separado por vírgulas, sem repetir (sem diferença de maiúscula), na ordem.
+    public static func tags(from text: String) -> [String] {
+        var seen = Set<String>()
+        return text.split(separator: ",").compactMap { part in
+            let tag = part.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            guard !tag.isEmpty, seen.insert(tag.lowercased()).inserted else { return nil }
+            return String(tag.prefix(30))
+        }
     }
 }
 
@@ -147,7 +225,7 @@ public enum LibrarySearch {
         let wanted = words(query)
         guard !wanted.isEmpty else { return true }
         let have = words(([song.displayTitle, song.artist ?? "", song.tuningName, song.status.label]
-            + song.sections.map(\.name)).joined(separator: " "))
+            + song.sections.flatMap { [$0.name] + $0.tags }).joined(separator: " "))
         return wanted.allSatisfy { word in have.contains { $0.hasPrefix(word) } }
     }
 }
@@ -230,5 +308,87 @@ public enum TodayPlan {
         }
         return items.sorted { ($0.item.rank, -$0.days, $0.item.title) < ($1.item.rank, -$1.days, $1.item.title) }
             .prefix(limit).map(\.item)
+    }
+}
+
+/// Um trecho na biblioteca de trechos: o trecho e a música de onde ele vem.
+public struct SectionItem: Identifiable, Hashable, Sendable {
+    public let songID: String
+    public let songTitle: String
+    public let artist: String?
+    public let tuning: String
+    public let status: StudyStatus
+    public let section: StudySection
+
+    public var id: String { "\(songID)/\(section.id ?? section.name)" }
+}
+
+/// A biblioteca de trechos (Fase 3b): todos os trechos de todas as músicas, com busca (sem acento, pelo começo das
+/// palavras: nome, tipo, etiquetas, música, artista, afinação), filtros e ordens.
+public enum SectionLibrary {
+    public enum Order: String, CaseIterable, Identifiable, Sendable {
+        case recent, forgotten, nearGoal, song
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .recent: "Tocados há pouco"
+            case .forgotten: "Esquecidos"
+            case .nearGoal: "Perto da meta"
+            case .song: "Por música"
+            }
+        }
+    }
+
+    public static func items(_ songs: [SongSummary]) -> [SectionItem] {
+        songs.flatMap { song in
+            song.sections.map { section in
+                SectionItem(songID: song.id, songTitle: song.displayTitle, artist: song.artist, tuning: song.tuningName,
+                            status: song.status, section: section)
+            }
+        }
+    }
+
+    public static func filter(_ items: [SectionItem], query: String = "", kinds: Set<SectionKind> = [],
+                              tags: Set<String> = [], favoritesOnly: Bool = false) -> [SectionItem] {
+        let wanted = LibrarySearch.words(query)
+        let tagKeys = Set(tags.map { $0.lowercased() })
+        return items.filter { item in
+            let section = item.section
+            if favoritesOnly && !section.favorite { return false }
+            if !kinds.isEmpty && !kinds.contains(section.kind) { return false }
+            if !tagKeys.isEmpty && tagKeys.isDisjoint(with: section.tags.map { $0.lowercased() }) { return false }
+            guard !wanted.isEmpty else { return true }
+            let have = LibrarySearch.words(([section.name, section.kind.label, item.songTitle, item.artist ?? "",
+                                             item.tuning] + section.tags).joined(separator: " "))
+            return wanted.allSatisfy { word in have.contains { $0.hasPrefix(word) } }
+        }
+    }
+
+    public static func sorted(_ items: [SectionItem], by order: Order, now: Date = Date()) -> [SectionItem] {
+        func date(_ item: SectionItem) -> Date? { item.section.practiced.flatMap(StudyDates.parse) }
+        switch order {
+        case .recent:
+            return items.sorted { (date($0) ?? .distantPast, $1.section.name) > (date($1) ?? .distantPast, $0.section.name) }
+        case .forgotten:
+            // Nunca tocados primeiro, depois os de mais tempo sem tocar.
+            return items.sorted { (date($0) ?? .distantPast, $0.section.name) < (date($1) ?? .distantPast, $1.section.name) }
+        case .nearGoal:
+            func gap(_ item: SectionItem) -> Int { item.section.goal - (item.section.best ?? 0) }
+            return items.sorted { (gap($0), $0.section.name) < (gap($1), $1.section.name) }
+        case .song:
+            return items.sorted { ($0.songTitle, $0.section.from) < ($1.songTitle, $1.section.from) }
+        }
+    }
+
+    /// As etiquetas mais usadas (empate em ordem alfabética), escritas como na primeira vez.
+    public static func topTags(_ items: [SectionItem], limit: Int = 12) -> [String] {
+        var counts: [String: (name: String, count: Int)] = [:]
+        for tag in items.flatMap(\.section.tags) {
+            counts[tag.lowercased(), default: (tag, 0)].count += 1
+        }
+        return counts.values.sorted { ($1.count, $0.name.lowercased()) < ($0.count, $1.name.lowercased()) }
+            .prefix(limit).map(\.name)
     }
 }

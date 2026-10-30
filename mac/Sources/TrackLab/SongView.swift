@@ -5,6 +5,7 @@ import TrackLabCore
 struct SongView: View {
     let model: SongModel
     @Local private var span = 10.0
+    @AppStorage("showMixer") private var showMixer = true
 
     var body: some View {
         switch model.phase {
@@ -34,11 +35,17 @@ struct SongView: View {
                     Text(message).foregroundStyle(.secondary).padding().background(.background)
                 }
             }
-            .background(ScrollCatcher(onScroll: scrub))
+            .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
             // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
             .padding(.horizontal, 12)
             .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
             .onChange(of: span, initial: true) { model.bridge.setSpan(span) }
+            if model.editingTab {
+                Divider()
+                TabEditBar(model: model)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
             Divider()
             if model.adjusting {
                 AdjustBar(model: model)
@@ -47,7 +54,7 @@ struct SongView: View {
                 Divider()
             }
             FitaView(model: model, span: $span)
-                .background(ScrollCatcher(onScroll: scrub))
+                .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                 .frame(minHeight: 120, maxHeight: .infinity)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -55,11 +62,24 @@ struct SongView: View {
             TransportBar(model: model, span: $span)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-            Divider()
-            MixerBar(model: model)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            if showMixer {
+                Divider()
+                MixerBar(model: model)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+            }
         }
+        // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
+        .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
+        // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.
+        .onReceive(NotificationCenter.default.publisher(for: .zoomIn)) { _ in span = FitaView.clampSpan(span / 1.33) }
+        .onReceive(NotificationCenter.default.publisher(for: .zoomOut)) { _ in span = FitaView.clampSpan(span * 1.33) }
+    }
+
+    /// A pinça no trackpad, sobre a TAB ou a Fita: abrir aproxima (menos segundos na largura), fechar afasta. As duas
+    /// mudam juntas: a Fita na hora e a TAB esticada até o desenho novo chegar.
+    private func pinch(_ amount: Double) {
+        span = FitaView.clampSpan(span / (1 + amount))
     }
 
     private func scrub(dx: Double, dy: Double, width: Double) -> Bool {
@@ -95,6 +115,14 @@ struct SongView: View {
             }
             .keyboardShortcut("j")
             .help("⌘J: mostra as batidas na Fita para levar cada uma até onde ela soa")
+            Toggle(isOn: Binding(get: { model.editingTab }, set: { model.editingTab = $0 })) {
+                Label("Editar TAB", systemImage: "pencil.and.list.clipboard")
+            }
+            .toggleStyle(.button)
+            .keyboardShortcut("e")
+            .disabled(model.detail?.score == nil)
+            .help("⌘E: clique numa nota da TAB e mude casa, corda e articulações (teclas ou a paleta); o Guitar Pro "
+                  + "editado fica guardado na música, e o original do Songsterr também")
             if model.scoreTracks.count > 1 {
                 Picker("Pista", selection: Binding(get: { model.scoreTrack }, set: { model.scoreTrack = $0 })) {
                     ForEach(model.scoreTracks, id: \.index) { track in
@@ -102,6 +130,14 @@ struct SongView: View {
                     }
                 }
                 .frame(maxWidth: 260)
+                Picker("Com", selection: Binding(get: { model.scoreSecond }, set: { model.scoreSecond = $0 })) {
+                    Text("Nenhuma").tag(Int?.none)
+                    ForEach(model.scoreTracks.filter { $0.index != model.scoreTrack }, id: \.index) { track in
+                        Text(track.name).tag(Int?.some(track.index))
+                    }
+                }
+                .frame(maxWidth: 220)
+                .help("Uma segunda pista embaixo da principal, nos mesmos compassos (a bateria aparece em partitura)")
             }
         }
         .padding(.horizontal, 16)
@@ -110,11 +146,14 @@ struct SongView: View {
 }
 
 /// Os trechos de estudo da música, acima da TAB: um clique liga o loop do trecho na velocidade do recorde; o menu
-/// renomeia, muda a meta ou apaga. "+ Trecho do loop" guarda o loop de agora; sem trechos, as seções do Guitar Pro.
+/// renomeia, muda a meta, o tipo, as etiquetas e o favorito, ou apaga. "+ Do loop" guarda o loop de agora como lick,
+/// solo, riff…; sem trechos, as seções do Guitar Pro.
 struct SectionsBar: View {
     let model: SongModel
     @Local private var renaming: StudySection?
     @Local private var newName = ""
+    @Local private var tagging: StudySection?
+    @Local private var tagText = ""
 
     var body: some View {
         HStack(spacing: 8) {
@@ -127,15 +166,34 @@ struct SectionsBar: View {
                 Button("Trechos das seções da TAB") { model.addSectionsFromMarkers() }
                     .help(model.markers.map(\.name).joined(separator: " · "))
             }
-            Button { model.addSectionFromLoop() } label: { Label("Trecho do loop", systemImage: "plus") }
-                .disabled(model.engine.loop == nil)
-                .help("Guarda o loop de agora como um trecho de estudo (marque o loop arrastando na Fita ou com L)")
+            Menu {
+                ForEach(SectionKind.allCases) { kind in
+                    Button { model.addSectionFromLoop(kind: kind) } label: { Label(kind.label, systemImage: kind.symbol) }
+                }
+            } label: {
+                Label("Do loop", systemImage: "plus")
+            } primaryAction: {
+                model.addSectionFromLoop()
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .disabled(model.engine.loop == nil)
+            .help("Guarda o loop de agora como trecho (clique) ou como lick, solo, riff… (seta); marque o loop "
+                  + "arrastando na Fita ou com L")
         }
         .buttonStyle(.borderless)
         .alert("Renomear trecho", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Nome", text: $newName)
             Button("Renomear") { if let renaming { model.rename(renaming, to: newName) } }
             Button("Cancelar", role: .cancel) {}
+        }
+        .alert("Etiquetas", isPresented: Binding(get: { tagging != nil }, set: { if !$0 { tagging = nil } })) {
+            TextField("blues, bend, pentatônica", text: $tagText)
+            Button("Guardar") { if let tagging { model.setTags(tagging, tagText) } }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            let known = model.knownTags
+            Text(known.isEmpty ? "Separadas por vírgula." : "Separadas por vírgula. Já usadas: \(known.joined(separator: ", "))")
         }
     }
 
@@ -145,7 +203,11 @@ struct SectionsBar: View {
             if active { model.deactivateSection() } else { model.activate(section) }
         } label: {
             HStack(spacing: 6) {
+                if section.kind != .trecho {
+                    Image(systemName: section.kind.symbol).font(.caption).foregroundStyle(.secondary)
+                }
                 Text(section.name).fontWeight(.semibold)
+                if section.favorite { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow) }
                 Text("\(section.best.map(String.init) ?? "–") → \(section.goal) %")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(active ? Color.primary : Color.secondary)
@@ -155,7 +217,8 @@ struct SectionsBar: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(active ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.12)))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(active ? Color.accentColor : Color.clear))
         }
-        .help("Clique: loop do trecho a \(section.startRate) %. Menu: renomear, meta, apagar.")
+        .help("\(section.kind.label)\(section.tags.isEmpty ? "" : " · " + section.tags.joined(separator: ", ")). "
+              + "Clique: loop do trecho a \(section.startRate) %. Menu: renomear, meta, tipo, etiquetas, favorito.")
         .contextMenu {
             Button("Renomear…") {
                 newName = section.name
@@ -166,6 +229,16 @@ struct SectionsBar: View {
                     Button("\(goal) %\(goal == section.goal ? " ✓" : "")") { model.setGoal(section, goal) }
                 }
             }
+            Menu("Tipo") {
+                ForEach(SectionKind.allCases) { kind in
+                    Button("\(kind.label)\(kind == section.kind ? " ✓" : "")") { model.setKind(section, kind) }
+                }
+            }
+            Button("Etiquetas…") {
+                tagText = section.tags.joined(separator: ", ")
+                tagging = section
+            }
+            Button(section.favorite ? "Tirar dos favoritos" : "Favorito") { model.toggleFavorite(section) }
             Divider()
             Button("Apagar", role: .destructive) { model.delete(section) }
         }
@@ -267,27 +340,32 @@ struct TransportBar: View {
                 .help("Avançar 5 segundos")
                 .accessibilityLabel("Avançar 5 segundos")
                 .keyboardShortcut(.rightArrow, modifiers: [])
-            TimelineView(.periodic(from: .now, by: 0.2)) { _ in
-                Text(clock(engine.currentTime, engine.duration))
-                    .font(.body.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    // Largura fixa: o loop ao lado não pula quando aparece o compasso.
-                    .frame(minWidth: 200, alignment: .leading)
-            }
+            // Largura fixa: o loop ao lado não pula quando aparece o compasso.
+            ClockLabel { clock(engine.currentTime, engine.duration) }
+                .frame(width: 196, height: 20)
             Divider().frame(height: 18)
+            // Com um trecho ativo (Limpo!, a sequência e o recorde ao lado), o botão do loop fica só no ícone: tudo cabe
+            // numa linha.
             Button { model.toggleBarLoop() } label: {
-                Label(engine.loop == nil ? "Loop no compasso" : "Soltar loop", systemImage: "repeat")
+                if model.activeSection == nil {
+                    Label(engine.loop == nil ? "Loop no compasso" : "Soltar loop", systemImage: "repeat")
+                } else {
+                    Image(systemName: "repeat")
+                }
             }
+            .fixedSize()
             .keyboardShortcut("l", modifiers: [])
             .help("L: repete o compasso que está tocando; arraste na Fita para marcar outro trecho")
             if let loop = engine.loop {
                 Text("\(clock(loop.lowerBound)) – \(clock(loop.upperBound))")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.orange)
+                    .fixedSize()
             }
             if let section = model.activeSection {
                 Divider().frame(height: 18)
                 Button { model.markClean() } label: { Label("Limpo!", systemImage: "checkmark.seal") }
+                    .fixedSize()
                     .keyboardShortcut(.return, modifiers: [])
                     .help("⏎: tocou o trecho sem errar nesta velocidade. Três seguidos sobem 5 %, até a meta.")
                 HStack(spacing: 3) {
@@ -299,20 +377,46 @@ struct TransportBar: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(model.trainingMessage == nil ? Color.secondary : Color.green)
                     .lineLimit(1)
+                    .frame(minWidth: 150, alignment: .leading)
+                    .layoutPriority(-1)
             }
             Spacer()
             Stepper(value: Binding(get: { Double(engine.rate) }, set: { engine.rate = Float($0) }),
                     in: Double(StemEngine.rates.lowerBound)...Double(StemEngine.rates.upperBound),
                     step: Double(StemEngine.rateStep)) {
-                Text("Velocidade \(Int((engine.rate * 100).rounded())) %").monospacedDigit().fixedSize()
+                Label("\(Int((engine.rate * 100).rounded())) %", systemImage: "speedometer").monospacedDigit().fixedSize()
+                    .help("Velocidade")
             }
             Stepper(value: Binding(get: { engine.semitones }, set: { engine.semitones = $0 }), in: StemEngine.semitones) {
                 Text("Tom \(engine.semitones > 0 ? "+" : "")\(engine.semitones)").monospacedDigit().fixedSize()
             }
-            Stepper(value: $span, in: FitaView.spans, step: 2) {
-                Image(systemName: "waveform").help("Quantos segundos a Fita mostra")
+            Picker("Fita", selection: Binding(get: { model.fitaMode }, set: { model.fitaMode = $0 })) {
+                Image(systemName: "waveform").help("Onda: o original e a guitarra separada").tag(SongModel.FitaMode.wave)
+                Image(systemName: "chart.bar.xaxis").help("Espectro da guitarra, com as notas da TAB por cima")
+                    .tag(SongModel.FitaMode.spectrum)
             }
+            .pickerStyle(.segmented)
             .labelsHidden()
+            .fixedSize()
+            .help("A Fita: onda ou espectro com as notas da TAB por cima (âmbar a pista, azul a segunda)")
+            if model.fitaMode == .spectrum {
+                Toggle(isOn: Binding(get: { model.pitchZoom }, set: { model.pitchZoom = $0 })) {
+                    Image(systemName: "arrow.up.and.down.square")
+                }
+                .toggleStyle(.button)
+                .keyboardShortcut("z", modifiers: [])
+                .help("Z: amplia a altura em volta da nota que toca (para conferir um bend); Z de novo volta")
+            }
+            // O zoom: para a direita aproxima. Na escala do logaritmo, para os passos valerem o mesmo de 3 s a 40 s.
+            HStack(spacing: 4) {
+                Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+                Slider(value: Binding(get: { -log(span) }, set: { span = FitaView.clampSpan(exp(-$0)) }),
+                       in: -log(FitaView.spans.upperBound)...(-log(FitaView.spans.lowerBound)))
+                    .frame(width: 90)
+                    .controlSize(.small)
+                Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+            }
+            .help("Zoom da TAB e da Fita juntas (\(Int(span.rounded())) s na largura); pinça no trackpad também")
         }
         .buttonStyle(.borderless)
         .controlSize(.regular)
@@ -334,51 +438,110 @@ struct MixerBar: View {
 
     var body: some View {
         let engine = model.engine
-        HStack(alignment: .center, spacing: 16) {
+        VStack(alignment: .leading, spacing: 8) {
             if engine.stemIDs.isEmpty {
-                Text("Só o áudio original.").foregroundStyle(.secondary)
-                if model.stemJob != nil {
-                    StemJobView(model: model)
-                } else if model.detail?.audio != nil {
-                    Button("Separar as faixas (Demucs 6s)") { Task { await model.separate() } }
-                    if model.multitrack != nil {
-                        Button("Faixas da multitrack") { Task { await model.improve(.multitrack) } }
+                HStack(spacing: 16) {
+                    Text("Só o áudio original.").foregroundStyle(.secondary)
+                    if model.stemJob != nil, model.stemJob?.request != .synth {
+                        StemJobView(model: model)
+                    } else if model.detail?.audio != nil {
+                        Button("Separar as faixas (Demucs 6s)") { Task { await model.separate() } }
+                        if model.multitrack != nil {
+                            Button("Faixas da multitrack") { Task { await model.improve(.multitrack) } }
+                        }
+                    }
+                    Spacer()
+                }
+            } else {
+                // As escolhas em cima e as faixas embaixo, repartindo a largura (numa linha só, Teclado e Outros
+                // ficavam fora da janela).
+                HStack(spacing: 16) {
+                    Picker("Ouvir", selection: Binding(get: { engine.useStems }, set: { engine.useStems = $0 })) {
+                        Text("Original").tag(false)
+                        Text("Faixas").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 150)
+                    Picker("Mix", selection: Binding(get: { model.preset }, set: { if let p = $0 { model.apply(p) } })) {
+                        ForEach(MixPreset.allCases) { preset in Text(preset.label).tag(Optional(preset)) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 330)
+                    .disabled(!engine.useStems)
+                    StemSourcePicker(model: model)
+                    Spacer()
+                    // A síntese da TAB mostra o progresso na linha dela.
+                    if model.stemJob != nil, model.stemJob?.request != .synth {
+                        StemJobView(model: model)
+                    } else {
+                        ImproveMenu(model: model)
                     }
                 }
-                Spacer()
-            } else {
-                // Duas linhas: as escolhas em cima e as seis faixas embaixo, repartindo a largura (numa linha só,
-                // Teclado e Outros ficavam fora da janela).
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 16) {
-                        Picker("Ouvir", selection: Binding(get: { engine.useStems }, set: { engine.useStems = $0 })) {
-                            Text("Original").tag(false)
-                            Text("Faixas").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 150)
-                        Picker("Mix", selection: Binding(get: { model.preset }, set: { if let p = $0 { model.apply(p) } })) {
-                            ForEach(MixPreset.allCases) { preset in Text(preset.label).tag(Optional(preset)) }
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .frame(width: 330)
-                        .disabled(!engine.useStems)
-                        StemSourcePicker(model: model)
-                        Spacer()
-                        if model.stemJob != nil {
-                            StemJobView(model: model)
-                        } else {
-                            ImproveMenu(model: model)
-                        }
+                HStack(spacing: 14) {
+                    ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
+                        StemStrip(model: model, id: stem.rawValue, label: stem.label)
                     }
-                    HStack(spacing: 14) {
-                        ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
-                            StemStrip(model: model, stem: stem)
-                        }
-                    }
-                    .disabled(!engine.useStems)
+                }
+                .disabled(!engine.useStems)
+            }
+            SynthRow(model: model)
+        }
+    }
+}
+
+/// A TAB sintetizada: uma faixa por pista do Guitar Pro, por cima do original ou das faixas, cada uma com volume,
+/// mudo e solo. Sem ela (ou com o mapa de tempo mudado depois), o botão de sintetizar.
+private struct SynthRow: View {
+    let model: SongModel
+
+    var body: some View {
+        let synth = model.detail?.synth
+        let tracks = synth?.ids.filter { model.engine.synthIDs.contains($0.id) } ?? []
+        let engine = model.engine
+        HStack(spacing: 14) {
+            // As chaves gerais: todo o áudio, toda a TAB, e trocar um pelo outro.
+            HStack(spacing: 4) {
+                Toggle(isOn: Binding(get: { engine.audioOn }, set: { engine.audioOn = $0 })) {
+                    Label("Áudio", systemImage: engine.audioOn ? "speaker.wave.2.fill" : "speaker.slash")
+                }
+                .help("Liga ou cala todo o áudio (o original ou as faixas), sem mexer na mixagem de cada faixa")
+                Toggle(isOn: Binding(get: { engine.tabOn }, set: { engine.tabOn = $0 })) {
+                    Label("TAB", systemImage: engine.tabOn ? "pianokeys" : "pianokeys.inverse")
+                }
+                .disabled(tracks.isEmpty)
+                .help(synth.map { "Liga ou cala toda a TAB sintetizada (\($0.soundfont ?? "SoundFont"), no mapa de tempo)" }
+                      ?? "A TAB sintetizada ainda não existe")
+                Button { model.swapAudioAndTab() } label: { Image(systemName: "arrow.left.arrow.right") }
+                    .keyboardShortcut("x", modifiers: [])
+                    .disabled(tracks.isEmpty)
+                    .help("X: troca o áudio pela TAB, ou a TAB pelo áudio")
+            }
+            .toggleStyle(.button)
+            .controlSize(.small)
+            .fixedSize()
+            ForEach(tracks, id: \.id) { item in
+                StemStrip(model: model, id: item.id, label: item.track.shortName)
+                    .help(item.track.name ?? "")
+                    .opacity(engine.tabOn ? 1 : 0.5)
+            }
+            if tracks.isEmpty { Spacer() }
+            if case .synth = model.stemJob?.request {
+                // Com sete pistas na linha, o progresso não pode encolher até sumir.
+                StemJobView(model: model)
+                    .frame(minWidth: 200)
+                    .layoutPriority(1)
+            } else if model.detail?.score != nil, model.detail?.tempoMap != nil {
+                if let message = model.synthMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(1).help(message)
+                }
+                if synth == nil {
+                    Button("Sintetizar a TAB") { Task { await model.synthesize() } }
+                        .help("Toca cada pista do Guitar Pro com um SoundFont, no tempo da gravação, para misturar com o "
+                              + "áudio (FluidSynth)")
+                } else if model.synthOutdated {
+                    Button("Atualizar a TAB (o mapa mudou)") { Task { await model.synthesize() } }
                 }
             }
         }
@@ -387,23 +550,25 @@ struct MixerBar: View {
 
 private struct StemStrip: View {
     let model: SongModel
-    let stem: Stem
+    let id: String
+    let label: String
 
     var body: some View {
-        let entry = model.engine.mix[stem.rawValue] ?? StemMix()
+        let entry = model.engine.mix[id] ?? StemMix()
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
-                Text(stem.label).font(.caption.weight(.medium))
+                Text(label).font(.caption.weight(.medium)).lineLimit(1)
                 Spacer(minLength: 4)
-                Toggle("M", isOn: Binding(get: { entry.muted }, set: { _ in model.toggleMute(stem.rawValue) }))
+                Toggle("M", isOn: Binding(get: { entry.muted }, set: { _ in model.toggleMute(id) }))
                     .toggleStyle(.button).controlSize(.mini).help("Mudo")
-                Toggle("S", isOn: Binding(get: { entry.solo }, set: { _ in model.toggleSolo(stem.rawValue) }))
+                Toggle("S", isOn: Binding(get: { entry.solo }, set: { _ in model.toggleSolo(id) }))
                     .toggleStyle(.button).controlSize(.mini).help("Solo")
             }
-            Slider(value: Binding(get: { Double(entry.volume) }, set: { model.setVolume(stem.rawValue, Float($0)) }), in: 0...1.5)
+            Slider(value: Binding(get: { Double(entry.volume) }, set: { model.setVolume(id, Float($0)) }), in: 0...1.5)
                 .controlSize(.mini)
         }
-        .frame(minWidth: 90, maxWidth: 180)
+        // Mínimo pequeno: com as seis faixas e as sete pistas da TAB, as linhas do mixer cabem na janela.
+        .frame(minWidth: 64, maxWidth: 180)
         .opacity(entry.muted && !entry.solo ? 0.55 : 1)
     }
 }

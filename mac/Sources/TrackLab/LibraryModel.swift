@@ -10,6 +10,11 @@ final class LibraryModel {
     static let today = "today"
     /// A seleção que mostra a biblioteca de multitracks.
     static let multitracks = "multitracks"
+    /// A seleção que mostra a biblioteca de trechos (todos os trechos de todas as músicas).
+    static let sections = "sections"
+
+    /// As seleções que não são músicas.
+    static let pages: Set<String> = [today, multitracks, sections]
 
     /// As coleções da barra lateral: todas, as que falta conferir a sincronização, uma afinação.
     enum Collection: Hashable {
@@ -45,6 +50,9 @@ final class LibraryModel {
     var pendingSection: String?
 
     var today: [TodayItem] { TodayPlan.items(songs) }
+
+    /// Todos os trechos de todas as músicas, para a biblioteca de trechos.
+    var sectionItems: [SectionItem] { SectionLibrary.items(songs) }
 
     /// O índice de multitracks e a varredura em curso (a mensagem da fila).
     private(set) var multitrackStatus: MultitrackStatus?
@@ -100,6 +108,32 @@ final class LibraryModel {
     func open(_ item: TodayItem) {
         pendingSection = item.sectionID
         selection = item.songID
+    }
+
+    /// Abre a música do trecho com o loop dele ligado.
+    func open(_ item: SectionItem) {
+        pendingSection = item.section.id
+        selection = item.songID
+    }
+
+    /// Muda um trecho direto da biblioteca (tipo, etiquetas, favorito): a música manda a lista inteira de volta, e o
+    /// motor mantém o treino de cada trecho pelo id.
+    func edit(_ item: SectionItem, _ change: (inout StudySection) -> Void) {
+        guard let song = songs.first(where: { $0.id == item.songID }) else { return }
+        let list = song.sections.map { section -> StudySection in
+            guard section.id == item.section.id else { return section }
+            var copy = section
+            change(&copy)
+            return copy
+        }
+        Task {
+            do {
+                _ = try await Backend.shared.putSections(song.id, list)
+                await refresh()
+            } catch {
+                loadError = error.localizedDescription
+            }
+        }
     }
 
     func refresh() async {

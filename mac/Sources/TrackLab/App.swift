@@ -22,6 +22,15 @@ struct TrackLabApp: App {
                     .keyboardShortcut("n")
             }
             // A música aberta decide: o ajuste do mapa, ou o Desfazer de sempre (os campos de texto).
+            CommandGroup(after: .toolbar) {
+                Button("Aproximar") { NotificationCenter.default.post(name: .zoomIn, object: nil) }
+                    .keyboardShortcut("+")
+                Button("Afastar") { NotificationCenter.default.post(name: .zoomOut, object: nil) }
+                    .keyboardShortcut("-")
+                // ⌥⌘M: ⌘M é o Minimizar do macOS.
+                Button("Mostrar ou esconder o mixer") { NotificationCenter.default.post(name: .toggleMixer, object: nil) }
+                    .keyboardShortcut("m", modifiers: [.command, .option])
+            }
             CommandGroup(replacing: .undoRedo) {
                 Button("Desfazer") { NotificationCenter.default.post(name: .undoTempo, object: nil) }
                     .keyboardShortcut("z")
@@ -36,6 +45,9 @@ struct TrackLabApp: App {
 extension Notification.Name {
     static let importSong = Notification.Name("TrackLab.importSong")
     static let undoTempo = Notification.Name("TrackLab.undoTempo")
+    static let zoomIn = Notification.Name("TrackLab.zoomIn")
+    static let zoomOut = Notification.Name("TrackLab.zoomOut")
+    static let toggleMixer = Notification.Name("TrackLab.toggleMixer")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
 }
 
@@ -87,10 +99,10 @@ struct RootView: View {
         // ⌘Z e ⇧⌘Z do menu Editar: o ajuste do mapa da música aberta, se houver o que desfazer; senão o Desfazer de
         // sempre, pela cadeia de respondedores (os campos de texto).
         .onReceive(NotificationCenter.default.publisher(for: .undoTempo)) { _ in
-            if let song, song.canUndo { song.undo() } else { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
+            if let song, song.canUndoAny { song.undoAny() } else { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .redoTempo)) { _ in
-            if let song, song.canRedo { song.redo() } else { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
+            if let song, song.canRedoAny { song.redoAny() } else { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .importSong)) { _ in
             if phase == .ready { importing = true }
@@ -107,6 +119,8 @@ struct RootView: View {
                 TodayView(library: library, importing: $importing)
             } else if library.selection == LibraryModel.multitracks {
                 MultitracksView(library: library)
+            } else if library.selection == LibraryModel.sections {
+                SectionsView(library: library)
             } else if let song {
                 SongView(model: song).id(song.id)
             } else {
@@ -145,7 +159,7 @@ struct RootView: View {
         }
         song?.close()
         song = nil
-        guard let id, id != LibraryModel.today, id != LibraryModel.multitracks else { return }
+        guard let id, !LibraryModel.pages.contains(id) else { return }
         let model = SongModel(id: id)
         model.startSection = section
         let library = library
@@ -165,6 +179,9 @@ private struct Sidebar: View {
                 Label("Para hoje", systemImage: "sun.max")
                     .badge(library.today.count)
                     .tag(LibraryModel.today)
+                Label("Trechos", systemImage: "bookmark")
+                    .badge(library.sectionItems.count)
+                    .tag(LibraryModel.sections)
                 if !library.imports.isEmpty {
                     Section("Importando") {
                         ForEach(library.imports) { item in ImportRow(library: library, item: item) }

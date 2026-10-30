@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import platform
 
-from fastapi import Body, FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -102,7 +102,23 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
     @app.get("/api/songs/{song_id}")
     def song_detail(song_id: str) -> dict:
         found = song(song_id)
-        return {**found.manifest, "folder": str(found.path)}
+        return {**found.manifest, "folder": str(found.path), "synth": stems.synth_state(found)}
+
+    @app.put("/api/songs/{song_id}/score")
+    async def put_score(song_id: str, request: Request) -> dict:
+        """A partitura editada na TAB (Guitar Pro 7 no corpo do pedido); o original do Songsterr fica guardado."""
+        found = song(song_id)
+        return {"score": found.save_score(await request.body())}
+
+    @app.post("/api/songs/{song_id}/synth", status_code=202)
+    def synth(song_id: str) -> dict:
+        """A TAB sintetizada (todas as pistas, no mapa de tempo de agora), na fila."""
+        song(song_id)
+
+        def work(progress, cancel):
+            return stems.synthesize_tab(package.find(song_id), progress=progress, cancel=cancel)
+
+        return _job(jobs.submit("synth", work, project=song_id))
 
     @app.get("/api/songs/{song_id}/tempo-map")
     def tempo_map(song_id: str) -> dict:
@@ -209,6 +225,69 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         if relative == package.MANIFEST or not path.is_file():
             raise HTTPException(404, "Arquivo não encontrado no pacote.")
         return FileResponse(path)
+
+    @app.get("/api/songs/{song_id}/spectrum")
+    def song_spectrum(song_id: str, stem: str | None = None):
+        """O espectro da Fita (media/spectrum.py) do áudio original ou de uma faixa da separação ativa, em bytes
+        (quadros × linhas); as medidas vão nos cabeçalhos X-Frames, X-Rows, X-Hop, X-Low e X-Per-Semitone. Calculado
+        uma vez e guardado em `peaks/`."""
+        from fastapi.responses import Response
+
+        from .media import spectrum
+
+        found = song(song_id)
+        manifest = found.manifest
+        if stem is None:
+            if not manifest.get("audio"):
+                raise HTTPException(404, "Esta música não tem áudio.")
+            relative, name = manifest["audio"]["file"], "source"
+        else:
+            relative = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {}).get(stem)
+            if relative is None:
+                raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
+            name = f"{manifest['activeStems']}-{stem}"
+        data_file, meta_file = found.file(f"peaks/spectrum-{name}.u8"), found.file(f"peaks/spectrum-{name}.json")
+        if data_file.is_file() and meta_file.is_file():
+            meta, data = read_json(meta_file), data_file.read_bytes()
+        else:
+            made = spectrum.compute(found.file(relative))
+            data = made.pop("data").tobytes()
+            meta = made
+            data_file.parent.mkdir(exist_ok=True)
+            temp = data_file.with_name(data_file.name + ".partial")
+            temp.write_bytes(data)
+            temp.replace(data_file)
+            atomic_json(meta_file, meta)
+        headers = {"X-Frames": str(meta["frames"]), "X-Rows": str(meta["rows"]), "X-Hop": repr(meta["hop"]),
+                   "X-Low": str(meta["low"]), "X-Per-Semitone": str(meta["perSemitone"])}
+        return Response(content=data, media_type="application/octet-stream", headers=headers)
+
+    @app.post("/api/songs/{song_id}/pitch")
+    def song_pitch(song_id: str, body: dict = Body(...)) -> dict:
+        """A curva de altura do som em cada nota pedida (`notes`: [{key, start, end, pitch}], até 200, cada uma até
+        8 s), na guitarra da separação ativa (ou no original): `{curves: {key: {from, hop, values}}}`."""
+        from .media import pitch as pitch_media
+
+        found = song(song_id)
+        manifest = found.manifest
+        guitar = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {}).get("guitar")
+        relative = guitar or (manifest.get("audio") or {}).get("file")
+        if not relative:
+            raise HTTPException(404, "Esta música não tem áudio.")
+        notes = body.get("notes")
+        if not isinstance(notes, list) or len(notes) > 200:
+            raise HTTPException(400, "Envie até 200 notas em notes.")
+        x = pitch_media.samples(found.file(relative))
+        curves = {}
+        for note in notes:
+            try:
+                key, start, end, height = str(note["key"]), float(note["start"]), float(note["end"]), float(note["pitch"])
+            except (KeyError, TypeError, ValueError):
+                raise HTTPException(400, "Cada nota precisa de key, start, end e pitch.") from None
+            if not (0 <= start < end <= start + 8) or not 20 <= height <= 110:
+                continue
+            curves[key] = pitch_media.note_curve(x, start, end, height)
+        return {"curves": curves}
 
     @app.get("/api/songs/{song_id}/peaks")
     def song_peaks(song_id: str, stem: str | None = None, stems_key: str | None = None) -> dict:

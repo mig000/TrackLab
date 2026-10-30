@@ -12,6 +12,8 @@
 
   // Onde o cursor fica na largura da janela enquanto toca: o que vem pela frente aparece mais.
   const CURSOR_AT = 0.4;
+  // Um loop que ocupa até esta fração da largura cabe na tela: a pauta para e só o cursor anda.
+  const LOOP_FITS = 0.95;
 
   // Último índice com valor <= x numa lista ordenada por `key`; -1 antes do primeiro.
   function floorIndex(list, x, key) {
@@ -138,33 +140,108 @@
   }
 
   // O tempo da música agora a partir do último aviso do app: parado, o próprio aviso; tocando, extrapolado na
-  // velocidade depois de `delay` segundos (o som do play ainda não saiu: a latência da saída).
-  function estimate(clock, now) {
+  // velocidade depois de `delay` segundos (o som do play ainda não saiu: a latência da saída). Com `loop` ([a, b] em
+  // segundos), dá a volta como o motor de áudio (o PlaybackPlan do app): tocando de antes do fim do loop, ao chegar ao
+  // fim volta ao começo; de depois do fim, segue solto. Sem isso a pauta passava do fim do loop até o próximo aviso.
+  function estimate(clock, now, loop) {
     if (!clock) {
       return 0;
     }
     if (!clock.playing) {
       return clock.seconds;
     }
-    return clock.seconds + Math.max(0, (now - clock.at) / 1000 - (clock.delay || 0)) * clock.rate;
+    const raw = clock.seconds + Math.max(0, (now - clock.at) / 1000 - (clock.delay || 0)) * clock.rate;
+    return wrap(raw, clock.seconds, loop);
+  }
+
+  function wrap(seconds, from, loop) {
+    if (!loop || from >= loop[1] || seconds < loop[1]) {
+      return seconds;
+    }
+    const length = loop[1] - loop[0];
+    return length > 0 ? loop[0] + ((seconds - loop[1]) % length) : seconds;
   }
 
   // Um aviso novo do app: aceito quando parado, ou quando a extrapolação já se afastou mais que `tolerance`
   // (pequenas diferenças fariam o cursor tremer).
-  function nextClock(previous, update, now, tolerance) {
+  function nextClock(previous, update, now, tolerance, loop) {
     const fresh = { seconds: update.seconds, playing: update.playing, rate: update.rate, delay: update.delay || 0, at: now };
     if (!previous || !previous.playing || !update.playing || previous.rate !== update.rate) {
       return fresh;
     }
-    return Math.abs(estimate(previous, now) - update.seconds) > tolerance ? fresh : previous;
+    return Math.abs(estimate(previous, now, loop) - update.seconds) > tolerance ? fresh : previous;
+  }
+
+  // Com um loop que cabe na tela e o cursor dentro dele, a janela fica parada e só o cursor anda: o segundo do começo
+  // da janela, ou null (a janela segue o cursor a 40 %). Um loop até 60 % da largura começa nos 40 %, onde o cursor
+  // estava ao entrar nele (nada salta); maior, fica centrado. A Fita usa a mesma conta (LoopView no app).
+  function windowStart(seconds, loop, span) {
+    if (!loop) {
+      return null;
+    }
+    const length = loop[1] - loop[0];
+    if (length <= 0 || length > span * LOOP_FITS || seconds < loop[0] - 1e-3 || seconds > loop[1] + 1e-3) {
+      return null;
+    }
+    return length <= span * (1 - CURSOR_AT) ? loop[0] - span * CURSOR_AT : loop[0] - (span - length) / 2;
   }
 
   function scrollFor(x, width) {
     return Math.max(0, x - width * CURSOR_AT);
   }
 
+  // O que cada pauta mostra (com o perfil Default do alphaTab): TAB nas de cordas; partitura na bateria e no que não
+  // tem cordas. Muda o modelo lido do Guitar Pro, sem desenhar.
+  function showPreferences(score) {
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        const tab = !staff.isPercussion && Boolean(staff.tuning) && staff.tuning.length > 0;
+        staff.showTablature = tab;
+        staff.showStandardNotation = !tab;
+      }
+    }
+  }
+
+  // As notas de cada pista do Guitar Pro lido, para as barras sobre o espectro da Fita: [tique, duração em tiques, altura
+  // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), e os pontos do bend em pares (deslocamento de
+  // 0 a 60 ao longo da nota, valor em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não
+  // entram; a bateria não tem altura e fica de fora (lista vazia).
+  function trackNotes(score) {
+    return score.tracks.map((track) => {
+      const notes = [];
+      if (track.staves.some((staff) => staff.isPercussion)) {
+        return notes;
+      }
+      for (const staff of track.staves) {
+        for (const bar of staff.bars) {
+          for (const voice of bar.voices) {
+            for (const beat of voice.beats) {
+              for (const note of beat.notes) {
+                if (note.isTieDestination) {
+                  continue;
+                }
+                let duration = beat.playbackDuration;
+                for (let tied = note.tieDestination; tied; tied = tied.tieDestination) {
+                  duration += tied.beat.playbackDuration;
+                }
+                const strings = staff.tuning ? staff.tuning.length : 0;
+                const vibrato = note.vibrato === 2 ? 2 : note.vibrato ? 1 : 0;
+                const bend = (note.bendPoints || []).flatMap((p) => [p.offset, p.value]);
+                notes.push([beat.absolutePlaybackStart, duration, note.realValue, strings ? strings - note.string + 1 : 0,
+                  note.fret, vibrato, ...bend]);
+              }
+            }
+          }
+        }
+      }
+      return notes;
+    });
+  }
+
   return {
     CURSOR_AT,
+    trackNotes,
+    showPreferences,
     cleanPoints,
     secondsToTick,
     tickToSeconds,
@@ -175,6 +252,7 @@
     barWidths,
     estimate,
     nextClock,
+    windowStart,
     scrollFor,
   };
 });

@@ -10,6 +10,14 @@ public struct TempoGrid: Sendable, Equatable {
     /// Início de cada compasso em tiques, mais o fim do último; vazio enquanto a partitura não disse.
     public let barTicks: [Double]
 
+    /// Os tiques e os segundos de cada ponto, e os compassos em segundos: guardados uma vez. A Fita pergunta
+    /// `seconds(at:)` por nota a cada quadro; montar a lista a cada pergunta deixava o espectro a 4 quadros/s.
+    private let ticks: [Double]
+    /// Cada batida do mapa, em segundos.
+    public let beats: [Double]
+    /// O início de cada compasso em segundos (com o fim do último); sem a partitura, os pontos `detected`.
+    public let bars: [Double]
+
     public init(points: [TempoPoint], barTicks: [Double] = []) {
         var clean: [TempoPoint] = []
         for point in points.filter({ $0.tick.isFinite && $0.seconds.isFinite }).sorted(by: { $0.tick < $1.tick }) {
@@ -18,25 +26,25 @@ public struct TempoGrid: Sendable, Equatable {
         }
         self.points = clean
         self.barTicks = barTicks.filter(\.isFinite).sorted()
+        let ticks = clean.map(\.tick)
+        let beats = clean.map(\.seconds)
+        self.ticks = ticks
+        self.beats = beats
+        if self.barTicks.count >= 2 {
+            bars = self.barTicks.map { Self.interpolate(ticks, beats, $0) }
+        } else {
+            bars = clean.filter { $0.kind == "detected" || $0.kind == "anchor" }.map(\.seconds)
+        }
     }
 
     public var isEmpty: Bool { points.count < 2 }
 
     public func tick(at seconds: Double) -> Double {
-        Self.piecewise(points, seconds, \.seconds, \.tick)
+        Self.interpolate(beats, ticks, seconds)
     }
 
     public func seconds(at tick: Double) -> Double {
-        Self.piecewise(points, tick, \.tick, \.seconds)
-    }
-
-    /// Cada batida do mapa, em segundos.
-    public var beats: [Double] { points.map(\.seconds) }
-
-    /// O início de cada compasso em segundos (com o fim do último); sem a partitura, os pontos `detected`.
-    public var bars: [Double] {
-        if barTicks.count >= 2 { return barTicks.map { seconds(at: $0) } }
-        return points.filter { $0.kind == "detected" || $0.kind == "anchor" }.map(\.seconds)
+        Self.interpolate(ticks, beats, tick)
     }
 
     /// O número (1…) do compasso que toca em `seconds`; nil fora da partitura.
@@ -81,7 +89,7 @@ public struct TempoGrid: Sendable, Equatable {
     /// Batidas por minuto em `seconds` (semínimas), pelo trecho do mapa que o contém.
     public func bpm(at seconds: Double) -> Double? {
         guard points.count >= 2 else { return nil }
-        let index = Swift.min(Swift.max(Self.floorIndex(points.map(\.seconds), seconds), 0), points.count - 2)
+        let index = Swift.min(Swift.max(Self.floorIndex(beats, seconds), 0), points.count - 2)
         let a = points[index]
         let b = points[index + 1]
         let quarters = (b.tick - a.tick) / Self.ticksPerQuarter
@@ -105,16 +113,15 @@ public struct TempoGrid: Sendable, Equatable {
         return found
     }
 
-    static func piecewise(_ list: [TempoPoint], _ x: Double, _ ka: KeyPath<TempoPoint, Double>,
-                          _ kb: KeyPath<TempoPoint, Double>) -> Double {
-        guard let first = list.first else { return x }
-        guard list.count >= 2 else { return first[keyPath: kb] }
-        let index = Swift.min(Swift.max(floorIndex(list.map { $0[keyPath: ka] }, x), 0), list.count - 2)
-        let a = list[index]
-        let b = list[index + 1]
-        let span = b[keyPath: ka] - a[keyPath: ka]
-        guard span > 0 else { return a[keyPath: kb] }
-        return a[keyPath: kb] + (x - a[keyPath: ka]) / span * (b[keyPath: kb] - a[keyPath: kb])
+    /// `x` (na escala de `xs`) levado à de `ys` pela reta do trecho que o contém; fora do mapa, a dos dois pontos
+    /// da ponta.
+    static func interpolate(_ xs: [Double], _ ys: [Double], _ x: Double) -> Double {
+        guard let first = ys.first else { return x }
+        guard xs.count >= 2 else { return first }
+        let index = Swift.min(Swift.max(floorIndex(xs, x), 0), xs.count - 2)
+        let span = xs[index + 1] - xs[index]
+        guard span > 0 else { return ys[index] }
+        return ys[index] + (x - xs[index]) / span * (ys[index + 1] - ys[index])
     }
 }
 
@@ -140,5 +147,157 @@ public enum LoopRegion {
         let index = TempoGrid.floorIndex(starts, seconds)
         guard index >= 0, index + 1 < starts.count else { return nil }
         return starts[index]...starts[index + 1]
+    }
+}
+
+/// Uma nota da partitura para as barras sobre o espectro: tique, duração em tiques, altura MIDI, corda (1 é a mais
+/// aguda), casa, vibrato (0, 1 leve, 2 largo) e os pontos do bend (deslocamento de 0 a 60 ao longo da nota, valor em
+/// quartos de tom), como a página da partitura manda (`trackNotes` em score-core.js).
+public struct ScoreNote: Hashable, Sendable {
+    public struct BendPoint: Hashable, Sendable {
+        public let offset: Double
+        public let value: Double
+    }
+
+    public let tick: Double
+    public let duration: Double
+    public let pitch: Int
+    public let string: Int
+    public let fret: Int
+    public let vibrato: Int
+    public let bend: [BendPoint]
+
+    public init(tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int = 0,
+                bend: [BendPoint] = []) {
+        self.tick = tick
+        self.duration = duration
+        self.pitch = pitch
+        self.string = string
+        self.fret = fret
+        self.vibrato = vibrato
+        self.bend = bend
+    }
+
+    /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, deslocamento, valor, …], …]; o que não
+    /// tiver os cinco primeiros números fica de fora.
+    public static func list(_ raw: [[Double]]) -> [ScoreNote] {
+        raw.compactMap { item in
+            guard item.count >= 5, item.allSatisfy(\.isFinite), item[1] > 0 else { return nil }
+            let pairs = item.count > 6 ? Array(item[6...]) : []
+            let bend = stride(from: 0, to: pairs.count - 1, by: 2).map { BendPoint(offset: pairs[$0], value: pairs[$0 + 1]) }
+            return ScoreNote(tick: item[0], duration: item[1], pitch: Int(item[2]), string: Int(item[3]),
+                             fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend)
+        }
+    }
+
+    /// Quantos semitons acima da altura a nota está num instante, pela escrita (como `shapeAt` da Lente do
+    /// TabLab, sem a curva do som): o bend pelos pontos, com a subida suavizada; o vibrato, uma onda de 5,5 Hz
+    /// (0,22 semitom; o largo, o dobro). `fraction`: de 0 a 1 ao longo da nota; `elapsed`: segundos desde o começo.
+    public func shape(fraction: Double, elapsed: Double) -> Double {
+        var offset = 0.0
+        if let first = bend.first {
+            let at = Swift.max(0, Swift.min(60, fraction * 60))
+            if at <= first.offset {
+                offset = first.value / 2
+            } else {
+                offset = (bend.last?.value ?? 0) / 2
+                for (a, b) in zip(bend, bend.dropFirst()) where at <= b.offset {
+                    let u = b.offset > a.offset ? (at - a.offset) / (b.offset - a.offset) : 1
+                    let eased = u * u * (3 - 2 * u)
+                    offset = (a.value + (b.value - a.value) * eased) / 2
+                    break
+                }
+            }
+        }
+        if vibrato > 0 {
+            offset += Double(vibrato) * 0.22 * (1 - cos(2 * Double.pi * 5.5 * elapsed))
+        }
+        return offset
+    }
+}
+
+/// O espectro da Fita (o motor calcula: `GET songs/{id}/spectrum`): `frames` quadros de `rows` linhas, um byte por
+/// célula (−90 a 0 dB), a linha 0 na altura `low` e `perSemitone` linhas por semitom, um quadro a cada `hop` segundos.
+public struct Spectrum: Sendable {
+    public let frames: Int
+    public let rows: Int
+    public let hop: Double
+    public let low: Double
+    public let perSemitone: Double
+    public let data: [UInt8]
+
+    public init?(frames: Int, rows: Int, hop: Double, low: Double, perSemitone: Double, data: [UInt8]) {
+        guard frames > 0, rows > 0, hop > 0, perSemitone > 0, data.count == frames * rows else { return nil }
+        self.frames = frames
+        self.rows = rows
+        self.hop = hop
+        self.low = low
+        self.perSemitone = perSemitone
+        self.data = data
+    }
+
+    /// A altura (MIDI, fracionária) de uma linha e a linha de uma altura.
+    public func pitch(row: Double) -> Double { low + row / perSemitone }
+    public func row(pitch: Double) -> Double { (pitch - low) * perSemitone }
+
+    /// O byte que fica no topo da escala de cor: o percentil 99,5 das células com som (o resto satura menos).
+    public var ceiling: UInt8 {
+        var counts = [Int](repeating: 0, count: 256)
+        for value in data { counts[Int(value)] += 1 }
+        let total = data.count - counts[0]
+        guard total > 0 else { return 255 }
+        var seen = 0
+        for value in stride(from: 255, through: 1, by: -1) {
+            seen += counts[value]
+            if Double(seen) >= Double(total) * 0.005 { return UInt8(value) }
+        }
+        return 255
+    }
+}
+
+/// A nota escolhida na edição da TAB, como a página descreve (`describe` em score-edit.js): a pista, a corda (1 é a
+/// mais aguda), a casa, a altura MIDI e as articulações ligadas (as chaves da paleta).
+public struct TabSelection: Hashable, Sendable {
+    public let track: Int
+    public let string: Int
+    public let fret: Int
+    public let pitch: Int
+    public let techniques: [String]
+
+    public init(track: Int, string: Int, fret: Int, pitch: Int, techniques: [String]) {
+        self.track = track
+        self.string = string
+        self.fret = fret
+        self.pitch = pitch
+        self.techniques = techniques
+    }
+
+    public init?(page: [String: Any]) {
+        func int(_ key: String) -> Int? { (page[key] as? NSNumber)?.intValue }
+        guard let track = int("track"), let string = int("string"), let fret = int("fret"), let pitch = int("pitch") else {
+            return nil
+        }
+        self.init(track: track, string: string, fret: fret, pitch: pitch,
+                  techniques: page["techniques"] as? [String] ?? [])
+    }
+
+    /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.
+    public var pitchName: String {
+        let names = ["Dó", "Dó♯", "Ré", "Mi♭", "Mi", "Fá", "Fá♯", "Sol", "Lá♭", "Lá", "Si♭", "Si"]
+        return "\(names[((pitch % 12) + 12) % 12]) \(pitch / 12 - 1)"
+    }
+}
+
+/// A curva de altura do som numa nota (o motor calcula: `POST songs/{id}/pitch`): um valor MIDI a cada `hop`
+/// segundos desde `from`, nil onde o som não diz (silêncio, ruído).
+public struct PitchCurve: Codable, Hashable, Sendable {
+    public let from: Double
+    public let hop: Double
+    public let values: [Double?]
+
+    public init(from: Double, hop: Double, values: [Double?]) {
+        self.from = from
+        self.hop = hop
+        self.values = values
     }
 }

@@ -240,6 +240,34 @@ final class Backend {
         }
     }
 
+    /// O espectro da Fita do áudio original (`stem` nil) ou de uma faixa da separação ativa; nil se não houver.
+    func spectrum(_ id: String, stem: String? = nil) async throws -> Spectrum? {
+        guard let base else { throw BackendError.notReady }
+        var url = base.appending(path: "songs/\(id)/spectrum")
+        if let stem { url.append(queryItems: [URLQueryItem(name: "stem", value: stem)]) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 300
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 404 { return nil }
+        try Self.check(data, response)
+        guard let http = response as? HTTPURLResponse else { return nil }
+        func number(_ name: String) -> Double? { http.value(forHTTPHeaderField: name).flatMap(Double.init) }
+        guard let frames = number("X-Frames"), let rows = number("X-Rows"), let hop = number("X-Hop"),
+              let low = number("X-Low"), let per = number("X-Per-Semitone") else { return nil }
+        return Spectrum(frames: Int(frames), rows: Int(rows), hop: hop, low: low, perSemitone: per, data: [UInt8](data))
+    }
+
+    /// A curva de altura do som de cada nota (key, início, fim, altura escrita), na guitarra da separação ativa.
+    func pitchCurves(_ id: String, notes: [(key: String, start: Double, end: Double, pitch: Int)]) async throws
+        -> [String: PitchCurve] {
+        struct Note: Encodable { let key: String; let start: Double; let end: Double; let pitch: Int }
+        struct Body: Encodable { let notes: [Note] }
+        struct Answer: Decodable { let curves: [String: PitchCurve] }
+        let answer: Answer = try await send("POST", "songs/\(id)/pitch",
+                                            body: Body(notes: notes.map { Note(key: $0.key, start: $0.start, end: $0.end, pitch: $0.pitch) }))
+        return answer.curves
+    }
+
     func search(_ text: String) async throws -> [SearchResult] {
         let response: SearchResponse = try await get("songsterr/search", query: [URLQueryItem(name: "q", value: text)])
         return response.results
@@ -286,6 +314,22 @@ final class Backend {
         struct Body: Codable { let key: String }
         struct Answer: Decodable { let activeStems: String }
         let _: Answer = try await send("PUT", "songs/\(id)/stems/active", body: Body(key: key))
+    }
+
+    /// A partitura editada na TAB (Guitar Pro 7); o original fica guardado no pacote.
+    func putScore(_ id: String, _ data: Data) async throws {
+        guard let base else { throw BackendError.notReady }
+        var request = URLRequest(url: base.appending(path: "songs/\(id)/score"))
+        request.httpMethod = "PUT"
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        let (answer, response) = try await URLSession.shared.data(for: request)
+        try Self.check(answer, response)
+    }
+
+    /// A TAB sintetizada (todas as pistas, no mapa de tempo de agora), na fila.
+    func synthesize(_ id: String) async throws -> JobTicket {
+        try await send("POST", "songs/\(id)/synth", body: Optional<String>.none)
     }
 
     func job(_ id: String) async throws -> Job { try await get("jobs/\(id)") }

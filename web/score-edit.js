@@ -1,0 +1,402 @@
+// A edição da TAB sobre o Guitar Pro carregado (o alphaTab `Score` é a verdade; nada é reconstruído): casa, corda,
+// altura, apagar, e as articulações do TabLab (`web/tab-core.js`, `applyTechniques`), ligadas e desligadas uma a
+// uma na nota (ou na batida, as que o alphaTab guarda na batida). Depois de cada mudança, `refinish` copia a partitura
+// pelo JSON do alphaTab, que roda o `score.finish` de novo: ligados, slides e bends ficam ligados à nota seguinte e
+// classificados. A mesma cópia serve de passo do Desfazer. Sem DOM: o node testa (tests/check-edit.cjs).
+(function (root, factory) {
+  const edit = factory();
+  if (typeof module === "object" && module.exports) {
+    module.exports = edit;
+  } else {
+    root.trackEdit = edit;
+  }
+})(typeof self !== "undefined" ? self : this, function () {
+  "use strict";
+
+  const MAX_FRET = 24;
+
+  // As articulações da paleta: chave, grupo (no mesmo grupo, ligar uma desliga as outras) e onde o alphaTab a guarda.
+  // Os bends são em quartos de tom (o alphaTab), com o deslocamento de 0 a 60 ao longo da nota, e com o tipo dito:
+  // o Guitar Pro 7 guarda até quatro pontos por bend e perde um "Custom" de cinco (o aviso da exportação do TabLab).
+  const BENDS = {
+    "bend-half": { type: "Bend", points: [[0, 0], [15, 2], [60, 2]] },
+    "bend-full": { type: "Bend", points: [[0, 0], [15, 4], [60, 4]] },
+    "bend-1.5": { type: "Bend", points: [[0, 0], [15, 6], [60, 6]] },
+    "bend-2": { type: "Bend", points: [[0, 0], [15, 8], [60, 8]] },
+    "bend-release": { type: "BendRelease", points: [[0, 0], [20, 4], [40, 4], [60, 0]] },
+    "prebend": { type: "Prebend", points: [[0, 4], [60, 4]] },
+    "prebend-release": { type: "PrebendRelease", points: [[0, 4], [30, 4], [60, 0]] },
+  };
+  const GROUPS = {
+    hammer: "hammer",
+    "slide-legato": "slide-out",
+    "slide-shift": "slide-out",
+    "slide-out-up": "slide-out",
+    "slide-out-down": "slide-out",
+    "slide-in-below": "slide-in",
+    "slide-in-above": "slide-in",
+    vibrato: "vibrato",
+    "wide-vibrato": "vibrato",
+    "palm-mute": "palm-mute",
+    dead: "dead",
+    "let-ring": "let-ring",
+    ghost: "ghost",
+    staccato: "staccato",
+    accent: "accent",
+    "heavy-accent": "accent",
+    "harmonic-natural": "harmonic",
+    "harmonic-artificial": "harmonic",
+    "harmonic-pinch": "harmonic",
+    "harmonic-tap": "harmonic",
+    "pick-down": "pick",
+    "pick-up": "pick",
+    tap: "tap",
+  };
+  for (const key of Object.keys(BENDS)) {
+    GROUPS[key] = "bend";
+  }
+  const HARMONICS = { "harmonic-natural": "Natural", "harmonic-artificial": "Artificial", "harmonic-pinch": "Pinch",
+    "harmonic-tap": "Tap" };
+
+  // As chaves ligadas numa nota do alphaTab.
+  function techniquesOf(at, note) {
+    const m = at.model;
+    const on = [];
+    const beat = note.beat;
+    if (note.isHammerPullOrigin) on.push("hammer");
+    if (note.slideOutType === m.SlideOutType.Legato) on.push("slide-legato");
+    if (note.slideOutType === m.SlideOutType.Shift) on.push("slide-shift");
+    if (note.slideOutType === m.SlideOutType.OutUp) on.push("slide-out-up");
+    if (note.slideOutType === m.SlideOutType.OutDown) on.push("slide-out-down");
+    if (note.slideInType === m.SlideInType.IntoFromBelow) on.push("slide-in-below");
+    if (note.slideInType === m.SlideInType.IntoFromAbove) on.push("slide-in-above");
+    if (note.vibrato === m.VibratoType.Slight) on.push("vibrato");
+    if (note.vibrato === m.VibratoType.Wide) on.push("wide-vibrato");
+    if (note.isPalmMute) on.push("palm-mute");
+    if (note.isDead) on.push("dead");
+    if (note.isLetRing) on.push("let-ring");
+    if (note.isGhost) on.push("ghost");
+    if (note.isStaccato) on.push("staccato");
+    if (note.accentuated === m.AccentuationType.Normal) on.push("accent");
+    if (note.accentuated === m.AccentuationType.Heavy) on.push("heavy-accent");
+    for (const [key, name] of Object.entries(HARMONICS)) {
+      if (note.harmonicType === m.HarmonicType[name]) on.push(key);
+    }
+    const bend = bendKey(note);
+    if (bend) on.push(bend);
+    if (beat && beat.pickStroke === m.PickStroke.Down) on.push("pick-down");
+    if (beat && beat.pickStroke === m.PickStroke.Up) on.push("pick-up");
+    if (beat && beat.tap) on.push("tap");
+    return on;
+  }
+
+  // O bend da paleta que a nota tem: pelo tipo e pelo pico (num "Custom" de outro editor, pela forma dos pontos);
+  // null sem bend.
+  function bendKey(note) {
+    const points = note.bendPoints || [];
+    if (points.length < 2) {
+      return null;
+    }
+    const values = points.map((p) => p.value);
+    const peak = Math.max(...values);
+    const first = values[0];
+    const last = values[values.length - 1];
+    if (first > 0) {
+      return last < first ? "prebend-release" : "prebend";
+    }
+    if (last < peak) {
+      return "bend-release";
+    }
+    return { 2: "bend-half", 4: "bend-full", 6: "bend-1.5", 8: "bend-2" }[peak] || "bend-full";
+  }
+
+  // Liga ou desliga uma articulação; no mesmo grupo, ligar troca a que estava. Nota morta não tem bend, vibrato nem
+  // harmônico (a regra do TabLab). Devolve se mudou algo.
+  function toggle(at, note, key) {
+    const group = GROUPS[key];
+    if (!group) {
+      return false;
+    }
+    const was = techniquesOf(at, note).includes(key);
+    clearGroup(at, note, group);
+    if (!was) {
+      apply(at, note, key);
+      if (key === "dead") {
+        for (const other of ["bend", "vibrato", "harmonic"]) clearGroup(at, note, other);
+      }
+      if (group === "bend" || group === "vibrato" || group === "harmonic") {
+        note.isDead = false;
+      }
+    }
+    return true;
+  }
+
+  function clearGroup(at, note, group) {
+    const m = at.model;
+    const beat = note.beat;
+    switch (group) {
+      case "hammer":
+        note.isHammerPullOrigin = false;
+        break;
+      case "slide-out":
+        note.slideOutType = m.SlideOutType.None;
+        note.slideTarget = null;
+        break;
+      case "slide-in":
+        note.slideInType = m.SlideInType.None;
+        break;
+      case "vibrato":
+        note.vibrato = m.VibratoType.None;
+        break;
+      case "bend":
+        note.bendPoints = [];
+        note.bendType = m.BendType.None;
+        note.bendStyle = m.BendStyle.Default;
+        break;
+      case "harmonic":
+        note.harmonicType = m.HarmonicType.None;
+        note.harmonicValue = 0;
+        break;
+      case "accent":
+        note.accentuated = m.AccentuationType.None;
+        break;
+      case "pick":
+        if (beat) beat.pickStroke = m.PickStroke.None;
+        break;
+      case "tap":
+        if (beat) beat.tap = false;
+        break;
+      case "palm-mute":
+        note.isPalmMute = false;
+        break;
+      case "dead":
+        note.isDead = false;
+        break;
+      case "let-ring":
+        note.isLetRing = false;
+        break;
+      case "ghost":
+        note.isGhost = false;
+        break;
+      case "staccato":
+        note.isStaccato = false;
+        break;
+    }
+  }
+
+  function apply(at, note, key) {
+    const m = at.model;
+    const beat = note.beat;
+    if (BENDS[key]) {
+      for (const [offset, value] of BENDS[key].points) note.addBendPoint(new m.BendPoint(offset, value));
+      note.bendType = m.BendType[BENDS[key].type];
+      return;
+    }
+    if (HARMONICS[key]) {
+      note.harmonicType = m.HarmonicType[HARMONICS[key]];
+      return;
+    }
+    switch (key) {
+      case "hammer":
+        // O score.finish liga à próxima nota da corda e decide H ou P pelas casas; sem ela, não fica.
+        note.isHammerPullOrigin = true;
+        break;
+      case "slide-legato":
+        note.slideOutType = m.SlideOutType.Legato;
+        break;
+      case "slide-shift":
+        note.slideOutType = m.SlideOutType.Shift;
+        break;
+      case "slide-out-up":
+        note.slideOutType = m.SlideOutType.OutUp;
+        break;
+      case "slide-out-down":
+        note.slideOutType = m.SlideOutType.OutDown;
+        break;
+      case "slide-in-below":
+        note.slideInType = m.SlideInType.IntoFromBelow;
+        break;
+      case "slide-in-above":
+        note.slideInType = m.SlideInType.IntoFromAbove;
+        break;
+      case "vibrato":
+        note.vibrato = m.VibratoType.Slight;
+        break;
+      case "wide-vibrato":
+        note.vibrato = m.VibratoType.Wide;
+        break;
+      case "palm-mute":
+        note.isPalmMute = true;
+        break;
+      case "dead":
+        note.isDead = true;
+        break;
+      case "let-ring":
+        note.isLetRing = true;
+        break;
+      case "ghost":
+        note.isGhost = true;
+        break;
+      case "staccato":
+        note.isStaccato = true;
+        break;
+      case "accent":
+        note.accentuated = m.AccentuationType.Normal;
+        break;
+      case "heavy-accent":
+        note.accentuated = m.AccentuationType.Heavy;
+        break;
+      case "pick-down":
+        beat.pickStroke = m.PickStroke.Down;
+        break;
+      case "pick-up":
+        beat.pickStroke = m.PickStroke.Up;
+        break;
+      case "tap":
+        beat.tap = true;
+        break;
+    }
+  }
+
+  // A corda no TrackLab é 1 na mais aguda; no alphaTab, 1 é a mais grave.
+  function tabString(note) {
+    const strings = note.beat.voice.bar.staff.tuning.length;
+    return strings - note.string + 1;
+  }
+
+  function openPitch(staff, alphaString) {
+    return staff.tuning[staff.tuning.length - alphaString];
+  }
+
+  function stringBusy(beat, alphaString, except) {
+    return beat.notes.some((other) => other !== except && other.string === alphaString);
+  }
+
+  // A casa da nota (0–24).
+  function setFret(note, fret) {
+    if (!Number.isInteger(fret) || fret < 0 || fret > MAX_FRET || note.fret === fret) {
+      return false;
+    }
+    note.fret = fret;
+    return true;
+  }
+
+  // A mesma altura em outra corda (`delta` +1 = uma corda mais aguda): a casa muda pela afinação.
+  function moveString(note, delta) {
+    const staff = note.beat.voice.bar.staff;
+    const target = note.string + delta;
+    if (target < 1 || target > staff.tuning.length || stringBusy(note.beat, target, note)) {
+      return false;
+    }
+    const fret = openPitch(staff, note.string) + note.fret - openPitch(staff, target);
+    if (fret < 0 || fret > MAX_FRET) {
+      return false;
+    }
+    note.string = target;
+    note.fret = fret;
+    return true;
+  }
+
+  // Meio tom acima ou abaixo na mesma corda.
+  function transpose(note, semitones) {
+    return setFret(note, note.fret + semitones);
+  }
+
+  // Apaga a nota; a batida sem notas vira pausa.
+  function remove(note) {
+    const notes = note.beat.notes;
+    const index = notes.indexOf(note);
+    if (index < 0) {
+      return false;
+    }
+    notes.splice(index, 1);
+    notes.forEach((other, i) => {
+      other.index = i;
+    });
+    return true;
+  }
+
+  // As notas de uma pauta em ordem de tempo e, na mesma batida, da corda mais aguda para a mais grave.
+  function notesOf(staff) {
+    const list = [];
+    for (const bar of staff.bars) {
+      for (const voice of bar.voices) {
+        for (const beat of voice.beats) {
+          const sorted = beat.notes.slice().sort((a, b) => b.string - a.string);
+          for (const note of sorted) list.push(note);
+        }
+      }
+    }
+    return list.sort((a, b) => a.beat.absolutePlaybackStart - b.beat.absolutePlaybackStart || b.string - a.string);
+  }
+
+  // A nota seguinte (dir 1) ou anterior (dir −1) da pauta.
+  function neighbor(note, dir) {
+    const list = notesOf(note.beat.voice.bar.staff);
+    const index = list.indexOf(note);
+    return index < 0 ? null : list[index + dir] || null;
+  }
+
+  // O endereço de uma nota que sobrevive à cópia da partitura: pista, pauta, compasso, voz, batida e corda.
+  function pathOf(note) {
+    const beat = note.beat;
+    const voice = beat.voice;
+    const bar = voice.bar;
+    const staff = bar.staff;
+    return [staff.track.index, staff.index, bar.index, voice.index, beat.index, note.string];
+  }
+
+  function resolve(score, path) {
+    if (!path) return null;
+    const [t, s, b, v, i, string] = path;
+    const beat = score.tracks[t] && score.tracks[t].staves[s] && score.tracks[t].staves[s].bars[b] &&
+      score.tracks[t].staves[s].bars[b].voices[v] && score.tracks[t].staves[s].bars[b].voices[v].beats[i];
+    return beat ? beat.notes.find((n) => n.string === string) || null : null;
+  }
+
+  // A partitura de novo pelo JSON do alphaTab, que roda o finish: as ligações e as formas ficam certas.
+  function snapshot(at, score) {
+    return at.model.JsonConverter.scoreToJsObject(score);
+  }
+
+  function restore(at, object) {
+    return at.model.JsonConverter.jsObjectToScore(object, new at.Settings());
+  }
+
+  function refinish(at, score) {
+    return restore(at, snapshot(at, score));
+  }
+
+  // O Guitar Pro 7 da partitura (para gravar no pacote).
+  function exportGp(at, score) {
+    return new at.exporter.Gp7Exporter().export(score, new at.Settings());
+  }
+
+  // O que o app mostra da nota escolhida: a pista, a corda (1 é a mais aguda), a casa, a altura e as articulações.
+  function describe(at, note) {
+    return { track: note.beat.voice.bar.staff.track.index, string: tabString(note), fret: note.fret,
+      pitch: note.realValue, techniques: techniquesOf(at, note) };
+  }
+
+  return {
+    BENDS,
+    GROUPS,
+    MAX_FRET,
+    describe,
+    exportGp,
+    moveString,
+    neighbor,
+    notesOf,
+    pathOf,
+    refinish,
+    remove,
+    resolve,
+    restore,
+    setFret,
+    snapshot,
+    tabString,
+    techniquesOf,
+    toggle,
+    transpose,
+  };
+});

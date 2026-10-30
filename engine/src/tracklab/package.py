@@ -2,6 +2,7 @@
 
     manifest.json          esquema, origem, hashes e o que existe dentro
     score/original.gp      a partitura como veio do Songsterr (sem áudio embutido)
+    score/edited.gp        a partitura editada na TAB (as anteriores em score/history/), se houver
     score/tempo-map.json   tique ↔ segundo, o contrato do TabLab; os ajustes manuais mudam só este arquivo
     score/tempo-map-history/  as versões anteriores do mapa, uma por ajuste (as últimas `TEMPO_HISTORY`)
     score/tempo-map-original.json  o mapa como veio do Songsterr, guardado antes do primeiro ajuste
@@ -21,9 +22,9 @@ import shutil
 import threading
 from pathlib import Path
 
-from . import home, repertoire
+from . import home, repertoire, tempomap
 from .errors import PackageError
-from .util import atomic_json, new_id, now_iso, read_json, slugify
+from .util import atomic_json, new_id, now_iso, read_json, sha256_file, slugify
 
 SCHEMA = 1
 SUFFIX = ".tracklab"
@@ -31,6 +32,9 @@ MANIFEST = "manifest.json"
 TEMPO_MAP = "score/tempo-map.json"
 TEMPO_ORIGINAL = "score/tempo-map-original.json"
 TEMPO_HISTORY = 200
+SCORE_EDITED = "score/edited.gp"
+SCORE_HISTORY = 100
+SCORE_LIMIT = 50_000_000
 _LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
 
 
@@ -100,6 +104,69 @@ class SongPackage:
                 data["activeStems"] = key
 
         return self.update(record)
+
+    def add_synth(self, key: str, build) -> dict:
+        """A TAB sintetizada, publicada de uma vez em `synth/<key>/` (como as separações); a anterior sai, porque só a
+        do mapa de tempo de agora serve."""
+        if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,63}", key):
+            raise PackageError(f"Chave de síntese inválida: {key}.")
+        folder = self.path / "synth"
+        folder.mkdir(exist_ok=True)
+        final = folder / key
+        temp = folder / f".{key}.{new_id()}.partial"
+        temp.mkdir()
+        try:
+            receipt = build(temp)
+            if final.exists():
+                shutil.rmtree(final)
+            temp.rename(final)
+        finally:
+            if temp.exists():
+                shutil.rmtree(temp, ignore_errors=True)
+        for old in folder.iterdir():
+            if old.is_dir() and old.name != key and not old.name.startswith("."):
+                shutil.rmtree(old, ignore_errors=True)
+
+        def record(data: dict) -> None:
+            data["synth"] = {
+                "key": key, "soundfont": receipt.get("soundfont"), "tempoSHA256": receipt.get("tempoSHA256"),
+                "scoreSHA256": receipt.get("scoreSHA256"),
+                "created": receipt.get("created", now_iso()), "seconds": receipt.get("seconds"),
+                "tracks": {index: {"file": f"synth/{key}/{info['file']}", "name": info.get("name"),
+                                   "percussion": bool(info.get("percussion")), "program": info.get("program")}
+                           for index, info in receipt.get("tracks", {}).items()}}
+
+        return self.update(record)
+
+    def save_score(self, data: bytes) -> dict:
+        """A partitura editada (o Guitar Pro 7 que a página da TAB grava): vai para `score/edited.gp`; a anterior para
+        `score/history/` (as últimas `SCORE_HISTORY`). O original do Songsterr fica em `score/original.gp` e o manifesto
+        passa a apontar para a editada."""
+        if not data.startswith(b"PK") or len(data) > SCORE_LIMIT:
+            raise PackageError("Isso não é um Guitar Pro 7 que o TrackLab grave.")
+        with _LOCK:
+            target = self.file(SCORE_EDITED)
+            if target.is_file():
+                history = self.file("score/history")
+                history.mkdir(exist_ok=True)
+                versions = sorted(history.glob("*.gp"))
+                number = int(versions[-1].stem.split("-")[0]) + 1 if versions else 1
+                shutil.copy2(target, history / f"{number:06d}-{now_iso().replace(':', '')}.gp")
+                for old in sorted(history.glob("*.gp"))[:-SCORE_HISTORY]:
+                    old.unlink()
+            temp = target.with_name(f".{target.name}.{new_id()}.partial")
+            temp.write_bytes(data)
+            temp.replace(target)
+
+            def record(manifest: dict) -> None:
+                entry = manifest.get("score") or {}
+                entry.setdefault("original", entry.get("file"))
+                entry["file"] = SCORE_EDITED
+                entry["sha256"] = sha256_file(target)
+                entry["edited"] = now_iso()
+                manifest["score"] = entry
+
+            return self.update(record)["score"]
 
     def set_active_stems(self, key: str) -> str:
         """A separação que o app toca (o A/B escolhe entre as que existem)."""
@@ -193,7 +260,18 @@ class SongPackage:
         return {"id": data["id"], "title": data.get("title"), "artist": data.get("artist"),
                 "folder": self.path.name, "hasAudio": bool(data.get("audio")),
                 "stems": sorted(data.get("stems", {})), "activeStems": data.get("activeStems"),
-                "created": data.get("created"), "updated": data.get("updated"), **repertoire.study_summary(data)}
+                "created": data.get("created"), "updated": data.get("updated"),
+                **repertoire.study_summary(data, self._tempo_converter(data))}
+
+    def _tempo_converter(self, data: dict):
+        """O conversor tique ↔ segundo do mapa gravado, ou None (sem mapa, ou ilegível: o resumo segue sem ele)."""
+        entry = data.get("tempoMap")
+        if not entry or not data.get("sections"):
+            return None
+        try:
+            return tempomap.map_of(tempomap.normalize_tempo_map(read_json(self.file(entry["file"]))))
+        except (OSError, ValueError):
+            return None
 
 
 class Draft:

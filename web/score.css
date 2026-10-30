@@ -8,6 +8,18 @@
   --text: #6e6e73;
 }
 
+/* Antes de o app dizer o tema, o do sistema (a WKWebView segue a aparência do app): sem clarão branco ao abrir. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: #1e1e1e;
+    --cursor: #ff9f0a;
+    --loop: rgba(255, 159, 10, 0.14);
+    --loop-edge: rgba(255, 159, 10, 0.6);
+    --text: #98989d;
+  }
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --background: #1e1e1e;
@@ -40,6 +52,22 @@ body {
   min-width: 100%;
   cursor: pointer;
   will-change: transform;
+  transform-origin: 0 0;
+}
+
+/* A camada desenhada e a do próximo desenho, uma sobre a outra; a do próximo fica escondida até terminar. */
+.layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  /* O alphaTab não desenha num elemento de largura zero (o absoluto encolheria até o conteúdo). */
+  width: 100vw;
+}
+
+/* O próximo desenho, ainda por terminar: transparente (com `visibility: hidden` o alphaTab não desenha). */
+.layer.pending {
+  opacity: 0;
+  pointer-events: none;
 }
 
 #sheet.dragging {
@@ -85,4 +113,18 @@ body {
   color: var(--text);
   text-align: center;
   padding: 24px;
+}
+
+/* A nota escolhida na edição da TAB. */
+#selection {
+  position: absolute;
+  border: 2px solid var(--cursor);
+  border-radius: 4px;
+  background: rgba(255, 149, 0, 0.18);
+  pointer-events: none;
+  z-index: 2;
+}
+
+#sheet.editing {
+  cursor: default;
 }

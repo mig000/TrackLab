@@ -94,6 +94,31 @@ test("o cursor fica a 40 % da largura", () => {
 
 const fixtures = path.join(__dirname, "fixtures");
 const given = process.argv.slice(2);
+test("o relógio dá a volta no fim do loop, como o motor de áudio", () => {
+  const loop = [10, 14];
+  const clock = core.nextClock(null, { seconds: 12, playing: true, rate: 1, delay: 0 }, 0, 0.04, loop);
+  assert.equal(core.estimate(clock, 1000, loop), 13);
+  assert.equal(core.estimate(clock, 3000, loop), 11);
+  assert.equal(core.estimate(clock, 7000, loop), 11);
+  // Tocando de depois do fim do loop, segue solto (o motor não entra no loop).
+  const after = core.nextClock(null, { seconds: 15, playing: true, rate: 1, delay: 0 }, 0, 0.04, loop);
+  assert.equal(core.estimate(after, 2000, loop), 17);
+  // Um aviso já com a volta dada não é diferente da extrapolação: não é aceito à toa.
+  assert.equal(core.nextClock(clock, { seconds: 11.01, playing: true, rate: 1 }, 3000, 0.04, loop), clock);
+});
+
+test("um loop que cabe na tela para a pauta e solta o cursor", () => {
+  // Até 60 % da largura: o loop começa nos 40 %, onde o cursor estava ao entrar nele.
+  assert.equal(core.windowStart(11, [10, 14], 10), 6);
+  assert.equal(core.windowStart(14, [10, 14], 10), 6);
+  // Maior: centrado.
+  assert.equal(core.windowStart(12, [10, 18], 10), 9);
+  // Maior que a tela, sem loop, ou com o cursor fora dele: a janela segue o cursor.
+  assert.equal(core.windowStart(12, [10, 20], 10), null);
+  assert.equal(core.windowStart(12, null, 10), null);
+  assert.equal(core.windowStart(9, [10, 14], 10), null);
+});
+
 const files = given.length ? given : fs.readdirSync(fixtures).filter((f) => f.endsWith(".gp")).map((f) => path.join(fixtures, f));
 if (files.length) {
   const alphaTab = require("../vendor/alphatab/alphaTab.js");
@@ -107,6 +132,10 @@ if (files.length) {
       const renderer = new alphaTab.rendering.ScoreRenderer(settings);
       renderer.width = 1200;
       renderer.renderScore(score, [0]);
+      // As notas para o espectro: em ordem de tique, com altura e casa de verdade (a pista 0 é de cordas).
+      const notes = core.trackNotes(score)[0];
+      assert.ok(notes.length > 0 && notes.every((n) => Number.isFinite(n[0]) && n[1] > 0 && n[2] >= 28 && n[2] <= 100));
+      assert.ok(notes.every((n, i) => i === 0 || n[0] >= notes[i - 1][0]));
       let tick = 0;
       for (const masterBounds of renderer.boundsLookup.staffSystems[0].bars) {
         const master = score.masterBars[masterBounds.index];

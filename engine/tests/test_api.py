@@ -197,3 +197,18 @@ def test_stem_sources_through_the_api(tmp_path, monkeypatch):
         assert client.put(f"/api/songs/{song_id}/stems/active", json={"key": key}).json() == {"activeStems": key}
         assert client.put(f"/api/songs/{song_id}/stems/active", json={"key": "nada"}).status_code == 400
     jobs.close()
+
+
+def test_the_edited_score_is_saved_beside_the_original(client):
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    original = client.get(f"/api/songs/{song_id}").json()["score"]
+    gp = client.get(f"/api/songs/{song_id}/files/{original['file']}").content
+    assert client.put(f"/api/songs/{song_id}/score", content=b"nada").status_code == 400
+    saved = client.put(f"/api/songs/{song_id}/score", content=gp + b"").json()["score"]
+    assert saved["file"] == "score/edited.gp" and saved["original"] == original["file"]
+    again = client.put(f"/api/songs/{song_id}/score", content=gp).json()["score"]
+    assert again["file"] == "score/edited.gp"
+    found = package.find(song_id)
+    assert found.file("score/original.gp").is_file() and len(list(found.file("score/history").glob("*.gp"))) == 1
+    assert client.get(f"/api/songs/{song_id}/files/score/edited.gp").content == gp

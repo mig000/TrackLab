@@ -36,6 +36,10 @@ final class StemEngine {
     /// Original (o áudio do vídeo) ou as faixas da separação.
     var useStems = false { didSet { applyMix() } }
     var mix: [String: StemMix] = [:] { didSet { applyMix() } }
+    /// As chaves gerais do mixer: todo o áudio (o original ou as faixas) e toda a TAB sintetizada. Calar um grupo não
+    /// mexe na mixagem de cada faixa dele.
+    var audioOn = true { didSet { applyMix() } }
+    var tabOn = false { didSet { applyMix() } }
     var masterVolume: Float = 1 { didSet { bus.outputVolume = masterVolume } }
 
     var rate: Float {
@@ -142,8 +146,13 @@ final class StemEngine {
         applyMix()
     }
 
-    /// Ids carregados, além do original.
-    var stemIDs: [String] { tracks.keys.filter { $0 != Self.sourceID }.sorted() }
+    /// As faixas da separação carregadas (sem o original e sem a TAB sintetizada).
+    var stemIDs: [String] {
+        tracks.keys.filter { $0 != Self.sourceID && !$0.hasPrefix(SynthTrack.prefix) }.sorted()
+    }
+
+    /// As faixas da TAB sintetizada carregadas ("tab:1"…).
+    var synthIDs: [String] { tracks.keys.filter { $0.hasPrefix(SynthTrack.prefix) }.sorted() }
 
     // MARK: - Relógio
 
@@ -267,13 +276,19 @@ final class StemEngine {
 
     // MARK: - Mix
 
+    /// O original ou as faixas da separação (`useStems`); a TAB sintetizada soa por cima de qualquer um dos dois, no
+    /// volume do mixer. Um solo vale para tudo: com alguma faixa em solo, o original também cala. `audioOn` e `tabOn`
+    /// ligam e desligam cada grupo inteiro.
     private func applyMix() {
         let gains = mixGains(mix)
+        let soloing = mix.values.contains { $0.solo }
         for (id, track) in tracks {
             if id == Self.sourceID {
-                track.player.volume = useStems ? 0 : 1
+                track.player.volume = audioOn && !useStems && !soloing ? 1 : 0
+            } else if id.hasPrefix(SynthTrack.prefix) {
+                track.player.volume = tabOn ? (gains[id] ?? 0) : 0
             } else {
-                track.player.volume = useStems ? (gains[id] ?? 1) : 0
+                track.player.volume = audioOn && useStems ? (gains[id] ?? 1) : 0
             }
         }
     }

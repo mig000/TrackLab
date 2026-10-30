@@ -1,0 +1,50 @@
+"""A curva de altura do som numa nota: a nota limpa, o bend que sobe, o acorde (pelos harmônicos) e o silêncio."""
+
+import math
+
+import numpy as np
+import pytest
+
+from tracklab.media import pitch
+
+RATE = pitch.RATE
+
+
+def tone(midi_at, seconds=1.0, harmonics=(1.0, 0.5, 0.3)):
+    """Um som com harmônicos cuja altura (MIDI) segue `midi_at(t)`."""
+    t = np.arange(int(seconds * RATE)) / RATE
+    f = 440 * 2 ** ((np.vectorize(midi_at)(t) - 69) / 12)
+    phase = 2 * np.pi * np.cumsum(f) / RATE
+    return sum(a * np.sin((h + 1) * phase) for h, a in enumerate(harmonics)) * 0.2
+
+
+def values(curve):
+    return np.array([np.nan if v is None else v for v in curve["values"]])
+
+
+def test_a_clean_note_is_its_own_pitch():
+    x = tone(lambda t: 57.0)
+    v = values(pitch.note_curve(x, 0.1, 0.9, 57))
+    assert np.isfinite(v).mean() > 0.9 and np.nanmedian(np.abs(v - 57)) < 0.05
+
+
+def test_a_bend_rises_in_the_curve():
+    x = tone(lambda t: 64.0 + (min(1.0, max(0.0, (t - 0.3) / 0.2)) * 2.0))
+    v = values(pitch.note_curve(x, 0.05, 0.95, 64))
+    start, end = np.nanmedian(v[:20]), np.nanmedian(v[-20:])
+    assert start == pytest.approx(64, abs=0.1) and end == pytest.approx(66, abs=0.15)
+
+
+def test_another_string_ringing_softer_still_gives_the_note():
+    # A nota tocada sobre outra corda que ainda soa, mais baixa (a Lente do TabLab dá o mesmo: com as duas no mesmo
+    # volume, nenhuma das duas buscas acha a nota, lá e aqui).
+    x = tone(lambda t: 55.0) + 0.5 * tone(lambda t: 62.0)
+    v = values(pitch.note_curve(x, 0.1, 0.9, 55))
+    assert np.isfinite(v).mean() > 0.9 and np.nanmedian(np.abs(v - 55)) < 0.15
+
+
+def test_silence_has_no_curve_and_lonely_points_go():
+    x = np.zeros(RATE)
+    assert all(v is None for v in pitch.note_curve(x, 0.1, 0.9, 60)["values"])
+    smoothed = pitch.smooth(np.array([np.nan, 60.0, np.nan, 61, 61.1, 61.2, np.nan]))
+    assert math.isnan(smoothed[1]) and np.isfinite(smoothed[3:6]).all()

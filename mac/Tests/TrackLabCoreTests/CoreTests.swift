@@ -242,3 +242,84 @@ private func grid(bars: Int = 3) -> TempoGrid {
             == "Pack/Cream - X · começa +0.750 s no vídeo · velocidade corrigida -0.830 % · 14 de 24 trechos de acordo")
     #expect(song.active?.label == "Demucs 6s")
 }
+
+@Test func bibliotecaDeTrechos() throws {
+    let json = #"""
+    [{"id": "a", "title": "White Room", "artist": "Cream", "folder": "a", "tuning": [63, 58, 54, 49, 44, 39],
+      "sections": [
+        {"id": "s1", "name": "Wah do solo", "from": 0, "to": 3840, "goal": 100, "best": 95, "kind": "lick",
+         "tags": ["Blues", "wah"], "favorite": true, "bars": 1, "start": 12.5, "seconds": 2.1, "bpm": 112.0,
+         "practiced": "2026-10-27T10:00:00Z"},
+        {"id": "s2", "name": "Riff", "from": 3840, "to": 7680, "goal": 100}]},
+     {"id": "b", "title": "Sunshine of Your Love", "artist": "Cream", "folder": "b", "tuning": [64, 59, 55, 50, 45, 40],
+      "sections": [{"id": "s3", "name": "Solo", "from": 0, "to": 9600, "goal": 90, "best": 60, "kind": "solo",
+                    "tags": ["blues", "bend"], "practiced": "2026-10-28T10:00:00Z"}]}]
+    """#
+    let songs = try JSONDecoder().decode([SongSummary].self, from: Data(json.utf8))
+    let items = SectionLibrary.items(songs)
+    #expect(items.count == 3)
+    #expect(items[1].section.kind == .trecho && items[1].section.tags.isEmpty && !items[1].section.favorite)
+    #expect(items[0].section.bpm == 112 && items[0].tuning == "Mi bemol")
+    // Busca: tipo, etiqueta, música e afinação, sem acento, pelo começo das palavras.
+    #expect(SectionLibrary.filter(items, query: "lick").map(\.section.id) == ["s1"])
+    #expect(SectionLibrary.filter(items, query: "bend sunsh").map(\.section.id) == ["s3"])
+    #expect(SectionLibrary.filter(items, query: "mi bem").map(\.section.id) == ["s1", "s2"])
+    #expect(SectionLibrary.filter(items, kinds: [.solo, .lick]).count == 2)
+    #expect(SectionLibrary.filter(items, tags: ["BLUES"]).count == 2)
+    #expect(SectionLibrary.filter(items, favoritesOnly: true).map(\.section.id) == ["s1"])
+    // Ordens: tocados há pouco, esquecidos (nunca tocado primeiro), perto da meta.
+    #expect(SectionLibrary.sorted(items, by: .recent).map(\.section.id) == ["s3", "s1", "s2"])
+    #expect(SectionLibrary.sorted(items, by: .forgotten).map(\.section.id) == ["s2", "s1", "s3"])
+    #expect(SectionLibrary.sorted(items, by: .nearGoal).map(\.section.id) == ["s1", "s3", "s2"])
+    #expect(SectionLibrary.topTags(items) == ["Blues", "bend", "wah"])
+    #expect(StudySection.tags(from: " blues,  bend  duplo ,Blues,, ") == ["blues", "bend duplo"])
+    // O que vai ao motor leva tipo, etiquetas e favorito.
+    let sent = try JSONSerialization.jsonObject(with: JSONEncoder().encode(items[0].section)) as? [String: Any]
+    #expect(sent?["kind"] as? String == "lick" && sent?["favorite"] as? Bool == true)
+}
+
+@Test func loopQueCabeNaTelaParaAJanela() {
+    #expect(LoopView.windowStart(now: 11, loop: 10...14, span: 10, playheadAt: 0.4) == 6)
+    #expect(LoopView.windowStart(now: 12, loop: 10...18, span: 10, playheadAt: 0.4) == 9)
+    #expect(LoopView.windowStart(now: 12, loop: 10...20, span: 10, playheadAt: 0.4) == nil)
+    #expect(LoopView.windowStart(now: 9, loop: 10...14, span: 10, playheadAt: 0.4) == nil)
+    #expect(LoopView.windowStart(now: 9, loop: nil, span: 10, playheadAt: 0.4) == nil)
+}
+
+@Test func tabSintetizadaNoManifesto() throws {
+    let json = #"""
+    {"id": "s", "folder": "/f", "synth": {"key": "tab-1", "soundfont": "GeneralUser.sf2", "stale": true,
+     "tracks": {"10": {"file": "synth/tab-1/t10.flac", "name": "Ginger Baker | Drums - Ludwig", "percussion": true},
+                "2": {"file": "synth/tab-1/t2.flac", "name": "Eric Clapton | Rhythm Guitar I - 1964 Gibson SG"}}}}
+    """#
+    let song = try JSONDecoder().decode(SongDetail.self, from: Data(json.utf8))
+    let ids = try #require(song.synth).ids
+    #expect(ids.map(\.id) == ["tab:2", "tab:10"])
+    #expect(ids.map(\.track.shortName) == ["Rhythm Guitar I", "Drums"])
+    #expect(song.synth?.stale == true)
+}
+
+@Test func notasEEspectroDaFita() throws {
+    let notes = ScoreNote.list([[0, 4800, 74, 1, 10], [960, 0, 60, 2, 1], [1, 2]])
+    #expect(notes == [ScoreNote(tick: 0, duration: 4800, pitch: 74, string: 1, fret: 10)])
+    // Bend de um tom (4 quartos) que sobe até a metade da nota; vibrato leve.
+    let bent = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 0, 30, 4, 60, 4]]).first)
+    #expect(bent.shape(fraction: 0, elapsed: 0) == 0 && bent.shape(fraction: 1, elapsed: 1) == 2)
+    #expect(abs(bent.shape(fraction: 0.25, elapsed: 0) - 1) < 1e-9)
+    let wavy = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 1]]).first)
+    #expect(wavy.shape(fraction: 0, elapsed: 0) == 0 && abs(wavy.shape(fraction: 0.5, elapsed: 1 / 11.0) - 0.44) < 1e-9)
+    var data = [UInt8](repeating: 0, count: 4 * 10)
+    data[3 * 10 + 9] = 200
+    let spectrum = try #require(Spectrum(frames: 4, rows: 10, hop: 0.01, low: 40, perSemitone: 3, data: data))
+    #expect(spectrum.pitch(row: 9) == 43 && spectrum.row(pitch: 43) == 9)
+    #expect(spectrum.ceiling == 200)
+    #expect(Spectrum(frames: 3, rows: 10, hop: 0.01, low: 40, perSemitone: 3, data: data) == nil)
+}
+
+@Test func notaEscolhidaNaEdicao() {
+    let page: [String: Any] = ["track": NSNumber(value: 1), "string": NSNumber(value: 3), "fret": NSNumber(value: 7),
+                               "pitch": NSNumber(value: 62), "techniques": ["vibrato", "bend-full"]]
+    let note = TabSelection(page: page)
+    #expect(note?.fret == 7 && note?.techniques == ["vibrato", "bend-full"] && note?.pitchName == "Ré 4")
+    #expect(TabSelection(page: ["track": NSNumber(value: 1)]) == nil)
+}

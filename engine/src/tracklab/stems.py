@@ -20,8 +20,9 @@ from .errors import PackageError
 from .media import multitrack as multitrack_media
 from .media import mvsep
 from .media import separate as demucs
+from .media import synth as synth_media
 from .package import SongPackage
-from .util import sha256_text
+from .util import read_json, sha256_file, sha256_text
 
 Progress = Callable[[str, str, float | None], None]
 
@@ -116,6 +117,54 @@ def separate_mvsep(package: SongPackage, *, key: str, model: int = 31, progress:
         return receipt
 
     return _publish(package, stems_key, build, progress, mvsep.STAGE, activate=False)
+
+
+def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, cancel=None, font=None,
+                   engine: str | None = None) -> dict:
+    """A TAB sintetizada de todas as pistas no mapa de tempo de agora (refeita a cada mapa novo; a chave junta a
+    partitura, o mapa, o SoundFont e a versão do procedimento)."""
+    manifest = package.manifest
+    audio, score, entry = _audio(package), manifest.get("score"), manifest.get("tempoMap")
+    if not score or not entry:
+        raise PackageError("Esta música não tem partitura e mapa de tempo para sintetizar.")
+    font = Path(font or synth_media.soundfont())
+    tempo_file = package.file(entry["file"])
+    tempo_sha = sha256_file(tempo_file)
+    key = "tab-" + sha256_text("|".join((score.get("sha256") or "", tempo_sha, font.name, str(font.stat().st_size),
+                                         synth_media.PROCEDURE)))[:8]
+    done = manifest.get("synth")
+    if done and done.get("key") == key and all(package.file(t["file"]).is_file() for t in done["tracks"].values()):
+        # A chave já junta partitura e mapa: a síntese é desta partitura e deste mapa. Uma feita antes de o manifesto
+        # guardar os dois SHA ganha os dois aqui (sem eles ela pareceria velha para sempre).
+        if done.get("tempoSHA256") != tempo_sha or done.get("scoreSHA256") != score.get("sha256"):
+            def record(data: dict) -> None:
+                data["synth"].update(tempoSHA256=tempo_sha, scoreSHA256=score.get("sha256"))
+
+            done = package.update(record)["synth"]
+        if progress is not None:
+            progress(synth_media.STAGE, "A TAB sintetizada já estava pronta.", 1.0)
+        return {**done, "reused": True}
+    points = read_json(tempo_file)["points"]
+
+    def build(output):
+        receipt = synth_media.synthesize(package.file(score["file"]), points, package.file(audio["file"]), output,
+                                         progress=progress, cancel=cancel, font=font, engine=engine)
+        receipt["tempoSHA256"] = tempo_sha
+        receipt["scoreSHA256"] = score.get("sha256")
+        return receipt
+
+    return {**package.add_synth(key, build)["synth"], "reused": False}
+
+
+def synth_state(package: SongPackage) -> dict | None:
+    """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo mudou depois dela."""
+    manifest = package.manifest
+    done, entry = manifest.get("synth"), manifest.get("tempoMap")
+    if not done:
+        return None
+    current = sha256_file(package.file(entry["file"])) if entry and package.file(entry["file"]).is_file() else None
+    score = (manifest.get("score") or {}).get("sha256")
+    return {**done, "stale": current != done.get("tempoSHA256") or (score is not None and score != done.get("scoreSHA256"))}
 
 
 def _publish(package: SongPackage, key: str, build, progress, stage: str, *, activate: bool) -> dict:

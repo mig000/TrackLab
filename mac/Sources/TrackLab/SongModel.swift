@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import TrackLabCore
@@ -25,7 +26,15 @@ final class SongModel {
     /// As pistas da partitura como a página as leu.
     private(set) var scoreTracks: [ScoreBridge.PageTrack] = []
     var scoreTrack = 0 {
-        didSet { if scoreTrack != oldValue { bridge.showTrack(scoreTrack) } }
+        didSet {
+            guard scoreTrack != oldValue else { return }
+            if scoreSecond == scoreTrack { scoreSecond = nil }
+            bridge.showTrack(scoreTrack)
+        }
+    }
+    /// Uma segunda pista embaixo da principal (a base, o baixo, a bateria…), nos mesmos compassos.
+    var scoreSecond: Int? {
+        didSet { if scoreSecond != oldValue { bridge.showSecond(scoreSecond) } }
     }
     private(set) var scoreMessage: String?
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
@@ -33,16 +42,66 @@ final class SongModel {
     private(set) var notice: String?
     /// A separação em curso (o id da tarefa, o que ela faz e a última mensagem).
     private(set) var stemJob: (job: String, request: StemRequest, message: String, progress: Double?)?
+    /// A TAB sintetizada ficou para trás: o mapa de tempo mudou depois dela (o motor diz ao abrir; o Ajuste, depois).
+    var synthOutdated: Bool { synthChanged || detail?.synth?.stale == true }
+    /// Por que a síntese automática (ao abrir) não saiu; fica na linha TAB do mixer, sem aviso no cabeçalho.
+    private(set) var synthMessage: String?
+    private var synthChanged = false
     /// A multitrack da biblioteca que é esta música (para "Faixas da multitrack").
     private(set) var multitrack: MultitrackSong?
     private(set) var mvsepUsage: MVSEPUsage?
     /// O outro lado do A/B: a separação que estava tocando antes, ou a nova que acabou de chegar.
     private(set) var compareKey: String?
 
+    /// A edição da TAB (⌘E): um clique escolhe a nota; teclas e a paleta mudam casa, corda e articulações; o Guitar Pro
+    /// editado é gravado no pacote (o original fica). Saindo, a TAB sintetizada é refeita se a partitura mudou.
+    var editingTab = false {
+        didSet {
+            guard editingTab != oldValue else { return }
+            if editingTab { adjusting = false }
+            bridge.setEditing(editingTab)
+            if !editingTab, synthOutdated { Task { await synthesize(quiet: true) } }
+        }
+    }
+    private(set) var tabSelection: TabSelection?
+    private(set) var canUndoTab = false
+    private(set) var canRedoTab = false
+    private(set) var tabMessage: String?
+
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
     var adjusting = false {
-        didSet { bridge.setAdjusting(adjusting) }
+        didSet {
+            if adjusting { editingTab = false }
+            bridge.setAdjusting(adjusting)
+            // Saindo do Ajuste com o mapa mudado, a TAB sintetizada é refeita em segundo plano.
+            if oldValue, !adjusting, synthOutdated { Task { await synthesize(quiet: true) } }
+        }
     }
+    /// A Fita mostra a onda ou o espectro (com as notas da TAB por cima).
+    enum FitaMode: String, CaseIterable, Identifiable {
+        case wave, spectrum
+        var id: String { rawValue }
+    }
+
+    var fitaMode = FitaMode.wave {
+        didSet { if fitaMode == .spectrum, spectrum == nil { Task { await loadSpectrum() } } }
+    }
+    /// O espectro da guitarra separada (ou do original) e a imagem dele, feitos uma vez por música.
+    private(set) var spectrum: Spectrum?
+    @ObservationIgnored private(set) var spectrumImage: CGImage?
+    private(set) var spectrumMessage: String?
+    /// Z: a janela de alturas do espectro em volta da nota que toca (de 2 semitons abaixo a 6 acima, para ver o bend).
+    var pitchZoom = false
+    /// As curvas de altura do som, por nota (`curveKey`); chegam aos poucos, pedidas pelas notas que aparecem.
+    @ObservationIgnored private(set) var pitchCurves: [String: PitchCurve] = [:]
+    @ObservationIgnored private var curvesAsked: Set<String> = []
+    /// Muda quando chega uma curva: a Fita desenha de novo.
+    private(set) var pitchCurvesVersion = 0
+    /// A janela de alturas do espectro na Fita (desliza até a das notas do trecho).
+    @ObservationIgnored let pitchWindow = PitchWindow()
+    /// As notas de cada pista da partitura (pelo índice da pista), para as barras sobre o espectro.
+    private(set) var scoreNotes: [[ScoreNote]] = []
+
     /// ⇧ + arrastar em curso: quanto a onda da Fita andou sob as linhas paradas, em segundos.
     private(set) var soundShift = 0.0
     /// O mapa de tempo como o motor o gravou; os gestos do Ajuste partem dele.
@@ -83,11 +142,12 @@ final class SongModel {
     init(id: String) {
         self.id = id
         bridge = ScoreBridge(engine: engine)
-        bridge.onLoaded = { [weak self] tracks, ticks, markers in
+        bridge.onLoaded = { [weak self] tracks, ticks, markers, notes in
             guard let self else { return }
             scoreTracks = tracks
             grid = TempoGrid(points: grid.points, barTicks: ticks)
             self.markers = markers
+            scoreNotes = notes
         }
         bridge.onRendered = { [weak self] _, height in
             self?.scoreMessage = nil
@@ -95,6 +155,13 @@ final class SongModel {
         }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
         bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
+        bridge.onSelection = { [weak self] note, undo, redo in
+            self?.tabSelection = note
+            self?.canUndoTab = undo
+            self?.canRedoTab = redo
+        }
+        bridge.onSave = { [weak self] data in self?.saveScore(data) }
+        bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
         bridge.onShiftEnd = { [weak self] seconds in
             self?.soundShift = 0
             self?.alignBeat(shiftedBy: seconds)
@@ -120,8 +187,19 @@ final class SongModel {
             }
             try loadAudio(detail, keepMix: false)
             loadScore(detail)
+            // Com mais de uma separação guardada, o A/B já abre pronto: a seguinte na escada.
+            if compareKey == nil, let active = detail.activeStems {
+                let keys = detail.stemKeys
+                compareKey = keys.first { $0 != active && (keys.firstIndex(of: $0) ?? 0) > (keys.firstIndex(of: active) ?? 0) }
+                    ?? keys.first { $0 != active }
+            }
             phase = .ready
             Task { await loadSources() }
+            // A TAB sintetizada é feita em segundo plano ao abrir (ou refeita, se o mapa mudou depois dela).
+            if detail.score != nil, detail.tempoMap != nil, detail.audio != nil,
+               detail.synth == nil || detail.synth?.stale == true {
+                Task { await synthesize(quiet: true) }
+            }
             if let start = startSection, let section = sections.first(where: { $0.id == start }) { activate(section) }
             startSection = nil
             await loadPeaks(detail)
@@ -137,12 +215,19 @@ final class SongModel {
         for stem in Stem.allCases {
             if let file = active[stem.rawValue] { files.append((stem.rawValue, detail.url(file))) }
         }
+        for (id, track) in detail.synth?.ids ?? [] {
+            files.append((id, detail.url(track.file)))
+        }
         guard !files.isEmpty else {
             notice = "Esta música não tem áudio: só a partitura."
             return
         }
         let preset = preset
         try engine.load(files)
+        // A TAB sintetizada chega com todas as faixas abertas, mas o grupo desligado (o botão TAB do mixer liga).
+        for id in engine.synthIDs where engine.mix[id] == nil {
+            engine.mix[id] = StemMix(volume: 0.8)
+        }
         if active.isEmpty {
             engine.useStems = false
         } else if keepMix {
@@ -186,6 +271,49 @@ final class SongModel {
         mvsepUsage = try? await Backend.shared.mvsepUsage()
     }
 
+    // MARK: - Espectro
+
+    /// A chave da curva de uma nota: a pista, o tique, a corda e o segundo (o mapa novo pede de novo).
+    func curveKey(_ note: ScoreNote, track: Int) -> String {
+        "\(track):\(Int(note.tick)):\(note.string):\(Int((grid.seconds(at: note.tick) * 100).rounded()))"
+    }
+
+    /// Pede ao motor as curvas das notas que aparecem e ainda não têm (de fora do desenho: a Fita chama no quadro).
+    func askCurves(_ notes: [ScoreNote], track: Int) {
+        let missing = notes.filter { !curvesAsked.contains(curveKey($0, track: track)) }
+        guard !missing.isEmpty else { return }
+        let list = missing.prefix(120).map { note in
+            (key: curveKey(note, track: track), start: grid.seconds(at: note.tick),
+             end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
+        }
+        list.forEach { curvesAsked.insert($0.key) }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Task {
+                guard let curves = try? await Backend.shared.pitchCurves(self.id, notes: list) else { return }
+                self.pitchCurves.merge(curves) { _, new in new }
+                self.pitchCurvesVersion += 1
+            }
+        }
+    }
+
+    func loadSpectrum() async {
+        guard let detail else { return }
+        spectrumMessage = "Calculando o espectro…"
+        do {
+            let stem = detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil
+            guard let found = try await Backend.shared.spectrum(id, stem: stem) else {
+                spectrumMessage = "Esta música não tem áudio para o espectro."
+                return
+            }
+            spectrumImage = await SpectrumPalette.image(found)
+            spectrum = found
+            spectrumMessage = nil
+        } catch {
+            spectrumMessage = error.localizedDescription
+        }
+    }
+
     // MARK: - Mixer
 
     func apply(_ preset: MixPreset) {
@@ -198,6 +326,14 @@ final class SongModel {
 
     func toggleMute(_ stem: String) {
         engine.mix[stem, default: StemMix()].muted.toggle()
+    }
+
+    /// X: troca o que soa: o áudio pela TAB sintetizada, ou o contrário (os dois ligados ou desligados: só a TAB).
+    func swapAudioAndTab() {
+        guard !engine.synthIDs.isEmpty else { return }
+        let tab = !engine.tabOn || engine.audioOn == engine.tabOn
+        engine.tabOn = tab
+        engine.audioOn = !tab
     }
 
     func toggleSolo(_ stem: String) {
@@ -248,12 +384,14 @@ final class SongModel {
         }
     }
 
-    /// "+ Trecho do loop": o loop vira um trecho de estudo (nos tiques da partitura) e fica ativo.
-    func addSectionFromLoop() {
+    /// "+ Trecho do loop": o loop vira um trecho de estudo do tipo escolhido (nos tiques da partitura) e fica ativo.
+    func addSectionFromLoop(kind: SectionKind = .trecho) {
         guard let loop = engine.loop, !grid.isEmpty else { return }
         let from = grid.tick(at: loop.lowerBound).rounded()
         let to = grid.tick(at: loop.upperBound).rounded()
-        save(sections + [StudySection(name: "Trecho \(sections.count + 1)", from: from, to: to)], select: (from, to))
+        let number = sections.filter { $0.kind == kind }.count + 1
+        save(sections + [StudySection(name: "\(kind.label) \(number)", from: from, to: to, kind: kind)],
+             select: (from, to))
     }
 
     /// Um trecho por seção marcada no Guitar Pro, de uma seção até a seguinte (a última até o fim).
@@ -270,11 +408,28 @@ final class SongModel {
     func rename(_ section: StudySection, to name: String) {
         let clean = name.trimmingCharacters(in: .whitespaces)
         guard !clean.isEmpty else { return }
-        save(sections.map { $0.id == section.id ? StudySection(id: $0.id, name: clean, from: $0.from, to: $0.to, goal: $0.goal) : $0 })
+        change(section) { $0.name = clean }
     }
 
-    func setGoal(_ section: StudySection, _ goal: Int) {
-        save(sections.map { $0.id == section.id ? StudySection(id: $0.id, name: $0.name, from: $0.from, to: $0.to, goal: goal) : $0 })
+    func setGoal(_ section: StudySection, _ goal: Int) { change(section) { $0.goal = goal } }
+
+    func setKind(_ section: StudySection, _ kind: SectionKind) { change(section) { $0.kind = kind } }
+
+    /// As etiquetas de um texto separado por vírgulas ("blues, bend").
+    func setTags(_ section: StudySection, _ text: String) { change(section) { $0.tags = StudySection.tags(from: text) } }
+
+    func toggleFavorite(_ section: StudySection) { change(section) { $0.favorite.toggle() } }
+
+    /// As etiquetas já usadas nos trechos desta música, para sugerir.
+    var knownTags: [String] { Array(Set(sections.flatMap(\.tags))).sorted() }
+
+    private func change(_ section: StudySection, _ edit: (inout StudySection) -> Void) {
+        save(sections.map { item in
+            guard item.id == section.id else { return item }
+            var copy = item
+            edit(&copy)
+            return copy
+        })
     }
 
     func delete(_ section: StudySection) {
@@ -283,9 +438,17 @@ final class SongModel {
     }
 
     private func save(_ list: [StudySection], select range: (Double, Double)? = nil) {
+        // Os compassos de cada trecho, pelas barras da partitura (a biblioteca de trechos mostra; o motor não as tem).
+        let bars = grid.barTicks
+        let counted = list.map { section -> StudySection in
+            var copy = section
+            let inside = bars.filter { $0 >= section.from - 1 && $0 < section.to - 1 }.count
+            if inside > 0 { copy.bars = inside }
+            return copy
+        }
         Task {
             do {
-                sections = try await Backend.shared.putSections(id, list)
+                sections = try await Backend.shared.putSections(id, counted)
                 if let range, let made = sections.first(where: { $0.from == range.0 && $0.to == range.1 }) { activate(made) }
                 onStudyChange?()
             } catch {
@@ -460,6 +623,46 @@ final class SongModel {
         moveBeat(tick: point.tick, to: point.seconds - shift)
     }
 
+    /// Um comando da edição da TAB para a página.
+    func tabEdit(_ op: String, _ value: Any? = nil) {
+        guard editingTab else { return }
+        bridge.edit(op, value)
+    }
+
+    /// Liga ou desliga uma articulação na nota escolhida; `cycle` passa pela lista (a tecla repetida troca de forma e,
+    /// depois da última, desliga).
+    func toggleTechnique(_ key: String) { tabEdit("technique", key) }
+
+    func cycleTechnique(_ keys: [String]) {
+        let on = tabSelection?.techniques ?? []
+        guard let current = keys.firstIndex(where: on.contains) else {
+            if let first = keys.first { toggleTechnique(first) }
+            return
+        }
+        // Desliga a de agora; a seguinte (se houver) liga no lugar.
+        if current + 1 < keys.count { toggleTechnique(keys[current + 1]) } else { toggleTechnique(keys[current]) }
+    }
+
+    private func saveScore(_ data: Data) {
+        Task {
+            do {
+                try await Backend.shared.putScore(id, data)
+                tabMessage = "Guardado"
+                synthChanged = true
+                if let fresh = try? await Backend.shared.song(id) { detail = fresh }
+            } catch {
+                tabMessage = "Não consegui guardar a TAB: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    var canUndoAny: Bool { editingTab ? canUndoTab : canUndo }
+    var canRedoAny: Bool { editingTab ? canRedoTab : canRedo }
+
+    /// ⌘Z: na edição da TAB, a TAB; senão, o mapa de tempo.
+    func undoAny() { if editingTab { tabEdit("undo") } else { undo() } }
+    func redoAny() { if editingTab { tabEdit("redo") } else { redo() } }
+
     func undo() {
         guard canUndo, let current = tempoMap, let previous = undoStack.popLast() else { return }
         replace(with: previous) { [self] in redoStack.append(current) } failed: { [self] in undoStack.append(previous) }
@@ -503,6 +706,7 @@ final class SongModel {
 
     /// O mapa novo na Fita, no relógio do compasso e na partitura (que se redesenha na escala nova).
     private func show(_ map: TempoMapDocument) {
+        if detail?.synth != nil, map != tempoMap { synthChanged = true }
         adjustMessage = nil
         tempoMap = map
         grid = TempoGrid(points: map.points, barTicks: grid.barTicks)
@@ -545,9 +749,11 @@ final class SongModel {
         case demucs
         case multitrack
         case mvsep(Int)
+        case synth
 
         var label: String {
             switch self {
+            case .synth: "TAB sintetizada"
             case .demucs: "Demucs 6s"
             case .multitrack: "Multitrack"
             case .mvsep(63): "MVSEP 6 faixas"
@@ -576,6 +782,9 @@ final class SongModel {
                     return
                 }
                 ticket = try await Backend.shared.separateMVSEP(id, model: model, key: key)
+            case .synth:
+                await synthesize()
+                return
             }
             stemJob = (ticket.id, request, "Na fila…", nil)
             while true {
@@ -607,8 +816,59 @@ final class SongModel {
         }
     }
 
+    /// A TAB sintetizada (todas as pistas, no mapa de tempo de agora), na fila; ao terminar, entra no mixer no mesmo
+    /// ponto, tocando se tocava, com a mixagem de antes.
+    func synthesize(quiet: Bool = false) async {
+        guard stemJob == nil else { return }
+        synthMessage = nil
+        do {
+            let ticket = try await Backend.shared.synthesize(id)
+            stemJob = (ticket.id, .synth, "Na fila…", nil)
+            while true {
+                try await Task.sleep(for: .milliseconds(500))
+                let job = try await Backend.shared.job(ticket.id)
+                stemJob = (ticket.id, .synth, job.last?.message ?? "Sintetizando…", job.last?.progress)
+                guard job.finished else { continue }
+                stemJob = nil
+                guard job.status == "done" else {
+                    let text = job.error ?? "A síntese da TAB não terminou."
+                    if quiet { synthMessage = text } else { notice = text }
+                    return
+                }
+                let fresh = try await Backend.shared.song(id)
+                let wasPlaying = engine.isPlaying
+                detail = fresh
+                synthChanged = false
+                try loadAudio(fresh, keepMix: true)
+                if wasPlaying { engine.play() }
+                return
+            }
+        } catch {
+            stemJob = nil
+            if quiet { synthMessage = error.localizedDescription } else { notice = error.localizedDescription }
+        }
+    }
+
     func cancelStemJob() {
         guard let job = stemJob?.job else { return }
         Task { try? await Backend.shared.cancel(job) }
+    }
+}
+
+/// A janela de alturas do espectro: tocando, anda um quarto do caminho por quadro até a que as notas do trecho pedem
+/// (como a Lente do TabLab); parado, vai direto. Sem notas no trecho, fica onde estava.
+final class PitchWindow {
+    private(set) var range: ClosedRange<Double> = 40...80
+
+    func update(target: ClosedRange<Double>?, easing: Bool) -> ClosedRange<Double> {
+        guard let target else { return range }
+        if !easing || (abs(range.lowerBound - target.lowerBound) < 0.05 && abs(range.upperBound - target.upperBound) < 0.05) {
+            range = target
+        } else {
+            let low = range.lowerBound + (target.lowerBound - range.lowerBound) * 0.25
+            let high = range.upperBound + (target.upperBound - range.upperBound) * 0.25
+            range = low...max(high, low + 1)
+        }
+        return range
     }
 }

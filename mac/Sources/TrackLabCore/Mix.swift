@@ -138,3 +138,20 @@ public struct PlaybackPlan: Equatable, Sendable {
         loop == nil && start + elapsed >= duration
     }
 }
+
+/// A janela da Fita (e da TAB, em `score-core.js`, com a mesma conta) quando há loop: um loop que cabe na tela, com o
+/// cursor dentro dele, para a janela e só a agulha anda. Até 60 % da largura, o loop começa nos 40 % (onde a agulha
+/// estava ao entrar nele: nada salta); maior, fica centrado. Fora disso a janela segue a agulha a 40 %.
+public enum LoopView {
+    public static let fits = 0.95
+
+    /// O segundo do começo da janela parada, ou nil (a janela segue a agulha).
+    public static func windowStart(now: Double, loop: ClosedRange<Double>?, span: Double, playheadAt: Double) -> Double? {
+        guard let loop else { return nil }
+        let length = loop.upperBound - loop.lowerBound
+        guard length > 0, length <= span * fits, now >= loop.lowerBound - 1e-3, now <= loop.upperBound + 1e-3 else {
+            return nil
+        }
+        return length <= span * (1 - playheadAt) ? loop.lowerBound - span * playheadAt : loop.lowerBound - (span - length) / 2
+    }
+}

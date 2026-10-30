@@ -10,7 +10,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/TrackLab "$app/Contents/MacOS/"
 mkdir -p "$app/Contents/Resources/web/vendor/alphatab"
-cp ../web/score.html ../web/score.css ../web/score.js ../web/score-core.js "$app/Contents/Resources/web/"
+cp ../web/score.html ../web/score.css ../web/score.js ../web/score-core.js ../web/score-edit.js "$app/Contents/Resources/web/"
 cp ../web/vendor/alphatab/alphaTab.js ../web/vendor/alphatab/Bravura.woff2 ../web/vendor/alphatab/Bravura-OFL.txt \
   "$app/Contents/Resources/web/vendor/alphatab/"
 build=$(git rev-list --count HEAD 2>/dev/null || echo 1)

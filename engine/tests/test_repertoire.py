@@ -63,3 +63,33 @@ def test_history_is_limited():
     for _ in range(repertoire.HISTORY_LIMIT + 5):
         section = repertoire.record_practice(section, 90, clean=False)
     assert len(section["history"]) == repertoire.HISTORY_LIMIT and section["best"] is None
+
+
+def test_kind_tags_and_favorite_organize_the_library_of_sections():
+    song = make()
+    lick, = song.set_sections([{"name": "Lick do bend", "from": 0, "to": 3840, "kind": "lick", "bars": 1,
+                                "tags": [" blues ", "Bend", "blues", "", "bend  duplo"], "favorite": True}])
+    assert lick["kind"] == "lick" and lick["tags"] == ["blues", "Bend", "bend duplo"] and lick["favorite"] is True
+    song.practice(lick["id"], 70, clean=True)
+    # Mudar o tipo e as etiquetas não perde o treino; sem `bars`, fica a contagem que o app mandou antes.
+    again, = song.set_sections([{"id": lick["id"], "name": "Lick do bend", "from": 0, "to": 3840, "kind": "solo"}])
+    assert again["kind"] == "solo" and again["tags"] == [] and again["favorite"] is False
+    assert again["best"] == 70 and again["bars"] == 1
+    for bad in ({"kind": "jazz"}, {"bars": 0}, {"tags": "blues"}):
+        with pytest.raises(RepertoireError):
+            song.set_sections([{"name": "x", "from": 0, "to": 960, **bad}])
+
+
+def test_the_summary_tells_where_each_section_falls_and_its_tempo():
+    song = make()
+    song.save_tempo_map({"schemaVersion": 1, "source": "reference", "points": [
+        {"tick": 0, "seconds": 1.0, "kind": "detected"}, {"tick": 3840, "seconds": 3.0, "kind": "detected"},
+        {"tick": 7680, "seconds": 4.0, "kind": "detected"}]})
+    song.set_sections([{"name": "A", "from": 0, "to": 3840}, {"name": "B", "from": 3840, "to": 7680}])
+    first, second = song.summary()["sections"]
+    assert (first["start"], first["seconds"], first["bpm"]) == (1.0, 2.0, 120.0)
+    assert (second["start"], second["seconds"], second["bpm"]) == (3.0, 1.0, 240.0)
+    assert first["kind"] == "trecho" and first["tags"] == [] and first["favorite"] is False
+    # Um trecho antigo, sem tipo nem etiquetas no manifesto, aparece como "trecho".
+    song.update(lambda data: [s.pop(k) for s in data["sections"] for k in ("kind", "tags", "favorite")])
+    assert song.summary()["sections"][0]["kind"] == "trecho"

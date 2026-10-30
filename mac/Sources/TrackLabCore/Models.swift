@@ -178,6 +178,54 @@ public struct StemSet: Codable, Hashable, Sendable {
     }
 }
 
+/// A TAB sintetizada: uma faixa por pista do Guitar Pro (pelo índice da pista), feita no mapa de tempo de então;
+/// `stale` quando o mapa mudou depois (o Ajuste).
+public struct SynthSet: Codable, Hashable, Sendable {
+    public let key: String
+    public let soundfont: String?
+    public let tracks: [String: SynthTrack]
+    public let stale: Bool?
+
+    public init(key: String, soundfont: String?, tracks: [String: SynthTrack], stale: Bool? = nil) {
+        self.key = key
+        self.soundfont = soundfont
+        self.tracks = tracks
+        self.stale = stale
+    }
+
+    /// O id de cada faixa no motor de áudio e no mixer ("tab:1"), na ordem das pistas.
+    public var ids: [(id: String, track: SynthTrack)] {
+        tracks.compactMap { key, track in Int(key).map { (index: $0, track: track) } }
+            .sorted { $0.index < $1.index }
+            .map { (SynthTrack.prefix + String($0.index), $0.track) }
+    }
+}
+
+public struct SynthTrack: Codable, Hashable, Sendable {
+    public static let prefix = "tab:"
+
+    public let file: String
+    public let name: String?
+    public let percussion: Bool?
+    public let program: Int?
+
+    public init(file: String, name: String?, percussion: Bool? = nil, program: Int? = nil) {
+        self.file = file
+        self.name = name
+        self.percussion = percussion
+        self.program = program
+    }
+
+    /// O nome curto para o mixer: do Songsterr vem "Músico | Parte - Instrumento"; fica a parte.
+    public var shortName: String {
+        let full = name ?? "Pista"
+        let afterBar = full.split(separator: "|", maxSplits: 1).last.map(String.init) ?? full
+        let part = afterBar.components(separatedBy: " - ").first ?? afterBar
+        let clean = part.trimmingCharacters(in: .whitespaces)
+        return clean.isEmpty ? full : clean
+    }
+}
+
 /// Onde a multitrack caiu sobre o áudio do vídeo.
 public struct StemAlignment: Codable, Hashable, Sendable {
     public let offset: Double
@@ -222,10 +270,13 @@ public struct SongDetail: Codable, Hashable, Sendable {
     public let checkedBars: [Int]
     public let status: StudyStatus
     public let sections: [StudySection]
+    /// A TAB sintetizada (uma faixa por pista do Guitar Pro), se houver.
+    public let synth: SynthSet?
 
     public init(id: String, title: String?, artist: String?, folder: String, score: ScoreEntry?, audio: AudioEntry?,
                 tempoMap: TempoEntry?, stems: [String: StemSet], activeStems: String?, warnings: [String],
-                checkedBars: [Int] = [], status: StudyStatus = .want, sections: [StudySection] = []) {
+                checkedBars: [Int] = [], status: StudyStatus = .want, sections: [StudySection] = [],
+                synth: SynthSet? = nil) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -239,11 +290,12 @@ public struct SongDetail: Codable, Hashable, Sendable {
         self.checkedBars = checkedBars
         self.status = status
         self.sections = sections
+        self.synth = synth
     }
 
     enum CodingKeys: String, CodingKey {
         case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings, checkedBars, status,
-             sections
+             sections, synth
     }
 
     public init(from decoder: Decoder) throws {
@@ -261,6 +313,7 @@ public struct SongDetail: Codable, Hashable, Sendable {
         checkedBars = try c.decodeIfPresent([Int].self, forKey: .checkedBars) ?? []
         status = StudyStatus(text: try c.decodeIfPresent(String.self, forKey: .status))
         sections = try c.decodeIfPresent([StudySection].self, forKey: .sections) ?? []
+        synth = try c.decodeIfPresent(SynthSet.self, forKey: .synth)
     }
 
     /// A separação ativa, se houver.
