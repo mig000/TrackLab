@@ -76,6 +76,8 @@ final class SongModel {
         }
     }
     private(set) var tabSelection: TabSelection?
+    /// O cursor de inserção da edição (uma corda vazia de uma batida), ou nil.
+    private(set) var tabCaret: TabCaret?
     private(set) var canUndoTab = false
     private(set) var canRedoTab = false
     private(set) var tabMessage: String?
@@ -245,6 +247,14 @@ final class SongModel {
             self?.tabSelection = note
             self?.canUndoTab = undo
             self?.canRedoTab = redo
+        }
+        bridge.onCaret = { [weak self] caret in self?.tabCaret = caret }
+        bridge.onHear = { [weak self] body in
+            func number(_ key: String) -> Double? { (body[key] as? NSNumber)?.doubleValue }
+            guard let self, let track = number("track"), let tick = number("tick"), let string = number("string"),
+                  let pitch = number("pitch"), let from = number("from"), let to = number("to") else { return }
+            hear(track: Int(track), tick: tick, string: Int(string), pitch: Int(pitch), from: from, to: to,
+                 synth: body["synth"] as? Bool ?? false)
         }
         bridge.onSave = { [weak self] data in self?.saveScore(data) }
         bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
@@ -1098,6 +1108,41 @@ final class SongModel {
         if dotted == true { three = false }
         if triplet == true { dot = false }
         tabEdit("length", TabSelection.ticks(base: base, dotted: dot, triplet: three))
+    }
+
+    /// Uma nota para ouvir (o clique na TAB ou na Lente toca o som gravado; o botão direito, a nota sintetizada). O som
+    /// gravado é o trecho dela na faixa onde a pista soa (o original sem separação), sozinho, e a agulha volta ao
+    /// começo; tocando, não interrompe. A sintetizada usa o SoundFont da TAB sintetizada, com o bend e o vibrato
+    /// escritos, no tom e na velocidade do estudo.
+    func hear(track: Int, tick: Double, string: Int, pitch: Int, from: Double, to: Double, synth: Bool) {
+        guard !grid.isEmpty, to > from else { return }
+        let start = grid.seconds(at: from)
+        let end = grid.seconds(at: to)
+        guard end > start else { return }
+        if synth {
+            let written = scoreNotes.indices.contains(track)
+                ? scoreNotes[track].first { abs($0.tick - tick) < 1 && $0.string == string } : nil
+            let info = detail?.synth?.tracks[String(track)]
+            let name = (scoreTracks.first { $0.index == track }?.name ?? "").lowercased()
+            let program = info?.program ?? (name.contains("bass") || name.contains("baixo") ? 33 : 29)
+            do {
+                try NoteSynth.shared.play(pitch: pitch, seconds: (end - start) / Double(max(engine.rate, 0.1)),
+                                          program: program, percussion: info?.percussion ?? false,
+                                          transpose: Double(engine.semitones) + Double(engine.cents) / 100,
+                                          shape: written.map { note in { note.shape(fraction: $0, elapsed: $1) } })
+            } catch {
+                tabMessage = error.localizedDescription
+            }
+            return
+        }
+        keepView = viewStart(now: engine.currentTime)
+        engine.audition(from: start, to: end, track: pitchStem(track: track).stem)
+    }
+
+    /// Uma nota da Lente (clicada ou com o botão direito).
+    func hearNote(_ note: ScoreNote, track: Int, synth: Bool) {
+        hear(track: track, tick: note.tick, string: note.string, pitch: note.pitch, from: note.tick,
+             to: note.tick + note.duration, synth: synth)
     }
 
     /// Ouvir (⌥Espaço): o trecho das notas escolhidas vira o loop e toca (no ritmo do estudo); a tela fica onde está.

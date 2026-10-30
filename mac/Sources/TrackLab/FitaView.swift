@@ -147,6 +147,8 @@ struct FitaView: View {
                         if hypot(value.translation.width, value.translation.height) <= 3 {
                             model.selectNote(grabbed.note, track: grabbed.track)
                             seek(at: value.location.x, width: width, start: start)
+                            // A nota clicada soa (o som gravado dela, sozinho).
+                            model.hearNote(grabbed.note, track: grabbed.track, synth: false)
                         }
                     } else {
                         model.dragPitch(grabbed.note, track: grabbed.track, semitones: grabbed.semitones,

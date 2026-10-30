@@ -239,3 +239,22 @@ body.page #sheet {
   border-radius: 4px;
   background: rgba(255, 149, 0, 0.1);
 }
+
+/* O cursor de inserção: a corda vazia da batida onde a casa digitada põe uma nota nova. */
+#caret {
+  position: absolute;
+  width: 14px;
+  height: 16px;
+  border: 2px solid var(--cursor);
+  border-radius: 3px;
+  background: rgba(255, 149, 0, 0.12);
+  pointer-events: none;
+  z-index: 2;
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  50% {
+    border-color: transparent;
+  }
+}

@@ -33,6 +33,11 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     /// A edição da TAB: a nota escolhida (ou nil) e se há o que desfazer e refazer; o Guitar Pro editado para gravar;
     /// as notas novas (para o espectro).
     var onSelection: ((_ note: TabSelection?, _ canUndo: Bool, _ canRedo: Bool) -> Void)?
+    /// O cursor de inserção (uma corda vazia escolhida na edição), ou nil.
+    var onCaret: ((TabCaret?) -> Void)?
+    /// Uma nota para ouvir: o clique (o som gravado) ou o botão direito (sintetizada); pista, tique, corda, altura e o
+    /// trecho em tiques (`from`, `to`).
+    var onHear: (([String: Any]) -> Void)?
     var onSave: ((Data) -> Void)?
     var onNotes: (([[ScoreNote]]) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -279,6 +284,9 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             case "selection":
                 let note = (body["note"] as? [String: Any]).flatMap(TabSelection.init(page:))
                 onSelection?(note, body["canUndo"] as? Bool ?? false, body["canRedo"] as? Bool ?? false)
+                onCaret?(TabCaret(page: body["caret"] as? [String: Any]))
+            case "hear":
+                onHear?(body)
             case "save":
                 if let text = body["gp"] as? String, let data = Data(base64Encoded: text) { onSave?(data) }
             case "notes":

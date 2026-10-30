@@ -361,6 +361,10 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let group = TabSelection(page: full)
     #expect(group?.count == 3 && group?.range == 960...2880 && group?.span == "c. 1 · tempo 2 → c. 1 · tempo 3")
     #expect(TabSelection(page: page)?.count == 1 && TabSelection(page: page)?.range == nil)
+    // O cursor de inserção: onde, a corda e se é pausa.
+    let caret = TabCaret(page: ["place": "c. 2 · tempo 1", "string": NSNumber(value: 3), "rest": true])
+    #expect(caret == TabCaret(place: "c. 2 · tempo 1", string: 3, rest: true))
+    #expect(TabCaret(page: nil) == nil && TabCaret(page: ["place": "c. 1"]) == nil)
 }
 
 /// Uma curva do som a cada 8 ms de `start` a `end` pela função.

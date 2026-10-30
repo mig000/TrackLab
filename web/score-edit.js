@@ -664,6 +664,35 @@
     return [staff.track.index, staff.index, bar.index, voice.index, beat.index, note.string];
   }
 
+  // A batida de um endereço (o de uma nota, ou o do cursor de inserção, que aponta uma corda sem nota).
+  function resolveBeat(score, path) {
+    if (!path) return null;
+    const [t, s, b, v, i] = path;
+    const bar = score.tracks[t] && score.tracks[t].staves[s] && score.tracks[t].staves[s].bars[b];
+    return (bar && bar.voices[v] && bar.voices[v].beats[i]) || null;
+  }
+
+  // O endereço de uma batida com uma corda (do alphaTab): o cursor de inserção.
+  function caretOf(beat, alphaString) {
+    const voice = beat.voice;
+    const bar = voice.bar;
+    return [bar.staff.track.index, bar.staff.index, bar.index, voice.index, beat.index, alphaString];
+  }
+
+  // Uma nota nova numa batida: numa corda vazia de um acorde, ou numa pausa, que vira nota. Devolve a nota, ou null
+  // (corda ocupada, fora do braço, corda que a pista não tem).
+  function insertNote(at, beat, alphaString, fret) {
+    const staff = beat.voice.bar.staff;
+    if (!staff.tuning || alphaString < 1 || alphaString > staff.tuning.length) return null;
+    if (fret < 0 || fret > MAX_FRET || stringBusy(beat, alphaString, null)) return null;
+    const note = new at.model.Note();
+    note.string = alphaString;
+    note.fret = fret;
+    beat.isEmpty = false;
+    beat.addNote(note);
+    return note;
+  }
+
   function resolve(score, path) {
     if (!path) return null;
     const [t, s, b, v, i, string] = path;
@@ -726,6 +755,9 @@
     nudge,
     retime,
     rangeOf,
+    resolveBeat,
+    caretOf,
+    insertNote,
     moveAll,
     rhythmOf,
     setLength,

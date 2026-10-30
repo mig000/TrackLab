@@ -19,6 +19,8 @@ import TrackLabCore
 struct TabEditPanel: View {
     let model: SongModel
     static let width = 252.0
+    /// A casa da nota nova no cursor de inserção (com o mouse: − + e Pôr nota; o teclado digita direto).
+    @Local private var newFret = 0
 
     struct Item: Identifiable {
         let key: String
@@ -122,16 +124,40 @@ struct TabEditPanel: View {
                     Text("Principal: " + [selection.place, selection.pitchName].compactMap { $0 }.joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } else if selection == nil, let caret = model.tabCaret {
+                    // O cursor de inserção: a casa digitada põe a nota ali.
+                    Text("Nota nova · corda \(caret.string)")
+                        .font(.callout.weight(.medium).monospacedDigit())
+                        .lineLimit(2, reservesSpace: true)
+                    Text(caret.place + (caret.rest ? " · na pausa" : " · no acorde") + " — digite a casa (0–9; 10–24 em dois dígitos)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
                     Text(selection?.place ?? "Clique numa nota da TAB")
                         .font(.callout.weight(.medium).monospacedDigit())
                         .lineLimit(2, reservesSpace: true)
                     Text(selection.map { [$0.pitchName, $0.figure].compactMap { $0 }.joined(separator: " · ") }
-                         ?? "⇧ clique ou ⇧← → escolhem várias; ⌘ clique põe ou tira uma")
+                         ?? "Clique numa linha vazia para pôr uma nota; ⇧ clique ou ⇧← → escolhem várias; ⌘ clique põe ou tira uma; o botão direito toca sintetizada")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+            if selection == nil, model.tabCaret != nil {
+                // O cursor de inserção, com o mouse: a casa e Pôr nota.
+                HStack(spacing: 4) {
+                    Text("Casa").font(.caption).foregroundStyle(.secondary)
+                    Button { newFret = max(0, newFret - 1) } label: { Image(systemName: "minus") }
+                        .disabled(newFret <= 0)
+                    Text("\(newFret)").font(.title3.weight(.semibold).monospacedDigit()).frame(minWidth: 28)
+                    Button { newFret = min(Self.maxFret, newFret + 1) } label: { Image(systemName: "plus") }
+                        .disabled(newFret >= Self.maxFret)
+                    Spacer(minLength: 4)
+                    Button("Pôr nota") { model.tabEdit("fret", newFret) }
+                        .help("Põe a nota nova nessa corda, na casa escolhida (ou digite a casa: 0–9, dois dígitos para 10–24)")
+                }
+            }
+            // Com o cursor de inserção, a casa é a da nota nova (acima); a da nota escolhida some.
+            if !(selection == nil && model.tabCaret != nil) {
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
                 GridRow {
                     Text("Casa").font(.caption).foregroundStyle(.secondary)
@@ -160,6 +186,7 @@ struct TabEditPanel: View {
                 }
             }
             .disabled(selection == nil)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text("Corda (a mesma altura)").font(.caption).foregroundStyle(.secondary)
@@ -466,7 +493,7 @@ struct TabEditKeys: NSViewRepresentable {
             case 24, 69: model.stepFigure(1); return true                                  // = (+), + do numérico
             case 47: model.setFigure(dotted: !(model.tabSelection?.dotted ?? false)); return true  // .
             case 53:                                                                      // Esc
-                if model.tabSelection == nil {
+                if model.tabSelection == nil, model.tabCaret == nil {
                     model.editingTab = false
                 } else {
                     model.tabEdit((model.tabSelection?.count ?? 1) > 1 ? "single" : "clear")

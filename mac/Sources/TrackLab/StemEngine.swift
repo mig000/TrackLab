@@ -276,12 +276,49 @@ final class StemEngine {
     }
 
     func pause() {
+        // A nota que tocava sozinha (`audition`) acaba: os players param antes de a mixagem voltar.
+        defer { endAudition() }
         guard isPlaying else { return }
         anchorTime = currentTime
         isPlaying = false
         for track in tracks.values { track.player.stop() }
         stopTimer()
         changed()
+    }
+
+    /// A faixa que soa sozinha enquanto uma nota clicada toca (`audition`); nil no estudo.
+    @ObservationIgnored private var auditioning: String?
+    @ObservationIgnored private var auditionTask: Task<Void, Never>?
+
+    /// Uma nota clicada na edição: toca de `from` a `to` só a faixa `id` (a da pista; o original se ela não está
+    /// carregada) e volta ao começo dela. Tocando, não faz nada (não interrompe o estudo); um play, um seek ou outro
+    /// clique encerram.
+    func audition(from: Double, to: Double, track id: String?) {
+        guard loaded, !isPlaying, to > from else { return }
+        let solo = id.flatMap { tracks[$0] == nil ? nil : $0 } ?? Self.sourceID
+        seek(to: from)
+        auditioning = solo
+        applyMix()
+        play()
+        guard isPlaying else {
+            endAudition()
+            return
+        }
+        let wait = (to - from) / Double(max(rate, 0.1)) + latency + 0.08
+        auditionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, !Task.isCancelled, self.auditioning != nil else { return }
+            self.pause()
+            self.seek(to: from)
+        }
+    }
+
+    private func endAudition() {
+        guard auditioning != nil else { return }
+        auditioning = nil
+        auditionTask?.cancel()
+        auditionTask = nil
+        applyMix()
     }
 
     /// Depois de cada seek, de onde a música saiu e para onde foi (a tela decide se fica ou anda junto).
@@ -341,6 +378,10 @@ final class StemEngine {
     /// volume do mixer. Um solo vale para tudo: com alguma faixa em solo, o original também cala. `audioOn` e `tabOn`
     /// ligam e desligam cada grupo inteiro.
     private func applyMix() {
+        if let auditioning {
+            for (id, track) in tracks { track.player.volume = id == auditioning ? 1 : 0 }
+            return
+        }
         let gains = mixGains(mix)
         let soloing = mix.values.contains { $0.solo }
         for (id, track) in tracks {

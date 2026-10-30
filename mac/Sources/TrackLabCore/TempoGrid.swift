@@ -266,6 +266,29 @@ public struct Spectrum: Sendable {
 
 /// A nota escolhida na edição da TAB, como a página descreve (`describe` em score-edit.js): a pista, a corda (1 é a
 /// mais aguda), a casa, a altura MIDI e as articulações ligadas (as chaves da paleta).
+/// O cursor de inserção da edição: uma corda sem nota numa batida (ou uma pausa), onde a casa digitada põe uma nota.
+public struct TabCaret: Hashable, Sendable {
+    /// Onde a batida está ("c. 2 · tempo 1"), a corda da TAB (1, a mais aguda), se a batida é pausa e a figura dela.
+    public let place: String
+    public let string: Int
+    public let rest: Bool
+    public let figure: String?
+
+    public init(place: String, string: Int, rest: Bool, figure: String? = nil) {
+        self.place = place
+        self.string = string
+        self.rest = rest
+        self.figure = figure
+    }
+
+    public init?(page: [String: Any]?) {
+        guard let page, let place = page["place"] as? String, let string = (page["string"] as? NSNumber)?.intValue else {
+            return nil
+        }
+        self.init(place: place, string: string, rest: page["rest"] as? Bool ?? false, figure: page["figure"] as? String)
+    }
+}
+
 public struct TabSelection: Hashable, Sendable {
     public let track: Int
     public let string: Int

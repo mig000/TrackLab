@@ -269,6 +269,32 @@ test("várias notas: o trecho entre duas, articulação, meio tom e corda em tod
   }
 });
 
+test("nota nova: numa corda vazia da batida (acorde) e numa pausa, que vira nota", () => {
+  let score = load();
+  const note = at(score, 0);
+  const beat = note.beat;
+  const free = [1, 2, 3, 4, 5, 6].find((s) => s !== note.string);
+  assert.equal(edit.insertNote(alphaTab, beat, note.string, 3), null, "a corda da nota está ocupada");
+  assert.equal(edit.insertNote(alphaTab, beat, free, 30), null, "fora do braço");
+  const added = edit.insertNote(alphaTab, beat, free, 7);
+  assert.ok(added && beat.notes.length === 2);
+  const caret = edit.caretOf(beat, free);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const again = edit.resolveBeat(score, caret);
+  assert.equal(again.notes.length, 2, "o acorde ficou no Guitar Pro");
+  assert.ok(again.notes.some((n) => n.string === free && n.fret === 7));
+  // Uma pausa vira nota.
+  assert.equal(edit.toRest(alphaTab, at(score, 960)), true);
+  score = edit.refinish(alphaTab, score);
+  const rest = score.tracks[0].staves[0].bars[0].voices[0].beats.find((b) => b.isRest && Math.abs(b.absolutePlaybackStart - 960) < 1);
+  assert.ok(rest);
+  assert.ok(edit.insertNote(alphaTab, rest, 2, 5));
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  assert.equal(at(score, 960).fret, 5);
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");

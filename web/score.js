@@ -32,6 +32,10 @@
   // Os contornos das outras notas escolhidas (com ⇧ ou ⌘), embaixo do da principal.
   const groupLayer = document.createElement("div");
   groupLayer.id = "group-selection";
+  // O cursor de inserção (uma corda vazia da batida, ou uma pausa): digitar a casa põe a nota ali.
+  const caretBox = document.createElement("div");
+  caretBox.id = "caret";
+  caretBox.hidden = true;
   const SAVE_MS = 1500;
   const UNDO_LIMIT = 50;
   const viewport = document.getElementById("viewport");
@@ -141,6 +145,8 @@
     // `anchor` é de onde um ⇧ estende.
     group: null,
     anchor: null,
+    // O cursor de inserção: uma corda sem nota numa batida (o endereço da batida e a corda do alphaTab), ou null.
+    caret: null,
     undo: [],
     redo: [],
     saveTimer: 0,
@@ -659,15 +665,16 @@
       state.suppressClick = false;
       return;
     }
-    // Na edição o clique também escolhe a nota; em qualquer caso o cabeçote vai até ali.
-    if (state.editing) pick(event);
+    // Em qualquer caso o cabeçote vai até ali; na edição o clique também escolhe a nota (depois do seek: a nota
+    // clicada toca, e um seek depois a calaria).
     if (state.page) {
       // Em páginas: a música vai até a batida clicada.
       const beat = state.points.length ? beatUnder(event) : null;
       if (beat) post({ type: "seek", seconds: Math.max(0, core.tickToSeconds(state.points, beat.absolutePlaybackStart)) });
-      return;
+    } else {
+      seekAtClick(event);
     }
-    seekAtClick(event);
+    if (state.editing) pick(event);
   });
 
   // O tempo sob um ponto da tela (na faixa: pelas âncoras das batidas desenhadas).
@@ -794,10 +801,57 @@
       toggleInGroup(found);
     } else {
       choose(found ? edit.pathOf(found) : null);
+      // Sem nota sob o clique, numa linha da TAB: o cursor de inserção naquela corda da batida.
+      const string = !found && beat ? stringAt(beat, y) : null;
+      if (string) {
+        const target = edit.resolveBeat(state.score, edit.caretOf(beat, string));
+        if (target && !target.notes.some((n) => n.string === string)) state.caret = edit.caretOf(target, string);
+      }
+      // O clique numa nota a faz soar (o som gravado dela; o botão direito, a sintetizada).
+      if (found) hear(found, false);
     }
     drawSelection();
     postSelection();
   }
+
+  // A corda (do alphaTab) da linha da TAB sob `y` na batida, ou null fora das linhas: as cordas ficam igualmente
+  // espaçadas na caixa do compasso da pauta (a de cima é a mais aguda).
+  function stringAt(beat, y) {
+    const lookup = state.api && state.api.renderer.boundsLookup;
+    const bounds = lookup && lookup.findBeat(beat);
+    const staff = beat.voice.bar.staff;
+    const count = staff.tuning ? staff.tuning.length : 0;
+    if (!bounds || !bounds.barBounds || count < 2) return null;
+    const box = bounds.barBounds.visualBounds;
+    const spacing = box.h / (count - 1);
+    const line = Math.round((y - box.y) / spacing);
+    if (line < 0 || line >= count || Math.abs(y - (box.y + line * spacing)) > spacing * 0.6) return null;
+    return count - line;
+  }
+
+  // Manda tocar uma nota: o trecho dela (com as ligadas) no som gravado, ou sintetizada (`synth`) com a altura e as
+  // formas da escrita.
+  function hear(note, synth) {
+    const span = edit.span(note);
+    post({ type: "hear", synth, track: note.beat.voice.bar.staff.track.index, tick: note.beat.absolutePlaybackStart,
+      string: edit.tabString(note), pitch: note.realValue,
+      from: span ? span.start : note.beat.absolutePlaybackStart,
+      to: span ? span.end : note.beat.absolutePlaybackStart + note.beat.playbackDuration });
+  }
+
+  // O botão direito numa nota: ela soa sintetizada (na edição, também a escolhe). O menu da página não abre.
+  sheet.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    const hit = noteAt(event);
+    const note = hit && state.score ? edit.resolve(state.score, edit.pathOf(hit)) : null;
+    if (!note) return;
+    if (state.editing) {
+      choose(edit.pathOf(note));
+      drawSelection();
+      postSelection();
+    }
+    hear(note, true);
+  });
 
   function selectedNote() {
     return state.score ? edit.resolve(state.score, state.selected) : null;
@@ -810,6 +864,7 @@
     state.selected = path;
     state.group = null;
     state.anchor = path;
+    state.caret = null;
   }
 
   // As notas escolhidas, a principal primeiro e as outras em ordem de tempo.
@@ -870,6 +925,7 @@
   // O destaque da nota escolhida, em coordenadas de #sheet (as do desenho; o zoom vem do transform da #sheet).
   function drawSelection() {
     drawGroup();
+    drawCaret();
     const note = state.editing ? selectedNote() : null;
     // A barra de duração da nota escolhida acende.
     for (const bar of durationLayer.children) bar.classList.toggle("chosen", Boolean(note) && bar.beat === note.beat);
@@ -888,6 +944,28 @@
     selectionBox.style.top = surface.top - page.top + box.y - 3 + "px";
     selectionBox.style.width = box.w + 6 + "px";
     selectionBox.style.height = box.h + 6 + "px";
+  }
+
+  // O cursor de inserção: uma caixa na linha da corda, no x das notas da batida.
+  function drawCaret() {
+    if (!caretBox.parentNode) sheet.appendChild(caretBox);
+    const beat = state.editing && state.caret && state.score ? edit.resolveBeat(state.score, state.caret) : null;
+    const lookup = state.api && state.api.renderer.boundsLookup;
+    const bounds = beat && lookup ? lookup.findBeat(beat) : null;
+    const staff = beat && beat.voice.bar.staff;
+    const count = staff && staff.tuning ? staff.tuning.length : 0;
+    if (!bounds || !bounds.barBounds || count < 2) {
+      caretBox.hidden = true;
+      return;
+    }
+    const surface = state.api.canvasElement.element.getBoundingClientRect();
+    const page = sheet.getBoundingClientRect();
+    const stretch = zoomStretch();
+    const box = bounds.barBounds.visualBounds;
+    const y = box.y + (count - state.caret[5]) * (box.h / (count - 1));
+    caretBox.hidden = false;
+    caretBox.style.left = (surface.left - page.left) / stretch + bounds.onNotesX - 7 + "px";
+    caretBox.style.top = surface.top - page.top + y - 8 + "px";
   }
 
   // Os contornos das outras notas escolhidas.
@@ -930,8 +1008,12 @@
     }
     const first = notes.reduce((a, n) => (!a || n.beat.absolutePlaybackStart < a.beat.absolutePlaybackStart ? n : a), null);
     const last = notes.reduce((a, n) => (!a || n.beat.absolutePlaybackStart > a.beat.absolutePlaybackStart ? n : a), null);
+    const caretBeat = state.caret && state.score ? edit.resolveBeat(state.score, state.caret) : null;
     post({
       type: "selection",
+      caret: caretBeat ? { place: placeName(caretBeat.absolutePlaybackStart),
+        string: caretBeat.voice.bar.staff.tuning.length - state.caret[5] + 1, rest: caretBeat.notes.length === 0,
+        figure: edit.figureName(caretBeat.playbackDuration) } : null,
       note: note ? Object.assign(edit.describe(alphaTab, note), {
         place: placeName(note.beat.absolutePlaybackStart),
         count: notes.length,
@@ -1009,6 +1091,7 @@
       state.selected = step.selected;
       state.group = step.group || null;
       state.anchor = step.anchor || step.selected;
+      state.caret = null;
       replace(edit.restore(alphaTab, step.score));
       return;
     }
@@ -1024,6 +1107,10 @@
       choose(found ? edit.pathOf(found) : null);
       drawSelection();
       postSelection();
+      return;
+    }
+    if (state.caret) {
+      caretEdit(op, value);
       return;
     }
     const note = selectedNote();
@@ -1189,6 +1276,61 @@
     if (!span) return;
     const [start, end] = target(span);
     rewriteSelected(note, start, () => edit.retime(alphaTab, note, start, end));
+  }
+
+  // Com o cursor de inserção: a casa digitada põe a nota (e a escolhe); ↑↓ andam de corda e ←→ de batida (numa corda
+  // com nota, a nota fica escolhida).
+  function caretEdit(op, value) {
+    const beat = edit.resolveBeat(state.score, state.caret);
+    if (!beat) {
+      choose(null);
+      drawSelection();
+      postSelection();
+      return;
+    }
+    const string = state.caret[5];
+    const count = beat.voice.bar.staff.tuning.length;
+    const land = (target, alpha) => {
+      const there = target.notes.find((n) => n.string === alpha);
+      if (there) {
+        choose(edit.pathOf(there));
+      } else {
+        state.caret = edit.caretOf(target, alpha);
+      }
+      drawSelection();
+      postSelection();
+    };
+    switch (op) {
+      case "fret": {
+        let path = null;
+        change(() => {
+          const added = edit.insertNote(alphaTab, beat, string, value);
+          if (added) path = edit.pathOf(added);
+          return Boolean(added);
+        });
+        if (path) {
+          choose(path);
+          const added = selectedNote();
+          if (added) hear(added, true);
+        } else {
+          post({ type: "notice", text: "Essa casa não cabe nessa corda." });
+        }
+        drawSelection();
+        postSelection();
+        return;
+      }
+      case "string": {
+        const alpha = string + Math.sign(value);
+        if (alpha >= 1 && alpha <= count) land(beat, alpha);
+        return;
+      }
+      case "nav": {
+        const beats = beat.voice.bar.staff.bars.flatMap((bar) => bar.voices[beat.voice.index] ? bar.voices[beat.voice.index].beats : []);
+        const next = beats[beats.indexOf(beat) + (value > 0 ? 1 : -1)];
+        if (next) land(next, string);
+        return;
+      }
+    }
   }
 
   // Uma mudança no ritmo em várias notas, uma batida de cada vez (refazer um compasso muda os tiques das outras: a

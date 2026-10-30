@@ -245,7 +245,16 @@ onde a onde e o trecho em tiques. Articulação (liga em todas se a principal n�
 as do ritmo uma batida por vez, com o finish entre uma e outra (`eachBeat`). Se uma não dá, nenhuma muda: o `change`
 volta a partitura de antes (também numa só, que um compasso refeito pela metade deixava estragada). Esc com várias deixa
 só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, ⌥Espaço) põe o loop no trecho escolhido e
-toca. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+toca. Nota nova: um clique numa linha da TAB sem nota (uma corda vazia de um acorde, ou uma pausa) põe o cursor de
+inserção ali (`state.caret`, o endereço da batida com a corda; a corda sai da caixa do compasso, `stringAt`, com as
+linhas igualmente espaçadas); digitar a casa (ou − + e "Pôr nota" na coluna) põe a nota (`edit.insertNote`) e a escolhe;
+↑↓ andam de corda e ←→ de batida (numa corda com nota, a nota fica escolhida). Ouvir uma nota: o clique numa nota (na
+TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
+(`StemEngine.audition`: a mixagem fica de lado enquanto toca e a agulha volta ao começo; tocando, não interrompe; o
+seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição) e
+a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
+dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
+velocidade do estudo). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo
