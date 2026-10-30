@@ -27,6 +27,10 @@ struct TrackLabApp: App {
                     .keyboardShortcut("+")
                 Button("Afastar") { NotificationCenter.default.post(name: .zoomOut, object: nil) }
                     .keyboardShortcut("-")
+                Button("Mostrar ou esconder a onda") { NotificationCenter.default.post(name: .toggleWave, object: nil) }
+                    .keyboardShortcut("1", modifiers: [.command, .option])
+                Button("Mostrar ou esconder a lente") { NotificationCenter.default.post(name: .toggleLens, object: nil) }
+                    .keyboardShortcut("2", modifiers: [.command, .option])
                 // ⌥⌘M: ⌘M é o Minimizar do macOS.
                 Button("Mostrar ou esconder o mixer") { NotificationCenter.default.post(name: .toggleMixer, object: nil) }
                     .keyboardShortcut("m", modifiers: [.command, .option])
@@ -48,6 +52,8 @@ extension Notification.Name {
     static let zoomIn = Notification.Name("TrackLab.zoomIn")
     static let zoomOut = Notification.Name("TrackLab.zoomOut")
     static let toggleMixer = Notification.Name("TrackLab.toggleMixer")
+    static let toggleWave = Notification.Name("TrackLab.toggleWave")
+    static let toggleLens = Notification.Name("TrackLab.toggleLens")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
 }
 

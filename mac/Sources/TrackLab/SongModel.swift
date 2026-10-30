@@ -23,6 +23,9 @@ final class SongModel {
     private(set) var grid = TempoGrid(points: [])
     private(set) var sourcePeaks: Peaks?
     private(set) var guitarPeaks: Peaks?
+    /// A maior amplitude do original (ou da guitarra, sem ele): a borda da faixa da Onda.
+    var waveLoudest: Float { loudestCache ?? 1 }
+    @ObservationIgnored private var loudestCache: Float?
     /// As pistas da partitura como a página as leu.
     private(set) var scoreTracks: [ScoreBridge.PageTrack] = []
     var scoreTrack = 0 {
@@ -84,14 +87,15 @@ final class SongModel {
         }
     }
     /// A Fita mostra a onda ou o espectro (com as notas da TAB por cima).
-    enum FitaMode: String, CaseIterable, Identifiable {
-        case wave, spectrum
-        var id: String { rawValue }
+    /// As camadas da tela embaixo da TAB, cada uma à vista ou não (guardado entre as músicas e as aberturas): a Onda e
+    /// a Lente (o espectro com as notas, que mede as curvas).
+    var waveVisible = UserDefaults.standard.object(forKey: "waveVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(waveVisible, forKey: "waveVisible") }
     }
-
-    var fitaMode = FitaMode.wave {
+    var lensVisible = UserDefaults.standard.bool(forKey: "lensVisible") {
         didSet {
-            if fitaMode == .spectrum { Task { await loadSpectrum() } }
+            UserDefaults.standard.set(lensVisible, forKey: "lensVisible")
+            if lensVisible { Task { await loadSpectrum() } }
             measureLater()
         }
     }
@@ -164,6 +168,7 @@ final class SongModel {
             guard let self else { return }
             scoreTracks = tracks
             Task { await self.loadSpectrum() }
+            self.refreshClick(force: true)
             grid = TempoGrid(points: grid.points, barTicks: ticks)
             self.markers = markers
             scoreNotes = notes
@@ -243,6 +248,8 @@ final class SongModel {
         }
         let preset = preset
         try engine.load(files)
+        // A recarga tira todas as faixas, o metrônomo junto.
+        refreshClick(force: true)
         // A TAB sintetizada chega com todas as faixas abertas, mas o grupo desligado (o botão TAB do mixer liga).
         for id in engine.synthIDs where engine.mix[id] == nil {
             engine.mix[id] = StemMix(volume: 0.8)
@@ -276,12 +283,14 @@ final class SongModel {
 
     private func loadPeaks(_ detail: SongDetail) async {
         if detail.audio != nil { sourcePeaks = try? await Backend.shared.peaks(id) }
+        loudestCache = sourcePeaks.map(\.loudest)
         await loadGuitarPeaks(detail)
     }
 
     private func loadGuitarPeaks(_ detail: SongDetail) async {
         guitarPeaks = detail.active?.files[Stem.guitar.rawValue] != nil
             ? try? await Backend.shared.peaks(id, stem: Stem.guitar.rawValue) : nil
+        if sourcePeaks == nil { loudestCache = guitarPeaks.map(\.loudest) }
     }
 
     /// A multitrack que casa com a música e a cota do MVSEP, para o menu de faixas melhores.
@@ -392,7 +401,7 @@ final class SongModel {
     /// pista, mapa): as suspeitas valem para a música toda, não só para a tela.
     private func measureLater() {
         measureTask?.cancel()
-        guard fitaMode == .spectrum else { return }
+        guard lensVisible else { return }
         measureTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard let self, !Task.isCancelled else { return }
@@ -419,7 +428,7 @@ final class SongModel {
     /// O espectro da faixa onde a pista escolhida soa (a da guitarra para a bateria), feito uma vez por faixa: trocar
     /// de pista ou de separação troca a imagem; as duas últimas ficam guardadas.
     func loadSpectrum() async {
-        guard let detail, fitaMode == .spectrum else { return }
+        guard let detail, lensVisible else { return }
         let stem = pitchStem(track: scoreTrack).stem
             ?? (detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil)
         let key = "\(detail.activeStems ?? "")/\(stem ?? "original")"
@@ -450,6 +459,41 @@ final class SongModel {
 
     @ObservationIgnored private var spectrumKey: String?
     @ObservationIgnored private var spectra: [String: (spectrum: Spectrum, image: CGImage)] = [:]
+
+    // MARK: - Metrônomo e afinação
+
+    /// O metrônomo (K): um clique em cada batida do mapa de tempo, refeito quando o mapa muda.
+    var metronome = false {
+        didSet {
+            engine.clickOn = metronome
+            refreshClick()
+        }
+    }
+    @ObservationIgnored private var clickBeats: [Double]?
+
+    /// A faixa de cliques das batidas de agora (em segundo plano), se o metrônomo está ligado e ela mudou.
+    func refreshClick(force: Bool = false) {
+        guard metronome, grid.beats.count >= 2, engine.duration > 0 else { return }
+        let beats = grid.beats
+        guard force || beats != clickBeats else { return }
+        clickBeats = beats
+        let bars = grid.bars
+        let duration = engine.duration
+        let url = FileManager.default.temporaryDirectory.appending(path: "tracklab-click-\(id)-\(beats.count)-\(Int(beats.reduce(0, +))).caf")
+        Task {
+            let written = await Task.detached(priority: .userInitiated) { () -> Bool in
+                let samples = Metronome.samples(beats: beats, bars: bars, duration: duration)
+                return (try? StemEngine.writeClick(samples, to: url)) != nil
+            }.value
+            guard written, clickBeats == beats else { return }
+            try? engine.setClick(url)
+        }
+    }
+
+    /// Lá 440: o ajuste fino desconta a afinação medida da gravação (`tuning`), e a música soa no Lá 440.
+    func tuneTo440() {
+        engine.cents = -Int((tuning * 100).rounded())
+    }
 
     // MARK: - Mixer
 
@@ -678,7 +722,7 @@ final class SongModel {
     /// vizinhas acompanham, como num arrasto.
     func syncBarToSound() {
         guard let bar = grid.bar(at: engine.currentTime), grid.barTicks.indices.contains(bar - 1) else { return }
-        guard fitaMode == .spectrum else {
+        guard lensVisible else {
             adjustMessage = "Abra o espectro: é ele que mede quando as notas soam."
             return
         }
@@ -902,7 +946,7 @@ final class SongModel {
         guard let (note, track) = selectedScoreNote() else { return nil }
         guard pitchStem(track: track).measured else { return nil }
         // Sem o espectro as curvas não são medidas: nada a dizer.
-        guard let sound = soundNotes[curveKey(note, track: track)] else { return fitaMode == .spectrum ? "Medindo o som…" : nil }
+        guard let sound = soundNotes[curveKey(note, track: track)] else { return lensVisible ? "Medindo o som…" : nil }
         let start = grid.seconds(at: note.tick)
         guard let report = sound.report(for: note, start: start, end: grid.seconds(at: note.tick + note.duration)) else {
             return "O som não tem uma altura clara."
@@ -1072,6 +1116,7 @@ final class SongModel {
         bridge.setTempo(map.points)
         notesVersion += 1
         measureLater()
+        refreshClick()
     }
 
     // MARK: - Separação (a escada da Fase 4)

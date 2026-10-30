@@ -472,6 +472,20 @@ public struct Peaks: Codable, Hashable, Sendable {
 
     public var duration: Double { perSecond > 0 ? Double(max.count) / Double(perSecond) : 0 }
 
+    /// A maior amplitude da música toda: a escala da Onda (calculada uma vez, não a cada quadro).
+    public var loudest: Float {
+        var peak: Float = 0
+        for index in max.indices { peak = Swift.max(peak, Swift.max(abs(min[index]), abs(max[index]))) }
+        return peak
+    }
+
+    /// O tamanho que a Onda desenha (0 a 1): a amplitude na escala da música (a mais alta chega na borda da faixa) e
+    /// levantada pelo expoente 0,7, para os trechos baixos e a guitarra separada ocuparem a faixa.
+    public static func display(_ amplitude: Float, loudest: Float) -> Double {
+        guard loudest > 0, amplitude > 0 else { return 0 }
+        return Swift.min(1, pow(Double(amplitude / loudest), 0.7))
+    }
+
     /// A maior amplitude nas janelas de [start, end): o que um pixel da Fita mostra.
     public func amplitude(from start: Double, to end: Double) -> Float {
         guard perSecond > 0, !max.isEmpty else { return 0 }

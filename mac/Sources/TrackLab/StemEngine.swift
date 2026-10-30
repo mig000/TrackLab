@@ -16,6 +16,8 @@ final class StemEngine {
     static let rates: ClosedRange<Float> = 0.5...1.5
     static let rateStep: Float = 0.05
     static let semitones: ClosedRange<Int> = -6...6
+    static let cents: ClosedRange<Int> = -50...50
+    static let clickID = "click"
 
     private(set) var duration: Double = 0
     private(set) var isPlaying = false
@@ -47,15 +49,32 @@ final class StemEngine {
         set { setRate(newValue) }
     }
 
-    /// Tom em semitons; a duração não muda.
-    var semitones: Int = 0 {
-        didSet {
-            semitones = min(max(semitones, Self.semitones.lowerBound), Self.semitones.upperBound)
-            timePitch.pitch = Float(semitones * 100)
+    /// Tom em semitons; a duração não muda. Calculada, como a velocidade: com o `@Observable`, prender o valor no
+    /// `didSet` atribuía de novo, que chamava o `didSet` de novo, até estourar a pilha (subir o tom fechava o app).
+    var semitones: Int {
+        get { semitoneValue }
+        set {
+            semitoneValue = min(max(newValue, Self.semitones.lowerBound), Self.semitones.upperBound)
+            timePitch.pitch = Float(semitoneValue * 100 + centValue)
         }
     }
 
+    /// Ajuste fino em cents, somado ao tom: a música afinada com o instrumento (ou no Lá 440, descontando a afinação
+    /// da gravação).
+    var cents: Int {
+        get { centValue }
+        set {
+            centValue = min(max(newValue, Self.cents.lowerBound), Self.cents.upperBound)
+            timePitch.pitch = Float(semitoneValue * 100 + centValue)
+        }
+    }
+
+    /// O metrônomo: a faixa de cliques (`setClick`) soa por cima de tudo, no tempo do mapa.
+    var clickOn = false { didSet { applyMix() } }
+
     private var rateValue: Float = 1
+    private var semitoneValue = 0
+    private var centValue = 0
     @ObservationIgnored var onEnded: (() -> Void)?
     @ObservationIgnored private var observers: [UUID: () -> Void] = [:]
 
@@ -146,9 +165,46 @@ final class StemEngine {
         applyMix()
     }
 
+    /// Grava as amostras do metrônomo (mono, `Metronome.rate`) num arquivo que `setClick` abre.
+    nonisolated static func writeClick(_ samples: [Float], to url: URL) throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: Metronome.rate, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(max(1, samples.count)))
+        else { return }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { source in
+            buffer.floatChannelData?[0].update(from: source.baseAddress!, count: samples.count)
+        }
+        try? FileManager.default.removeItem(at: url)
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
+
+    /// Troca a faixa do metrônomo (nil tira), sem recarregar as outras; tocando, segue do ponto ouvido.
+    func setClick(_ url: URL?) throws {
+        let file = try url.map { try AVAudioFile(forReading: $0) }
+        let wasPlaying = isPlaying
+        let position = currentTime
+        if wasPlaying { pause() }
+        if let old = tracks.removeValue(forKey: Self.clickID) {
+            engine.disconnectNodeOutput(old.player)
+            engine.detach(old.player)
+        }
+        if let file {
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: bus, format: file.processingFormat)
+            tracks[Self.clickID] = Track(file: file, player: player)
+        }
+        applyMix()
+        if wasPlaying {
+            anchorTime = min(max(0, position), duration)
+            startPlayers()
+        }
+    }
+
     /// As faixas da separação carregadas (sem o original e sem a TAB sintetizada).
     var stemIDs: [String] {
-        tracks.keys.filter { $0 != Self.sourceID && !$0.hasPrefix(SynthTrack.prefix) }.sorted()
+        tracks.keys.filter { $0 != Self.sourceID && $0 != Self.clickID && !$0.hasPrefix(SynthTrack.prefix) }.sorted()
     }
 
     /// As faixas da TAB sintetizada carregadas ("tab:1"…).
@@ -285,6 +341,8 @@ final class StemEngine {
         for (id, track) in tracks {
             if id == Self.sourceID {
                 track.player.volume = audioOn && !useStems && !soloing ? 1 : 0
+            } else if id == Self.clickID {
+                track.player.volume = clickOn ? 0.9 : 0
             } else if id.hasPrefix(SynthTrack.prefix) {
                 track.player.volume = tabOn ? (gains[id] ?? 0) : 0
             } else {

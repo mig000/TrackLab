@@ -176,7 +176,7 @@ struct TabEditKeys: NSViewRepresentable {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.command) || flags.contains(.control) { return false }
             // Tab: a suspeita seguinte; com o espectro à vista vale também fora da edição (ela liga a edição).
-            if event.keyCode == 48, model.editingTab || model.fitaMode == .spectrum {
+            if event.keyCode == 48, model.editingTab || model.lensVisible {
                 model.nextSuspect(flags.contains(.shift) ? -1 : 1)
                 return true
             }

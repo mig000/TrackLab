@@ -457,3 +457,22 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // A curva descontada da afinação leva o ataque junto.
     #expect(PitchCurve(from: 0, hop: 0.008, values: [60], attack: 0.1).shifted(by: -0.2).attack == 0.1)
 }
+
+@Test func metronomoNasBatidasDoMapa() {
+    // Quatro batidas num compasso que começa em 0,5 s: o clique do 1 é mais forte que os outros; fora delas, silêncio.
+    let samples = Metronome.samples(beats: [0.5, 1.0, 1.5, 2.0], bars: [0.5, 2.5], duration: 3)
+    #expect(samples.count == Int(3 * Metronome.rate))
+    func peak(_ t: Double) -> Float {
+        let first = Int(t * Metronome.rate)
+        return samples[first..<(first + 400)].map { abs($0) }.max() ?? 0
+    }
+    #expect(peak(0.5) > peak(1.0) && peak(1.0) > 0.3 && peak(0.2) == 0 && peak(2.6) == 0)
+}
+
+@Test func ondaNaEscalaDaMusica() {
+    let peaks = Peaks(perSecond: 1, min: [-0.2, -0.5, 0], max: [0.1, 0.4, 0])
+    #expect(peaks.loudest == 0.5)
+    // A mais alta chega na borda; um quarto dela aparece com bem mais que um quarto da faixa.
+    #expect(Peaks.display(0.5, loudest: 0.5) == 1 && Peaks.display(0.125, loudest: 0.5) > 0.35)
+    #expect(Peaks.display(0, loudest: 0.5) == 0 && Peaks.display(0.3, loudest: 0) == 0)
+}

@@ -6,6 +6,11 @@ struct SongView: View {
     let model: SongModel
     @Local private var span = 10.0
     @AppStorage("showMixer") private var showMixer = true
+    /// A altura da TAB (0: a da pauta desenhada) e a da Onda quando a Lente está embaixo dela; o divisor de cada uma
+    /// arrasta, o duplo clique volta ao automático.
+    @AppStorage("tabHeight") private var tabHeight = 0.0
+    @AppStorage("waveHeight") private var waveHeight = 150.0
+    @Local private var tabMeasured = 0.0
 
     var body: some View {
         switch model.phase {
@@ -23,6 +28,9 @@ struct SongView: View {
         }
     }
 
+    /// Alguma camada embaixo da TAB (sem nenhuma, a TAB fica com a altura toda).
+    private var lanes: Bool { model.waveVisible || model.lensVisible }
+
     private var study: some View {
         VStack(spacing: 0) {
             header
@@ -38,26 +46,52 @@ struct SongView: View {
             .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
             // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
             .padding(.horizontal, 12)
-            .frame(minHeight: 180, maxHeight: model.scoreHeight.map { max(180, $0 + 16) } ?? .infinity)
+            .frame(minHeight: tabHeight > 0 ? tabHeight : 120,
+                   maxHeight: tabHeight > 0 ? tabHeight
+                       : lanes ? model.scoreHeight.map { max(120, $0 + 16) } ?? .infinity : .infinity)
+            .background(GeometryReader { proxy in
+                Color.clear.onChange(of: proxy.size.height, initial: true) { tabMeasured = proxy.size.height }
+            })
             .onChange(of: span, initial: true) { model.bridge.setSpan(span) }
+            if lanes {
+                ResizeHandle(help: "Arraste para mudar a altura da TAB; duplo clique volta à altura da pauta") { delta, start in
+                    tabHeight = min(max(80, (start ?? tabMeasured) + delta), 900)
+                } begin: { tabMeasured } reset: { tabHeight = 0 }
+            }
             if model.editingTab {
                 Divider()
                 TabEditBar(model: model)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
             }
-            Divider()
+            if !lanes { Divider() }
             if model.adjusting {
                 AdjustBar(model: model)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                 Divider()
             }
-            FitaView(model: model, span: $span)
-                .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
-                .frame(minHeight: 120, maxHeight: .infinity)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            // A Onda e a Lente: com as duas, a Onda tem a altura do divisor e a Lente o resto.
+            if model.waveVisible {
+                FitaView(model: model, span: $span)
+                    .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
+                    .frame(minHeight: model.lensVisible ? waveHeight : 80,
+                           maxHeight: model.lensVisible ? waveHeight : .infinity)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
+            if model.waveVisible, model.lensVisible {
+                ResizeHandle(help: "Arraste para dividir a altura entre a Onda e a Lente") { delta, start in
+                    waveHeight = min(max(60, (start ?? waveHeight) + delta), 600)
+                } begin: { waveHeight } reset: { waveHeight = 150 }
+            }
+            if model.lensVisible {
+                FitaView(model: model, span: $span, lens: true, strip: !model.waveVisible)
+                    .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
+                    .frame(minHeight: 120, maxHeight: .infinity)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+            }
             Divider()
             TransportBar(model: model, span: $span)
                 .padding(.horizontal, 12)
@@ -70,6 +104,8 @@ struct SongView: View {
             }
         }
         .background(TabEditKeys(model: model))
+        .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
         // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
         .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
         // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.
@@ -362,6 +398,13 @@ struct TransportBar: View {
             .fixedSize()
             .keyboardShortcut("l", modifiers: [])
             .help("L: repete o compasso que está tocando; arraste na Fita para marcar outro trecho")
+            Toggle(isOn: Binding(get: { model.metronome }, set: { model.metronome = $0 })) {
+                Image(systemName: "metronome")
+            }
+            .toggleStyle(.button)
+            .keyboardShortcut("k", modifiers: [])
+            .help("K: metrônomo nas batidas do mapa de tempo (o 1 de cada compasso mais forte); segue o loop e a velocidade")
+            .accessibilityLabel("Metrônomo")
             if let loop = engine.loop {
                 Text("\(clock(loop.lowerBound)) – \(clock(loop.upperBound))")
                     .font(.caption.monospacedDigit())
@@ -393,19 +436,23 @@ struct TransportBar: View {
                 Label("\(Int((engine.rate * 100).rounded())) %", systemImage: "speedometer").monospacedDigit().fixedSize()
                     .help("Velocidade")
             }
-            Stepper(value: Binding(get: { engine.semitones }, set: { engine.semitones = $0 }), in: StemEngine.semitones) {
-                Text("Tom \(engine.semitones > 0 ? "+" : "")\(engine.semitones)").monospacedDigit().fixedSize()
+            TuningButton(model: model)
+            // As camadas embaixo da TAB: a Onda e a Lente, juntas ou uma só (⌥⌘1, ⌥⌘2).
+            HStack(spacing: 2) {
+                Toggle(isOn: Binding(get: { model.waveVisible }, set: { model.waveVisible = $0 })) {
+                    Image(systemName: "waveform")
+                }
+                .help("Onda: o original e a guitarra separada (⌥⌘1)")
+                .accessibilityLabel("Onda")
+                Toggle(isOn: Binding(get: { model.lensVisible }, set: { model.lensVisible = $0 })) {
+                    Image(systemName: "chart.bar.xaxis")
+                }
+                .help("Lente: o espectro da faixa da pista, com as notas da TAB por cima (⌥⌘2)")
+                .accessibilityLabel("Lente")
             }
-            Picker("Fita", selection: Binding(get: { model.fitaMode }, set: { model.fitaMode = $0 })) {
-                Image(systemName: "waveform").help("Onda: o original e a guitarra separada").tag(SongModel.FitaMode.wave)
-                Image(systemName: "chart.bar.xaxis").help("Espectro da guitarra, com as notas da TAB por cima")
-                    .tag(SongModel.FitaMode.spectrum)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .toggleStyle(.button)
             .fixedSize()
-            .help("A Fita: onda ou espectro com as notas da TAB por cima (âmbar a pista, azul a segunda)")
-            if model.fitaMode == .spectrum {
+            if model.lensVisible {
                 Toggle(isOn: Binding(get: { model.pitchZoom }, set: { model.pitchZoom = $0 })) {
                     Image(systemName: "arrow.up.and.down.square")
                 }
@@ -719,5 +766,91 @@ private struct StemJobView: View {
                 Button("Cancelar") { model.cancelStemJob() }.controlSize(.small)
             }
         }
+    }
+}
+
+/// O tom da música: os semitons e, no popover, o ajuste fino em cents (−50 a +50) e o Lá 440, que desconta a afinação
+/// medida da gravação (com o espectro). O rótulo mostra os dois: "Tom +1 −17 c".
+private struct TuningButton: View {
+    let model: SongModel
+    @Local private var open = false
+
+    var body: some View {
+        let engine = model.engine
+        Button { open.toggle() } label: {
+            Text(label(engine.semitones, engine.cents)).monospacedDigit().fixedSize()
+        }
+        .help("Tom e ajuste fino (cents)")
+        .popover(isPresented: $open, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Stepper(value: Binding(get: { engine.semitones }, set: { engine.semitones = $0 }), in: StemEngine.semitones) {
+                    Text("Tom: \(signed(engine.semitones)) semiton\(abs(engine.semitones) == 1 ? "" : "s")").monospacedDigit()
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ajuste fino: \(signed(engine.cents)) cents").monospacedDigit()
+                    Slider(value: Binding(get: { Double(engine.cents) }, set: { engine.cents = Int($0.rounded()) }),
+                           in: Double(StemEngine.cents.lowerBound)...Double(StemEngine.cents.upperBound), step: 1)
+                        .frame(width: 220)
+                }
+                HStack {
+                    let cents = Int((model.tuning * 100).rounded())
+                    Button("Lá 440") { model.tuneTo440() }
+                        .disabled(cents == 0)
+                        .help(cents == 0 ? "A afinação da gravação aparece com o espectro aberto (as notas medidas)"
+                              : "A gravação está \(signed(cents)) cents do Lá 440: o ajuste fino desconta")
+                    Button("Zerar") {
+                        engine.semitones = 0
+                        engine.cents = 0
+                    }
+                }
+            }
+            .padding(14)
+        }
+    }
+
+    private func signed(_ value: Int) -> String { value > 0 ? "+\(value)" : value < 0 ? "−\(abs(value))" : "0" }
+
+    private func label(_ semitones: Int, _ cents: Int) -> String {
+        "Tom \(signed(semitones))" + (cents != 0 ? " \(signed(cents)) c" : "")
+    }
+}
+
+/// O divisor entre duas camadas: uma linha que se arrasta para cima ou para baixo (o cursor de redimensionar em cima
+/// dela) e volta ao automático com duplo clique. `change` recebe o deslocamento desde o começo do arrasto e o valor que
+/// `begin` deu nesse começo.
+private struct ResizeHandle: View {
+    let help: String
+    let change: (_ delta: Double, _ start: Double?) -> Void
+    let begin: () -> Double
+    let reset: () -> Void
+    @Local private var start: Double?
+
+    init(help: String, change: @escaping (_ delta: Double, _ start: Double?) -> Void,
+         begin: @escaping () -> Double, reset: @escaping () -> Void) {
+        self.help = help
+        self.change = change
+        self.begin = begin
+        self.reset = reset
+    }
+
+    var body: some View {
+        ZStack {
+            Color.clear
+            Divider()
+            Capsule().fill(.secondary.opacity(0.45)).frame(width: 36, height: 3)
+        }
+        .frame(height: 9)
+        .contentShape(Rectangle())
+        .onHover { inside in
+            if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+        }
+        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .onChanged { value in
+                if start == nil { start = begin() }
+                change(value.translation.height, start)
+            }
+            .onEnded { _ in start = nil })
+        .onTapGesture(count: 2) { reset() }
+        .help(help)
     }
 }

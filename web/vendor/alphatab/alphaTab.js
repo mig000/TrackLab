@@ -57899,6 +57899,8 @@
 			}
 		}
 		_layoutAndRenderAnnotation(y) {
+			// TrackLab: sem a linha "rendered by alphaTab" embaixo da pauta (ela ocupava altura na tela da partitura).
+			return y;
 			const msg = "rendered by alphaTab";
 			const resources = this.renderer.settings.display.resources;
 			const size = 12;

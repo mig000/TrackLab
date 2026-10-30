@@ -92,8 +92,8 @@ segunda embaixo nos mesmos compassos; perfil Default com TAB nas pistas de corda
 perfil "só TAB" quebrava na bateria, que não tem TAB) e não têm áudio: o app empurra o relógio e o mapa de tempo. A TAB tem a escala da Fita (`span` segundos na largura): cada
 compasso ganha `displayWidth` = duração × px/s (descontada a clave e a fórmula, medidas num primeiro desenho de cada
 pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. O
-alphaTab de `vendor/` tem dois ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
-ocupa largura). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
+alphaTab de `vendor/` tem três ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
+ocupa largura; sem a linha "rendered by alphaTab"). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
 sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. A página dá a volta
 no loop sozinha, como o `PlaybackPlan` (antes passava do fim do loop até o próximo aviso do relógio, que vem a cada
 segundo), e um loop que cabe na tela (`windowStart`, a mesma conta do `LoopView` da Fita) para a pauta e solta o cursor:
@@ -124,12 +124,21 @@ da última mudança, a página manda o Guitar Pro 7 (`Gp7Exporter`) e as notas n
 SwiftPM sem Xcode (`./build.sh` → build/TrackLab.app, `./test.sh`), alvo macOS 15, Swift 6 em modo 5. Estado das
 views por `@Local` (= SwiftUI.State). `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
 lê a porta do stdout (`TRACKLAB_URL` aponta para outro motor). `StemEngine`: o original e as seis faixas num
-AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6); o loop é agendado no
+AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6 e ajuste fino de ±50 cents, propriedades calculadas: com o `@Observable`, prender o
+valor no `didSet` chamava o `didSet` de novo até estourar a pilha); o metrônomo (K) é uma faixa de cliques
+(`Metronome.samples`, nas batidas do mapa, o 1 mais forte) gerada no app e trocada com `setClick` quando o mapa muda;
+no transporte, "Tom" abre o popover com os semitons, os cents e o Lá 440 (desconta a afinação medida da gravação); o loop é agendado no
 player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), sem seek a cada volta. `SongModel`
 abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
 original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas; o relógio é lido
-direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A partitura ganha só a altura
-da pauta desenhada (`rendered.height`) e o resto vai para a Fita; o loop na TAB vai de barra a barra. Ajuste (⌘J,
+direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A tela da música é em camadas: a TAB, a
+Onda e a Lente (a Fita em dois modos, `FitaView(lens:strip:)`), cada camada à vista ou não pelos botões do transporte
+(⌥⌘1, ⌥⌘2; `waveVisible` e `lensVisible` guardados), com divisores de arrastar (`ResizeHandle`: a altura da TAB e a da
+Onda sobre a Lente, guardadas; duplo clique volta ao automático). Sem altura escolhida, a TAB ganha a da pauta desenhada
+(`rendered.height`) e o resto vai para as camadas; com a Onda à vista, a Lente perde a faixa estreita da onda. A Onda desenha na escala da
+música (`Peaks.loudest` do original: a parte mais alta chega na borda) com o expoente 0,7 (`Peaks.display`), para
+os trechos baixos e a guitarra separada ocuparem a faixa. A
+Lente medir as curvas depende de ela estar à vista; o loop na TAB vai de barra a barra. Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
 (um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta), ⇧ + arrastar na TAB

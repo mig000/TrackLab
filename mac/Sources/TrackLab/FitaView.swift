@@ -10,6 +10,10 @@ struct FitaView: View {
     let model: SongModel
     /// Segundos visíveis na largura.
     @Binding var span: Double
+    /// A camada da Lente (o espectro com as notas) ou a da Onda; com `strip`, a Lente leva a faixa estreita da onda em
+    /// cima (quando a camada da Onda está escondida).
+    var lens = false
+    var strip = true
     @Local private var drag: (from: Double, to: Double)?
     /// Onde o arrasto começou, em tempo da música: a Fita anda enquanto se arrasta tocando.
     @Local private var origin: Double?
@@ -48,14 +52,14 @@ struct FitaView: View {
             ?? now - span * Self.playheadAt
         // No espectro, a imagem vai numa camada da GPU por baixo (só a transformação muda a cada quadro) e o Canvas,
         // transparente, desenha por cima a grade, as notas e o teclado; `drawingGroup` rasteriza o Canvas no Metal.
-        let pitches = model.fitaMode == .spectrum ? pitchWindow(gridStart: start) : nil
+        let pitches = lens ? pitchWindow(gridStart: start) : nil
         return ZStack(alignment: .topLeading) {
             if let pitches {
                 // As notas estão na afinação da gravação descontada: o espectro desce o mesmo tanto.
                 SpectrumLayerView(image: model.spectrumImage, start: start - model.soundShift, span: span,
                                   pitches: (pitches.lowerBound + model.tuning)...(pitches.upperBound + model.tuning),
                                   spectrum: model.spectrum)
-                    .padding(.top, Self.waveStrip)
+                    .padding(.top, stripHeight)
             }
             Canvas { context, size in
                 draw(in: &context, size: size, start: start, now: now, pitches: pitches)
@@ -92,7 +96,7 @@ struct FitaView: View {
                 if let grabbed {
                     // Para cima ou para baixo, de semitom em semitom (a faixa acompanha).
                     let window = model.pitchWindow.range
-                    let semitone = (size.height - Self.waveStrip) / (window.upperBound - window.lowerBound)
+                    let semitone = (size.height - stripHeight) / (window.upperBound - window.lowerBound)
                     self.grabbed?.semitones = Int((-value.translation.height / max(1, semitone)).rounded())
                     return
                 }
@@ -146,8 +150,9 @@ struct FitaView: View {
                       pitches: ClosedRange<Double>?) {
         let width = size.width
         let height = size.height
-        let middle = height * 0.56
-        let half = height * 0.40
+        // Os números dos compassos ficam nos 14 pontos de cima; a onda ocupa o resto, de borda a borda.
+        let middle = (height + 14) / 2
+        let half = (height - 14) / 2 - 2
         func x(_ t: Double) -> Double { (t - start) / span * width }
         let end = start + span
         // No ⇧ + arrastar só a onda (o som) desliza com o mouse; a grade, as âncoras e a agulha ficam paradas.
@@ -163,7 +168,7 @@ struct FitaView: View {
 
         // Batidas e compassos; no Ajuste as batidas aparecem mais, porque são para pegar. No espectro, só na faixa
         // da onda: embaixo ele desenha os seus.
-        let gridBottom = model.fitaMode == .spectrum ? Self.waveStrip : height
+        let gridBottom = lens ? stripHeight : height
         var beatLines = Path()
         for beat in model.grid.beats where beat >= start && beat <= end {
             beatLines.addRect(CGRect(x: x(beat), y: 14, width: 1, height: max(0, gridBottom - 14)))
@@ -181,16 +186,16 @@ struct FitaView: View {
         context.fill(barLines, with: .color(.secondary.opacity(0.55)))
 
         // O espectro (com as notas da TAB por cima) no lugar das ondas.
-        if model.fitaMode == .spectrum {
+        if lens {
             drawSpectrum(in: &context, size: size, start: soundStart, gridStart: start, pitches: pitches)
         }
         // As ondas: o original atrás, a guitarra na frente.
         let step = 2.0
-        if model.fitaMode == .wave, let peaks = model.sourcePeaks {
+        if !lens, let peaks = model.sourcePeaks {
             context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                          with: .color(.secondary.opacity(0.35)))
         }
-        if model.fitaMode == .wave, let peaks = model.guitarPeaks {
+        if !lens, let peaks = model.guitarPeaks {
             context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                          with: .color(.orange.opacity(0.85)))
         }
@@ -246,7 +251,7 @@ struct FitaView: View {
     private func drawSpectrum(in context: inout GraphicsContext, size: CGSize, start: Double, gridStart: Double,
                               pitches: ClosedRange<Double>?) {
         let width = size.width
-        let strip = Self.waveStrip
+        let strip = stripHeight
         let height = size.height - strip
         _ = model.pitchCurvesVersion   // uma curva nova redesenha a Fita
 
@@ -484,6 +489,8 @@ struct FitaView: View {
 
     /// A faixa da onda em cima do espectro.
     static let waveStrip = 30.0
+    /// A faixa da onda em cima da Lente; sem ela (a Onda à vista noutra camada), zero.
+    private var stripHeight: Double { lens && strip ? Self.waveStrip : 0 }
 
     /// A largura da faixa de uma nota (a da Lente: 72 % do semitom, de 5 a 14 px).
     static func bandWidth(semitone: Double) -> Double { max(5, min(14, semitone * 0.72)) }
@@ -497,9 +504,9 @@ struct FitaView: View {
 
     /// A nota sob o ponteiro no espectro (a pista principal antes da segunda): a faixa dela passa a até 3 px.
     private func noteAt(_ point: CGPoint, size: CGSize, start: Double) -> (note: ScoreNote, track: Int)? {
-        guard model.fitaMode == .spectrum, model.spectrum != nil, point.y > Self.waveStrip,
+        guard lens, model.spectrum != nil, point.y > stripHeight,
               point.x > Self.keyboardWidth else { return nil }
-        let height = size.height - Self.waveStrip
+        let height = size.height - stripHeight
         let window = model.pitchWindow.range
         let semitone = height / (window.upperBound - window.lowerBound)
         let reach = Self.bandWidth(semitone: semitone) / 2 + 3
@@ -513,7 +520,7 @@ struct FitaView: View {
                 guard t >= s0 - slack, t <= s1 + slack else { continue }
                 let sound = model.soundNotes[model.curveKey(note, track: track)]
                 let pitch = Double(note.pitch) + Self.offset(note, sound: sound, at: min(max(t, s0), s1), start: s0, end: s1)
-                let y = Self.waveStrip + height - (pitch - window.lowerBound) * semitone
+                let y = stripHeight + height - (pitch - window.lowerBound) * semitone
                 if abs(point.y - y) <= reach { return (note, track) }
             }
         }
@@ -582,8 +589,8 @@ struct FitaView: View {
         while true {
             let a = k * dt
             let x = (a - start) / span * width
-            let amplitude = a < 0 ? 0 : Double(peaks.amplitude(from: a, to: a + dt))
-            top.append(CGPoint(x: x, y: middle - min(1, amplitude) * half))
+            let amplitude = a < 0 ? 0 : Peaks.display(peaks.amplitude(from: a, to: a + dt), loudest: model.waveLoudest)
+            top.append(CGPoint(x: x, y: middle - amplitude * half))
             if x > width { break }
             k += 1
         }
