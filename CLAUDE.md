@@ -64,8 +64,9 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont e versão; o `GET songs/{id}`
   marca `synth.stale` quando o mapa mudou depois (o app oferece atualizar).
 - Espectro (`media/spectrum.py`, `GET songs/{id}/spectrum?stem=guitar`): a receita da Lente do TabLab (mono 22 050 Hz,
-  Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, −90 a 0 dB num
-  byte) em numpy, guardada em `peaks/spectrum-*.u8` (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos.
+  Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
+  interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
+  `peaks/spectrum-<faixa>-v<VERSION>.u8` (a v1 pegava a raia de baixo e a nota subia até um semitom na imagem) (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos.
 - Altura do som (`media/pitch.py`, `POST songs/{id}/pitch` com as notas da tela): a curva a cada 8 ms em cada nota,
   na guitarra da separação ativa, pela receita da Lente do TabLab (`trackPitch`: correlação normalizada em volta da
   altura escrita, de −2 a +4 semitons; `trackHarmonics` quando outra corda soa junto; mediana de 5). Conferido contra o
@@ -158,7 +159,8 @@ reduz um Bend aos dois da ponta: o encaixe manda `(sai, 0) → (chega, q)` ou, s
 Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a
-transformação) e o Canvas por cima, transparente e com `drawingGroup`, junta faixas, pontos, grade e teclado em poucos
+transformação, com o y para cima como o AppKit desenha: um `isGeometryFlipped` na camada não valia e o espectro descia
+ou subia vários semitons conforme a janela de alturas) e o Canvas por cima, transparente e com `drawingGroup`, junta faixas, pontos, grade e teclado em poucos
 caminhos. `TempoGrid` guarda tiques, batidas e compassos (o `seconds(at:)` por nota montava a lista do mapa a cada
 pergunta). O relógio do transporte é uma NSView (`ClockLabel`): um Text que muda a cada segundo fazia a janela refazer as
 restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); o botão

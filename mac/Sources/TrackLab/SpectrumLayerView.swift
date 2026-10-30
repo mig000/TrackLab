@@ -31,9 +31,11 @@ struct SpectrumLayerView: NSViewRepresentable {
 
         override init(frame: NSRect) {
             super.init(frame: frame)
-            // Uma view que hospeda a camada (a camada antes de `wantsLayer`): o AppKit não mexe nas subcamadas.
+            // Uma view que hospeda a camada (a camada antes de `wantsLayer`): o AppKit não mexe nas subcamadas. A
+            // geometria fica a do AppKit, com o y para cima: um `isGeometryFlipped` aqui não valia (a NSView não é
+            // invertida) e a imagem descia ou subia vários semitons conforme a janela de alturas.
             let root = CALayer()
-            root.isGeometryFlipped = true
+            root.isGeometryFlipped = false
             root.masksToBounds = true
             layer = root
             wantsLayer = true
@@ -88,14 +90,16 @@ struct SpectrumLayerView: NSViewRepresentable {
                 return
             }
             placed = (start, span, pitches, bounds.size)
-            // Conteúdo: x em quadros, y em pixels da imagem (o topo é a altura mais aguda). Tela: a janela de tempo na
-            // largura e a de alturas na altura.
+            // Conteúdo: x em quadros; y em pixels da imagem contados de baixo (a camada desenha a imagem em pé, com o y
+            // para cima), e a altura mais grave da janela vai para a base da tela. Tela: a janela de tempo na largura e a
+            // de alturas na altura.
             let rowScale = Double(image.height) / Double(spectrum.rows)
-            let yTop = (Double(spectrum.rows - 1) - spectrum.row(pitch: pitches.upperBound)) * rowScale
+            // O centro do pixel da linha r fica em r · rowScale + ½ (`SpectrumPalette`: a linha de cima é a mais aguda).
+            let yBottom = spectrum.row(pitch: pitches.lowerBound) * rowScale + 0.5
             let yRange = (spectrum.row(pitch: pitches.upperBound) - spectrum.row(pitch: pitches.lowerBound)) * rowScale
             let sx = spectrum.hop / span * bounds.width
             let sy = bounds.height / max(1, yRange)
-            var transform = CATransform3DMakeTranslation(-start / span * bounds.width, -yTop * sy, 0)
+            var transform = CATransform3DMakeTranslation(-start / span * bounds.width, -yBottom * sy, 0)
             transform = CATransform3DScale(transform, sx, sy, 1)
             container.transform = transform
         }

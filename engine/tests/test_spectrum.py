@@ -23,3 +23,18 @@ def test_a_note_lights_its_own_row_at_its_own_time(tmp_path):
     assert data[middle, row] > 200 and data[int(0.5 / hop), row] < 30 and data[int(2.5 / hop), row] < 30
     # Uma oitava acima não acende como a fundamental.
     assert data[middle, row + 12 * spectrum.PER_SEMITONE] < data[middle, row] - 60
+
+
+def test_a_low_note_stays_in_its_own_semitone(tmp_path):
+    """Como na Lente: a linha vale o centro dela ou as raias de dentro, e o Ré 3 não acende o Ré♯ 3 (antes, cada linha
+    pegava a raia de baixo e a nota subia até um semitom na imagem)."""
+    rate = 22_050
+    t = np.arange(int(2 * rate)) / rate
+    wave = 0.5 * np.sin(2 * np.pi * 146.832 * t)                   # Ré 3 (MIDI 50)
+    path = tmp_path / "d.wav"
+    soundfile.write(str(path), wave, rate)
+    data = spectrum.compute(path)["data"]
+    column = data[int(1.0 / spectrum.HOP * rate)].astype(int)
+    row = (50 - spectrum.LOW) * spectrum.PER_SEMITONE
+    assert abs(int(np.argmax(column)) - row) <= 1
+    assert column[row + 3] < column[row] - 25 and column[row - 3] < column[row] - 25

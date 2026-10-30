@@ -246,6 +246,7 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             if relative is None:
                 raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
             name = f"{manifest['activeStems']}-{stem}"
+        base, name = name, f"{name}-v{spectrum.VERSION}"
         data_file, meta_file = found.file(f"peaks/spectrum-{name}.u8"), found.file(f"peaks/spectrum-{name}.json")
         if data_file.is_file() and meta_file.is_file():
             meta, data = read_json(meta_file), data_file.read_bytes()
@@ -258,6 +259,10 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             temp.write_bytes(data)
             temp.replace(data_file)
             atomic_json(meta_file, meta)
+            # As receitas antigas da mesma faixa não servem mais.
+            for stale in [*found.file("peaks").glob(f"spectrum-{base}.*"), *found.file("peaks").glob(f"spectrum-{base}-v*")]:
+                if stale not in (data_file, meta_file):
+                    stale.unlink(missing_ok=True)
         headers = {"X-Frames": str(meta["frames"]), "X-Rows": str(meta["rows"]), "X-Hop": repr(meta["hop"]),
                    "X-Low": str(meta["low"]), "X-Per-Semitone": str(meta["perSemitone"])}
         return Response(content=data, media_type="application/octet-stream", headers=headers)
