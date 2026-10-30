@@ -47,8 +47,15 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   sem consenso é outra gravação e nada entra. Medido em 28/10: Highway Star +0,39 %, Purple Haze −0,83 %, American
   Woman 72,8 s de introdução a mais no vídeo; o cover do GH3 da Sunshine é recusado. Entre transferências sobra uma
   oscilação de poucos ms (inaudível: as faixas tocam no lugar do vídeo). `media/multitrack.py` monta as faixas
-  (`rhythm` do Clone Hero é a base se o song.ini tem `diff_rhythm`, senão o baixo; crowd fica fora; .mogg ainda não
-  entra); `POST songs/{id}/stems/multitrack`. `media/mvsep.py` (do `mvsep_worker.py` do BackingLab 2): 63 (BS Roformer SW,
+  (`rhythm` do Clone Hero é a base se o song.ini tem `diff_rhythm`, senão o baixo; crowd fica fora); `POST songs/{id}/stems/multitrack`.
+  Os .mogg do Rock Band (`media/mogg.py`; 631 na biblioteca, nenhum criptografado: 368 com o cabeçalho aberto, versão
+  10, e 263 Ogg comum) vêm sem o `songs.dta`: cada canal é reconhecido pelas faixas do Demucs da música (bandas de
+  energia a cada 0,1 s, correlação), depois de a soma ser alinhada ao vídeo; com 9 canais ou mais (58 de 60 numa
+  amostra) a ordem do Rock Band desempata (bateria, baixo, guitarra, voz, o backing em "other"; programação dinâmica),
+  porque o Demucs chamava o órgão do Highway Star de guitarra; até 8 canais o ffmpeg reordena o Vorbis e vale só a
+  semelhança. Pares estéreo pela correlação. Precisa do Demucs antes: importado de uma multitrack .mogg, a música passa
+  pelo Demucs e o .mogg entra depois como a outra separação. Highway Star (13 canais): certo nos 13, 33 s pela API, no mesmo lugar do vídeo que a Clone Hero (−2,7289 s contra
+  −2,7286 s); no seletor, "Multitrack .mogg" (`StemSet.label` pelo `library`). `media/mvsep.py` (do `mvsep_worker.py` do BackingLab 2): 63 (BS Roformer SW,
   as seis faixas numa conversão, sem Demucs), 31 (MVSep Guitar, o mesmo SW só na guitarra) e 101 (solo e base), WAV 16
   bits, sem reenvio automático; no 31 e no 101 o resto da banda é o Demucs local sobre original − guitarras (no 31 a
   guitarra leva o que o Demucs achou de guitarra no resto). A chave vem do app no

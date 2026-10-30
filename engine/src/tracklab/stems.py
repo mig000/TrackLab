@@ -17,6 +17,7 @@ from typing import Callable
 
 from . import multitracks
 from .errors import PackageError
+from .media import mogg as mogg_media
 from .media import multitrack as multitrack_media
 from .media import mvsep
 from .media import separate as demucs
@@ -66,8 +67,7 @@ def import_multitrack(package: SongPackage, entry: dict, *, folder: Path | None 
     """As faixas da multitrack `entry` (uma linha do índice) alinhadas ao áudio do vídeo do pacote."""
     audio = _audio(package)
     if entry.get("format") == "mogg":
-        raise multitracks.MultitrackError("Arquivos .mogg (Rock Band) ainda não entram: as faixas estão misturadas "
-                                          "num arquivo só, sem o mapa dos canais.")
+        return _import_mogg(package, entry, audio, folder=folder, progress=progress, cancel=cancel)
     base = Path(folder or multitracks.root()) / entry["path"]
     if not base.is_dir():
         raise multitracks.MultitrackError(f"Não achei {entry['path']} na biblioteca (o HD externo está ligado?).")
@@ -78,6 +78,31 @@ def import_multitrack(package: SongPackage, entry: dict, *, folder: Path | None 
         receipt = multitrack_media.assemble(
             package.file(audio["file"]), tracks, output, progress=progress, cancel=cancel,
             details={"library": entry["path"], "format": entry.get("format"),
+                     "name": " — ".join(part for part in (entry.get("artist"), entry.get("title")) if part)})
+        receipt["provider"] = "multitrack"
+        return receipt
+
+    return _publish(package, key, build, progress, multitrack_media.STAGE, activate=False)
+
+
+def _import_mogg(package: SongPackage, entry: dict, audio: dict, *, folder: Path | None, progress, cancel) -> dict:
+    """Um .mogg do Rock Band: os canais reconhecidos pelas faixas do Demucs da música (sem o mapa do jogo)."""
+    path = Path(folder or multitracks.root()) / entry["path"]
+    if not path.is_file():
+        raise multitracks.MultitrackError(f"Não achei {entry['path']} na biblioteca (o HD externo está ligado?).")
+    manifest = package.manifest
+    demucs = next((value for key, value in manifest.get("stems", {}).items()
+                   if key.startswith("demucs") and value.get("files")), None)
+    if demucs is None:
+        raise multitracks.MultitrackError("Um .mogg precisa das faixas do Demucs da música para reconhecer os canais: "
+                                          "separe as faixas primeiro.")
+    references = {name: package.file(relative) for name, relative in demucs["files"].items()}
+    key = multitrack_key(audio["sha256"], entry["path"])
+
+    def build(output):
+        receipt = mogg_media.assemble(
+            package.file(audio["file"]), path, references, output, progress=progress, cancel=cancel,
+            details={"library": entry["path"], "format": "mogg",
                      "name": " — ".join(part for part in (entry.get("artist"), entry.get("title")) if part)})
         receipt["provider"] = "multitrack"
         return receipt

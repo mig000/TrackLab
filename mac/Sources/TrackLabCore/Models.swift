@@ -141,7 +141,8 @@ public struct StemSet: Codable, Hashable, Sendable {
     public var label: String {
         switch provider {
         case "demucs", nil: "Demucs 6s"
-        case "multitrack": "Multitrack"
+        // Um .mogg (os canais reconhecidos pelo som) ao lado de uma multitrack de faixas soltas: os dois se distinguem.
+        case "multitrack": library?.lowercased().hasSuffix(".mogg") == true ? "Multitrack .mogg" : "Multitrack"
         case "mvsep": name ?? "MVSEP"
         default: model ?? provider ?? "Faixas"
         }

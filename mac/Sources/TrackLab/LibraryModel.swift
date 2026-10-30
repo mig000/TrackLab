@@ -152,13 +152,14 @@ final class LibraryModel {
 
     /// Importa uma música do Songsterr (link ou número) e separa as faixas; quando termina, a seleciona. Com uma
     /// `multitrack` (de uma pasta de faixas ou do Clone Hero), as faixas são as dela, alinhadas ao vídeo, no lugar do
-    /// Demucs; se ela não casar com o vídeo, a música fica sem separação e o mixer oferece o Demucs.
+    /// Demucs; se ela não casar com o vídeo, a música fica sem separação e o mixer oferece o Demucs. Um .mogg precisa
+    /// do Demucs antes (os canais dele são reconhecidos pelas faixas do Demucs), e entra depois como a outra separação.
     func importSong(_ reference: String, title: String, multitrack: MultitrackSong? = nil) async {
-        let own = multitrack.map { $0.format != "mogg" } ?? false
+        let separate = multitrack.map { $0.format == "mogg" } ?? true
         do {
-            let ticket = try await Backend.shared.importSong(reference, separate: !own)
+            let ticket = try await Backend.shared.importSong(reference, separate: separate)
             imports.append(Importing(id: ticket.id, title: title, message: "Na fila…"))
-            guard let song = await follow(ticket.id), own, let multitrack else { return }
+            guard let song = await follow(ticket.id), let multitrack else { return }
             let aligned = try await Backend.shared.importMultitrack(song, path: multitrack.path)
             imports.append(Importing(id: aligned.id, title: title, message: "Alinhando a multitrack ao vídeo…"))
             await follow(aligned.id)

@@ -64,7 +64,7 @@ struct ImportSheet: View {
             .frame(minHeight: 260)
             HStack {
                 Text(multitrack.map { $0.format == "mogg" }.map { $0
-                    ? "O .mogg ainda não entra: a música vem com as faixas separadas na GPU."
+                    ? "A música entra com as faixas separadas na GPU e depois as do .mogg, reconhecidas por elas e alinhadas ao vídeo."
                     : "A música entra com a partitura, o áudio do vídeo do Songsterr e as faixas da multitrack alinhadas a ele." }
                     ?? "A música entra com a partitura, o áudio do vídeo do Songsterr e as faixas separadas na GPU.")
                     .font(.caption)

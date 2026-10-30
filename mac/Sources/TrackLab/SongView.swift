@@ -738,8 +738,10 @@ private struct ImproveMenu: View {
         let left = model.mvsepUsage?.left
         Menu("Melhorar as faixas") {
             if let multitrack = model.multitrack {
+                // Um .mogg tem os canais reconhecidos pelas faixas do Demucs: precisa delas antes.
+                let demucs = detail?.stems.keys.contains { $0.hasPrefix("demucs") } ?? false
                 Button("Faixas da multitrack · \(multitrack.formatLabel)") { Task { await model.improve(.multitrack) } }
-                    .disabled(has("multitrack", nil) || multitrack.format == "mogg")
+                    .disabled(has("multitrack", nil) || (multitrack.format == "mogg" && !demucs))
             } else {
                 Text("Esta música não está na biblioteca de multitracks")
             }

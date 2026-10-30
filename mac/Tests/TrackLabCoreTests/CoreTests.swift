@@ -476,3 +476,11 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(Peaks.display(0.5, loudest: 0.5) == 1 && Peaks.display(0.125, loudest: 0.5) > 0.35)
     #expect(Peaks.display(0, loudest: 0.5) == 0 && Peaks.display(0.3, loudest: 0) == 0)
 }
+
+@Test func rotuloDaMultitrackMogg() {
+    let mogg = StemSet(provider: "multitrack", model: "multitrack", device: nil, seconds: 1, files: [:], fallback: nil,
+                       library: "PACK 7/Deep Purple/Deep Purple - Highway Star.mogg")
+    let loose = StemSet(provider: "multitrack", model: "multitrack", device: nil, seconds: 1, files: [:], fallback: nil,
+                        library: "Rock Band/Deep Purple - Highway Star")
+    #expect(mogg.label == "Multitrack .mogg" && loose.label == "Multitrack")
+}
