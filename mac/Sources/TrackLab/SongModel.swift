@@ -79,6 +79,8 @@ final class SongModel {
     private(set) var tabSelection: TabSelection?
     /// O cursor de inserção da edição (uma corda vazia de uma batida), ou nil.
     private(set) var tabCaret: TabCaret?
+    /// O compasso da escolha na edição (para pôr, apagar e mudar a fórmula), ou nil.
+    private(set) var tabBar: TabBarInfo?
     private(set) var canUndoTab = false
     private(set) var canRedoTab = false
     private(set) var tabMessage: String?
@@ -251,6 +253,10 @@ final class SongModel {
         }
         bridge.onCaret = { [weak self] caret in self?.tabCaret = caret }
         bridge.onClip = { [weak self] clip, beats, cut in self?.storeClip(clip, beats: beats, cut: cut) }
+        bridge.onBar = { [weak self] bar in self?.tabBar = bar }
+        bridge.onStructure = { [weak self] points, ticks, markers, change in
+            self?.restructure(points: points, barTicks: ticks, markers: markers, change: change)
+        }
         bridge.onHear = { [weak self] body in
             func number(_ key: String) -> Double? { (body[key] as? NSNumber)?.doubleValue }
             guard let self, let track = number("track"), let tick = number("tick"), let string = number("string"),
@@ -1139,6 +1145,42 @@ final class SongModel {
         }
         keepView = viewStart(now: engine.currentTime)
         engine.audition(from: start, to: end, track: pitchStem(track: track).stem)
+    }
+
+    // MARK: - Compassos
+
+    /// Os compassos da partitura mudaram na edição: a Fita passa a ter os compassos novos, o mapa de tempo que a página
+    /// fez acompanhar é gravado (vai para o histórico do pacote), e os trechos de estudo e os compassos conferidos andam
+    /// junto.
+    func restructure(points: [TempoPoint], barTicks: [Double], markers: [(tick: Double, name: String)], change: BarChange?) {
+        self.markers = markers
+        if points.count >= 2 { grid = TempoGrid(points: points, barTicks: barTicks) }
+        if let map = tempoMap, points.count >= 2, map.points != points {
+            replace(with: TempoMapDocument(source: map.source, algorithm: map.algorithm, points: points), done: {}, failed: {})
+        }
+        guard let change else { return }
+        let moved = sections.compactMap { section -> StudySection? in
+            var copy = section
+            copy.from = change.moved(section.from)
+            copy.to = change.moved(section.to, end: true)
+            return copy.to - copy.from > 1 ? copy : nil
+        }
+        if moved != sections { save(moved) }
+        let checked = change.moved(checked: checkedBars)
+        if checked != checkedBars {
+            checkedBars = checked
+            Task { checkedBars = Set((try? await Backend.shared.putChecked(id, bars: checked.sorted())) ?? checked.sorted()) }
+        }
+    }
+
+    /// Pôr um compasso antes ou depois do da escolha, apagá-lo, ou mudar a fórmula dele (todas as pistas).
+    func editBar(_ action: String, numerator: Int? = nil, denominator: Int? = nil) {
+        var value: [String: Any] = ["action": action]
+        if let numerator, let denominator {
+            value["numerator"] = numerator
+            value["denominator"] = denominator
+        }
+        tabEdit("bar", value)
     }
 
     // MARK: - Copiar e colar na TAB

@@ -263,7 +263,22 @@ das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fi
 sem endereço nem figura); vai para a área de transferência do macOS como `local.tracklab.tab-clip` (cola noutra música e
 depois de reabrir o app). Colar (`edit.paste`) entra a partir da nota escolhida ou do cursor de inserção, por cima do que
 estava: o que começa no trecho sai, o que vem de antes encurta até ele, e os compassos são refeitos com figuras, pausas e
-ligaduras; não passa do fim da música. Recortar copia e deixa pausa. As coladas ficam escolhidas. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+ligaduras; não passa do fim da música. Recortar copia e deixa pausa. As coladas ficam escolhidas.
+Voz 2: as mudanças de ritmo (figura, pausa, arrastar, ⌥← ⌥→, colar, nota nova) valem na voz da nota (`timeline` e
+`rebuildBar` levam a voz; uma voz além da 1 sem nota no compasso fica com uma batida vazia, sem pausas à vista); no
+cursor de inserção, Voz 1 / Voz 2 escolhe onde a nota nova entra (na 2, sempre no tique do clique, com as pausas da voz 2
+em volta); a linha da nota diz "voz 2". Compassos (a seção Compasso da coluna, no compasso da nota ou do cursor):
+Antes e Depois põem um compasso vazio (`edit.insertBar`, com a fórmula do vizinho, em todas as pistas), Apagar tira
+(`edit.deleteBar`) e Fórmula muda a do compasso (`edit.setTimeSignature`, só dele: o que passa do fim novo sai, o que
+falta vira pausa); a ligadura que chegava ao compasso de depois é desfeita. O mapa de tempo acompanha
+(`core.reshapePoints`): o que vem depois anda nos tiques e fica nos mesmos segundos (no mesmo lugar do áudio); um
+compasso posto reparte com o de antes o tempo dele, um apagado deixa o tempo para o de antes (o de antes encolhe ou
+estica por igual desde o último ponto não interpolado), e dentro de um compasso com outra fórmula os pontos esticam. A
+página manda `structure` (mapa, começos dos compassos, seções do GP e a mudança, `BarChange`); o app grava o mapa (vai
+para o histórico do pacote), e os trechos de estudo e os compassos conferidos andam junto. O Desfazer volta a partitura
+e o mapa juntos (o passo guarda os pontos e a mudança contrária). Repetições (ritornelo, casa 1 e 2) ficaram de fora: o
+TrackLab supõe cada compasso escrito tocado uma vez (os pontos do Songsterr são um por compasso escrito, e a TAB
+sintetizada tocaria a repetição). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo

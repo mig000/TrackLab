@@ -298,6 +298,26 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(LoopView.start(now: 12, loop: nil, span: 10, at: 0.4, pin: 3) == 8)
 }
 
+@Test func compassosPostosApagadosEFormula() {
+    // Um compasso de 3840 tiques posto antes do 2 (tique 3840): o que vem depois anda, o de antes fica.
+    let put = BarChange(tick: 3840, old: 0, new: 3840, bar: 1, kind: .insert)
+    #expect(put.moved(1920) == 1920 && put.moved(3840) == 7680 && put.moved(5000) == 8840)
+    // Um trecho que acaba onde o compasso foi posto não cresce.
+    #expect(put.moved(3840, end: true) == 3840)
+    #expect(put.moved(checked: [1, 2, 5]) == [1, 3, 6])
+    // O compasso 2 apagado: o que estava nele vai para onde ele começava; os de depois voltam um compasso.
+    let gone = BarChange(tick: 3840, old: 3840, new: 0, bar: 1, kind: .delete)
+    #expect(gone.moved(5000) == 3840 && gone.moved(7680) == 3840 && gone.moved(9000) == 5160)
+    #expect(gone.moved(checked: [1, 2, 3]) == [1, 2])
+    // O compasso 1 em 2/4: o de dentro estica, o de depois anda.
+    let two = BarChange(tick: 0, old: 3840, new: 1920, bar: 0, kind: .signature)
+    #expect(two.moved(1920) == 960 && two.moved(3840) == 1920 && two.moved(checked: [1, 2]) == [1, 2])
+    #expect(BarChange(page: ["tick": NSNumber(value: 0), "oldLength": NSNumber(value: 0), "newLength": NSNumber(value: 1920),
+                             "bar": NSNumber(value: 0), "kind": "insert"])?.kind == .insert)
+    #expect(TabBarInfo(page: ["index": NSNumber(value: 3), "numerator": NSNumber(value: 4), "denominator": NSNumber(value: 4)])
+        == TabBarInfo(index: 3, numerator: 4, denominator: 4))
+}
+
 @Test func tabSintetizadaNoManifesto() throws {
     let json = #"""
     {"id": "s", "folder": "/f", "synth": {"key": "tab-1", "soundfont": "GeneralUser.sf2", "stale": true,

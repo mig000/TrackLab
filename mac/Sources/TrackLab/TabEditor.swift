@@ -21,6 +21,9 @@ struct TabEditPanel: View {
     static let width = 252.0
     /// A casa da nota nova no cursor de inserção (com o mouse: − + e Pôr nota; o teclado digita direto).
     @Local private var newFret = 0
+    /// A fórmula escolhida para o compasso (começa na dele).
+    @Local private var numerator = 4
+    @Local private var denominator = 4
 
     struct Item: Identifiable {
         let key: String
@@ -90,6 +93,8 @@ struct TabEditPanel: View {
                     Divider()
                     timeSection(selection)
                     Divider()
+                    barSection
+                    Divider()
                     suspectsSection
                 }
                 .padding(12)
@@ -138,7 +143,8 @@ struct TabEditPanel: View {
                     Text(selection?.place ?? "Clique numa nota da TAB")
                         .font(.callout.weight(.medium).monospacedDigit())
                         .lineLimit(2, reservesSpace: true)
-                    Text(selection.map { [$0.pitchName, $0.figure].compactMap { $0 }.joined(separator: " · ") }
+                    Text(selection.map { [$0.pitchName, $0.figure, $0.voice > 1 ? "voz \($0.voice)" : nil].compactMap { $0 }
+                        .joined(separator: " · ") }
                          ?? "Clique numa linha vazia para pôr uma nota; ⇧ clique ou ⇧← → escolhem várias; ⌘ clique põe ou tira uma; o botão direito toca sintetizada")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -157,6 +163,14 @@ struct TabEditPanel: View {
                     Button("Pôr nota") { model.tabEdit("fret", newFret) }
                         .help("Põe a nota nova nessa corda, na casa escolhida (ou digite a casa: 0–9, dois dígitos para 10–24)")
                 }
+                // Em que voz a nota nova entra: a 2 tem as batidas dela (uma linha de baixo sob uma melodia, por exemplo).
+                Picker("Voz", selection: Binding(get: { model.tabCaret?.voice ?? 1 }, set: { model.tabEdit("voice", $0) })) {
+                    Text("Voz 1").tag(1)
+                    Text("Voz 2").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help("A voz da nota nova; na voz 2 ela entra no tempo do clique, com as pausas da voz 2 em volta")
             }
             // Com o cursor de inserção, a casa é a da nota nova (acima); a da nota escolhida some.
             if !(selection == nil && model.tabCaret != nil) {
@@ -377,6 +391,48 @@ struct TabEditPanel: View {
             .labelStyle(.titleAndIcon)
             .disabled(selection == nil)
             .help("A nota um passo da grade mais cedo ou mais tarde, com a mesma duração")
+        }
+    }
+
+    /// O compasso da escolha, em todas as pistas: pôr um antes ou depois, apagá-lo, mudar a fórmula. O mapa de tempo
+    /// acompanha (o resto da música fica no mesmo lugar do áudio); os trechos e os compassos conferidos andam junto.
+    private var barSection: some View {
+        let bar = model.tabBar
+        return VStack(alignment: .leading, spacing: 6) {
+            title(bar.map { "Compasso \($0.index + 1) · \($0.numerator)/\($0.denominator)" } ?? "Compasso")
+            HStack(spacing: 4) {
+                Button { model.editBar("insert-before") } label: { Label("Antes", systemImage: "plus") }
+                    .help("Põe um compasso vazio antes deste (em todas as pistas, com a mesma fórmula)")
+                Button { model.editBar("insert-after") } label: { Label("Depois", systemImage: "plus") }
+                    .help("Põe um compasso vazio depois deste")
+                Spacer(minLength: 0)
+                Button(role: .destructive) { model.editBar("delete") } label: { Label("Apagar", systemImage: "minus") }
+                    .help("Apaga este compasso de todas as pistas; o tempo dele fica com o de antes no mapa (⌘Z desfaz)")
+            }
+            .labelStyle(.titleAndIcon)
+            HStack(spacing: 4) {
+                Text("Fórmula").font(.caption).foregroundStyle(.secondary)
+                Button { numerator = max(1, numerator - 1) } label: { Image(systemName: "minus") }
+                Text("\(numerator)").font(.callout.weight(.semibold).monospacedDigit()).frame(minWidth: 18)
+                Button { numerator = min(32, numerator + 1) } label: { Image(systemName: "plus") }
+                Text("/").foregroundStyle(.secondary)
+                Picker("Unidade", selection: $denominator) {
+                    ForEach([2, 4, 8, 16], id: \.self) { Text("\($0)").tag($0) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                Spacer(minLength: 0)
+                Button("Aplicar") { model.editBar("signature", numerator: numerator, denominator: denominator) }
+                    .disabled(bar == nil || (bar?.numerator == numerator && bar?.denominator == denominator))
+                    .help("Só este compasso: o que passar do fim novo sai, o que faltar vira pausa")
+            }
+        }
+        .disabled(bar == nil)
+        .onChange(of: bar, initial: true) {
+            if let bar {
+                numerator = bar.numerator
+                denominator = bar.denominator
+            }
         }
     }
 

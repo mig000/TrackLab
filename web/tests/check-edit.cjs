@@ -359,6 +359,67 @@ test("nota nova no meio de uma nota longa (que se divide, ligada) e no meio de u
   assert.equal(edit.insertAt(alphaTab, other.tracks[0].staves[0], 1930, 2, 3), "short");
 });
 
+test("voz 2: nota nova, figura e pausa na voz dela, sem mexer na voz 1", () => {
+  let score = load();
+  const staff = () => score.tracks[0].staves[0];
+  const voiceOne = edit.timeline(staff(), 0).map((e) => [e.start, e.end]);
+  // Uma nota na voz 2 no segundo tempo: vai até o fim do compasso, com pausa antes.
+  assert.equal(edit.insertAt(alphaTab, staff(), 960, 1, 3, 1), true);
+  score = reread(edit.refinish(alphaTab, score));
+  const second = edit.notesOf(staff()).find((n) => n.beat.voice.index === 1);
+  assert.ok(second && second.fret === 3 && Math.abs(second.beat.absolutePlaybackStart - 960) < 1);
+  assert.deepEqual(edit.span(second), { start: 960, end: 3840 });
+  assert.deepEqual(edit.timeline(staff(), 0).map((e) => [e.start, e.end]), voiceOne, "a voz 1 fica como estava");
+  // A figura muda na voz 2 (sobra pausa nela).
+  assert.equal(edit.setLength(alphaTab, second, 480), true);
+  score = reread(edit.refinish(alphaTab, score));
+  const shorter = edit.notesOf(staff()).find((n) => n.beat.voice.index === 1);
+  assert.deepEqual(edit.span(shorter), { start: 960, end: 1440 });
+  assert.deepEqual(edit.timeline(staff(), 0).map((e) => [e.start, e.end]), voiceOne);
+  // Vira pausa: a voz 2 do compasso fica vazia de novo.
+  assert.equal(edit.toRest(alphaTab, shorter), true);
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(!edit.notesOf(staff()).some((n) => n.beat.voice.index === 1));
+  assert.ok(staff().bars[0].voices[1].beats.every((b) => b.isEmpty || b.isRest));
+});
+
+test("compassos: pôr, apagar e mudar a fórmula em todas as pistas", () => {
+  let score = load();
+  const count = score.masterBars.length;
+  const second = at(score, 3840).fret;
+  // Um compasso antes do 2: o 2 de antes passa a começar um compasso depois.
+  const put = edit.insertBar(alphaTab, score, 1);
+  assert.equal(put.tick, 3840);
+  assert.equal(put.newLength, 3840);
+  score = reread(edit.refinish(alphaTab, put.score));
+  barsAreWhole(score);
+  assert.equal(score.masterBars.length, count + 1);
+  assert.equal(at(score, 3840), undefined, "o compasso novo é pausa");
+  assert.equal(at(score, 7680).fret, second);
+  // Apagado de novo: tudo volta ao lugar.
+  const gone = edit.deleteBar(alphaTab, score, 1);
+  assert.deepEqual([gone.tick, gone.oldLength, gone.newLength], [3840, 3840, 0]);
+  score = reread(edit.refinish(alphaTab, gone.score));
+  barsAreWhole(score);
+  assert.equal(score.masterBars.length, count);
+  assert.equal(at(score, 3840).fret, second);
+  // O compasso 1 em 2/4: as duas primeiras semínimas ficam, o resto sai, e o 2 começa em 1920.
+  const two = edit.setTimeSignature(alphaTab, score, 0, 2, 4);
+  assert.deepEqual([two.tick, two.oldLength, two.newLength], [0, 3840, 1920]);
+  score = reread(edit.refinish(alphaTab, two.score));
+  barsAreWhole(score);
+  assert.equal(score.masterBars[0].timeSignatureNumerator, 2);
+  assert.ok(at(score, 0) && at(score, 960));
+  assert.equal(at(score, 1920).fret, second, "o compasso 2 vem logo depois");
+  // E em 5/4: sobra uma semínima de pausa.
+  const five = edit.setTimeSignature(alphaTab, score, 0, 5, 4);
+  score = reread(edit.refinish(alphaTab, five.score));
+  barsAreWhole(score);
+  assert.equal(score.masterBars[1].start, 4800);
+  assert.equal(edit.setTimeSignature(alphaTab, score, 0, 0, 4), "signature");
+  assert.equal(edit.deleteBar(alphaTab, reread(edit.refinish(alphaTab, load())), 0).newLength, 0);
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");

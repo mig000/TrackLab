@@ -40,6 +40,12 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var onHear: (([String: Any]) -> Void)?
     /// Um recorte da TAB (⌘C, ⌘X): as batidas com as notas, em valores simples, e quantas são.
     var onClip: ((_ clip: [String: Any], _ beats: Int, _ cut: Bool) -> Void)?
+    /// O compasso da escolha na edição (o da nota ou do cursor), ou nil.
+    var onBar: ((TabBarInfo?) -> Void)?
+    /// Os compassos mudaram (um posto, um apagado, outra fórmula, ou o Desfazer disso): o mapa de tempo que acompanhou,
+    /// os começos dos compassos, as seções do Guitar Pro e a mudança.
+    var onStructure: ((_ points: [TempoPoint], _ barTicks: [Double], _ markers: [(tick: Double, name: String)],
+                       _ change: BarChange?) -> Void)?
     var onSave: ((Data) -> Void)?
     var onNotes: (([[ScoreNote]]) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -259,6 +265,15 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
 
     // MARK: - Da página para o app
 
+    /// As seções do Guitar Pro (Intro, Verse 1…) de uma mensagem da página.
+    private static func markers(_ body: [String: Any]) -> [(tick: Double, name: String)] {
+        (body["sections"] as? [[String: Any]] ?? []).compactMap { item -> (tick: Double, name: String)? in
+            guard let tick = (item["tick"] as? NSNumber)?.doubleValue, let name = item["name"] as? String,
+                  !name.isEmpty else { return nil }
+            return (tick, name)
+        }
+    }
+
     nonisolated func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
             let body = message.body as? [String: Any] ?? [:]
@@ -272,11 +287,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                     return PageTrack(index: index, name: item["name"] as? String ?? "Faixa \(index + 1)")
                 }
                 let ticks = (body["barTicks"] as? [NSNumber] ?? []).map(\.doubleValue)
-                let markers = (body["sections"] as? [[String: Any]] ?? []).compactMap { item -> (tick: Double, name: String)? in
-                    guard let tick = (item["tick"] as? NSNumber)?.doubleValue, let name = item["name"] as? String,
-                          !name.isEmpty else { return nil }
-                    return (tick, name)
-                }
+                let markers = Self.markers(body)
                 let notes = (body["notes"] as? [[[NSNumber]]] ?? []).map { track in
                     ScoreNote.list(track.map { $0.map(\.doubleValue) })
                 }
@@ -287,6 +298,15 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 let note = (body["note"] as? [String: Any]).flatMap(TabSelection.init(page:))
                 onSelection?(note, body["canUndo"] as? Bool ?? false, body["canRedo"] as? Bool ?? false)
                 onCaret?(TabCaret(page: body["caret"] as? [String: Any]))
+                onBar?(TabBarInfo(page: body["bar"] as? [String: Any]))
+            case "structure":
+                let points = (body["points"] as? [[String: Any]] ?? []).compactMap { item -> TempoPoint? in
+                    guard let tick = (item["tick"] as? NSNumber)?.doubleValue,
+                          let seconds = (item["seconds"] as? NSNumber)?.doubleValue else { return nil }
+                    return TempoPoint(tick: tick, seconds: seconds, kind: item["kind"] as? String ?? "interpolated")
+                }
+                onStructure?(points, (body["barTicks"] as? [NSNumber] ?? []).map(\.doubleValue), Self.markers(body),
+                             BarChange(page: body["change"] as? [String: Any]))
             case "hear":
                 onHear?(body)
             case "clip":

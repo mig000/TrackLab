@@ -266,6 +266,76 @@ public struct Spectrum: Sendable {
 
 /// A nota escolhida na edição da TAB, como a página descreve (`describe` em score-edit.js): a pista, a corda (1 é a
 /// mais aguda), a casa, a altura MIDI e as articulações ligadas (as chaves da paleta).
+/// O compasso da escolha na edição (o da nota ou do cursor de inserção): o número (0 é o primeiro) e a fórmula.
+public struct TabBarInfo: Hashable, Sendable {
+    public let index: Int
+    public let numerator: Int
+    public let denominator: Int
+
+    public init(index: Int, numerator: Int, denominator: Int) {
+        self.index = index
+        self.numerator = numerator
+        self.denominator = denominator
+    }
+
+    public init?(page: [String: Any]?) {
+        func int(_ key: String) -> Int? { (page?[key] as? NSNumber)?.intValue }
+        guard let index = int("index"), let numerator = int("numerator"), let denominator = int("denominator") else {
+            return nil
+        }
+        self.init(index: index, numerator: numerator, denominator: denominator)
+    }
+}
+
+/// Uma mudança nos compassos da partitura (um posto, um apagado, outra fórmula): no tique `tick`, um trecho de `old`
+/// tiques vira `new`; `bar` é o compasso (0 é o primeiro). O que o app guarda em tiques e compassos anda junto: os
+/// trechos de estudo e os compassos conferidos (o mapa de tempo a página já manda pronto).
+public struct BarChange: Hashable, Sendable {
+    public enum Kind: String, Sendable { case insert, delete, signature }
+
+    public let tick: Double
+    public let old: Double
+    public let new: Double
+    public let bar: Int
+    public let kind: Kind
+
+    public init(tick: Double, old: Double, new: Double, bar: Int, kind: Kind) {
+        self.tick = tick
+        self.old = old
+        self.new = new
+        self.bar = bar
+        self.kind = kind
+    }
+
+    public init?(page: [String: Any]?) {
+        func number(_ key: String) -> Double? { (page?[key] as? NSNumber)?.doubleValue }
+        guard let tick = number("tick"), let old = number("oldLength"), let new = number("newLength"),
+              let bar = number("bar"), let kind = (page?["kind"] as? String).flatMap(Kind.init(rawValue:)) else { return nil }
+        self.init(tick: tick, old: old, new: new, bar: Int(bar), kind: kind)
+    }
+
+    /// Um tique depois da mudança: antes dela, fica; depois, anda; dentro de um compasso com outra fórmula, estica; num
+    /// apagado, vai para onde ele começava. `end`: o fim de um trecho (que acaba onde um compasso posto começa não cresce).
+    public func moved(_ t: Double, end: Bool = false) -> Double {
+        if t < tick - 0.5 || (end && old == 0 && t <= tick + 0.5) { return t }
+        if old == 0 || t >= tick + old - 0.5 { return t + new - old }
+        return new == 0 ? tick : tick + (t - tick) * new / old
+    }
+
+    /// Os compassos conferidos (números a partir de 1) depois da mudança: um posto empurra os de depois; um apagado sai
+    /// e puxa os de depois.
+    public func moved(checked: Set<Int>) -> Set<Int> {
+        switch kind {
+        case .signature:
+            return checked
+        case .insert:
+            return Set(checked.map { $0 - 1 >= bar ? $0 + 1 : $0 })
+        case .delete:
+            return Set(checked.compactMap { $0 - 1 == bar ? nil : $0 - 1 > bar ? $0 - 1 : $0 })
+        }
+    }
+}
+
 /// O cursor de inserção da edição: uma corda sem nota numa batida (ou uma pausa), onde a casa digitada põe uma nota.
 public struct TabCaret: Hashable, Sendable {
     /// Onde o cursor está ("c. 2 · tempo 1 + 1/16"), a corda da TAB (1, a mais aguda), se a batida é pausa, se o
@@ -275,13 +345,16 @@ public struct TabCaret: Hashable, Sendable {
     public let rest: Bool
     public let inside: Bool
     public let figure: String?
+    /// A voz da nota nova (1 ou 2).
+    public let voice: Int
 
-    public init(place: String, string: Int, rest: Bool, inside: Bool = false, figure: String? = nil) {
+    public init(place: String, string: Int, rest: Bool, inside: Bool = false, figure: String? = nil, voice: Int = 1) {
         self.place = place
         self.string = string
         self.rest = rest
         self.inside = inside
         self.figure = figure
+        self.voice = voice
     }
 
     public init?(page: [String: Any]?) {
@@ -289,7 +362,8 @@ public struct TabCaret: Hashable, Sendable {
             return nil
         }
         self.init(place: place, string: string, rest: page["rest"] as? Bool ?? false,
-                  inside: page["inside"] as? Bool ?? false, figure: page["figure"] as? String)
+                  inside: page["inside"] as? Bool ?? false, figure: page["figure"] as? String,
+                  voice: (page["voice"] as? NSNumber)?.intValue ?? 1)
     }
 }
 
@@ -319,11 +393,13 @@ public struct TabSelection: Hashable, Sendable {
     public let count: Int
     public let range: ClosedRange<Double>?
     public let span: String?
+    /// A voz da nota (1 ou 2).
+    public let voice: Int
 
     public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String],
                 place: String? = nil, figure: String? = nil, strings: [Int?] = [], length: Double? = nil,
                 base: Int? = nil, dotted: Bool = false, triplet: Bool = false, count: Int = 1,
-                range: ClosedRange<Double>? = nil, span: String? = nil) {
+                range: ClosedRange<Double>? = nil, span: String? = nil, voice: Int = 1) {
         self.track = track
         self.string = string
         self.fret = fret
@@ -340,6 +416,7 @@ public struct TabSelection: Hashable, Sendable {
         self.count = count
         self.range = range
         self.span = span
+        self.voice = voice
     }
 
     /// A duração em tiques de uma figura: a base, com ponto (1,5×) ou em tercina (⅔).
@@ -370,7 +447,7 @@ public struct TabSelection: Hashable, Sendable {
                             let to = (page["to"] as? NSNumber)?.doubleValue, to > from else { return nil }
                       return from...to
                   }(),
-                  span: page["span"] as? String)
+                  span: page["span"] as? String, voice: int("voice") ?? 1)
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

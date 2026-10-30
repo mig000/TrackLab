@@ -388,14 +388,15 @@
     return names[Math.round(ticks)] || "notas ligadas";
   }
 
-  function voiceOne(staff) {
-    return staff.bars.map((bar) => bar.voices[0]);
+  function voiceAt(staff, v) {
+    return staff.bars.map((bar) => bar.voices[v]).filter(Boolean);
   }
 
-  // Os intervalos da voz 1 da pauta, em ordem; as batidas ligadas à anterior (todas as notas) estendem o intervalo dela.
-  function timeline(staff) {
+  // Os intervalos de uma voz da pauta (`v`: 0 é a voz 1), em ordem; as batidas ligadas à anterior (todas as notas)
+  // estendem o intervalo dela.
+  function timeline(staff, v = 0) {
     const events = [];
-    for (const voice of voiceOne(staff)) {
+    for (const voice of voiceAt(staff, v)) {
       for (const beat of voice.beats) {
         if (!beat.notes.length) continue;
         const start = beat.absolutePlaybackStart;
@@ -425,10 +426,21 @@
     beat.tupletDenominator = figure.triplet ? 2 : -1;
   }
 
-  // Um compasso refeito a partir dos intervalos: pausas nos espaços, o primeiro pedaço de cada intervalo na batida
-  // original, os outros em cópias ligadas. Devolve false se um trecho não cabe em figuras.
-  function rebuildBar(at, bar, events) {
-    const voice = bar.voices[0];
+  // Se algum compasso de `first` a `last` tem apojatura na voz `v` (esses não são refeitos).
+  function hasGrace(at, staff, first, last, v) {
+    for (let b = first; b <= last; b++) {
+      const voice = staff.bars[b].voices[v];
+      if (voice && voice.beats.some((x) => x.graceType !== at.model.GraceType.None)) return true;
+    }
+    return false;
+  }
+
+  // Um compasso refeito a partir dos intervalos da voz `v`: pausas nos espaços, o primeiro pedaço de cada intervalo na
+  // batida original, os outros em cópias ligadas. Uma voz além da 1 sem nota no compasso fica vazia (sem pausas à
+  // vista). Devolve false se um trecho não cabe em figuras.
+  function rebuildBar(at, bar, events, v = 0) {
+    while (bar.voices.length <= v) bar.addVoice(new at.model.Voice());
+    const voice = bar.voices[v];
     const from = bar.masterBar.start;
     const to = from + bar.masterBar.calculateDuration();
     const items = [];
@@ -442,6 +454,14 @@
       t = b;
     }
     if (t < to) items.push({ length: to - t });
+    if (v > 0 && !items.some((item) => item.ev)) {
+      const empty = new at.model.Beat();
+      empty.isEmpty = true;
+      empty.duration = at.model.Duration.Whole;
+      voice.beats = [];
+      voice.addBeat(empty);
+      return true;
+    }
     const beats = [];
     for (const item of items) {
       const figures = decompose(Math.round(item.length));
@@ -476,7 +496,8 @@
   // "figure", "missing").
   function retime(at, note, start, end) {
     const staff = note.beat.voice.bar.staff;
-    const events = timeline(staff);
+    const v = note.beat.voice.index;
+    const events = timeline(staff, v);
     const index = events.findIndex((e) => e.beat === note.beat || e.tail.includes(note.beat));
     if (index < 0) return "missing";
     const ev = events[index];
@@ -497,15 +518,13 @@
     const high = Math.max(end, ev.end);
     const first = barAt(staff, low);
     const last = barAt(staff, high - 1);
-    for (let b = first; b <= last; b++) {
-      if (staff.bars[b].voices[0].beats.some((x) => x.graceType !== at.model.GraceType.None)) return "grace";
-    }
+    if (hasGrace(at, staff, first, last, v)) return "grace";
     if (previous && previous.end > start) previous.end = start;
     ev.start = start;
     ev.end = end;
     // Os intervalos refeitos perdem as cópias ligadas de antes (o compasso refeito cria as dele).
     for (let b = first; b <= last; b++) {
-      if (!rebuildBar(at, staff.bars[b], events)) return "figure";
+      if (!rebuildBar(at, staff.bars[b], events, v)) return "figure";
     }
     return true;
   }
@@ -513,7 +532,7 @@
   // A nota (com as ligadas e o acorde) passa a durar `ticks`, começando no mesmo lugar: mais curta, sobra pausa; mais
   // longa, não passa do começo da seguinte ("next"). Devolve true ou o motivo, como o retime.
   function setLength(at, note, ticks) {
-    const events = timeline(note.beat.voice.bar.staff);
+    const events = timeline(note.beat.voice.bar.staff, note.beat.voice.index);
     const index = events.findIndex((e) => e.beat === note.beat || e.tail.includes(note.beat));
     if (index < 0) return "missing";
     const ev = events[index];
@@ -526,18 +545,17 @@
   // A nota vira pausa: a batida dela sai (com o acorde e as ligadas) e o espaço fica em pausas.
   function toRest(at, note) {
     const staff = note.beat.voice.bar.staff;
-    const events = timeline(staff);
+    const v = note.beat.voice.index;
+    const events = timeline(staff, v);
     const index = events.findIndex((e) => e.beat === note.beat || e.tail.includes(note.beat));
     if (index < 0) return "missing";
     const ev = events[index];
     const first = barAt(staff, ev.start);
     const last = barAt(staff, ev.end - 1);
-    for (let b = first; b <= last; b++) {
-      if (staff.bars[b].voices[0].beats.some((x) => x.graceType !== at.model.GraceType.None)) return "grace";
-    }
+    if (hasGrace(at, staff, first, last, v)) return "grace";
     events.splice(index, 1);
     for (let b = first; b <= last; b++) {
-      if (!rebuildBar(at, staff.bars[b], events)) return "figure";
+      if (!rebuildBar(at, staff.bars[b], events, v)) return "figure";
     }
     return true;
   }
@@ -554,7 +572,7 @@
 
   // Um passo de `grid` tiques (negativo: antes), mantendo a duração.
   function nudge(at, note, steps, grid) {
-    const events = timeline(note.beat.voice.bar.staff);
+    const events = timeline(note.beat.voice.bar.staff, note.beat.voice.index);
     const ev = events.find((e) => e.beat === note.beat || e.tail.includes(note.beat));
     if (!ev) return "missing";
     const delta = Math.round(steps) * grid;
@@ -563,7 +581,8 @@
 
   // O intervalo da nota (começo e fim em tiques, com as ligaduras).
   function span(note) {
-    const ev = timeline(note.beat.voice.bar.staff).find((e) => e.beat === note.beat || e.tail.includes(note.beat));
+    const ev = timeline(note.beat.voice.bar.staff, note.beat.voice.index)
+      .find((e) => e.beat === note.beat || e.tail.includes(note.beat));
     return ev ? { start: ev.start, end: ev.end } : null;
   }
 
@@ -617,7 +636,7 @@
   function copy(notes) {
     if (!notes.length) return null;
     const staff = notes[0].beat.voice.bar.staff;
-    const events = timeline(staff);
+    const events = timeline(staff, notes[0].beat.voice.index);
     const chosen = events.filter((e) => notes.some((n) => e.beat === n.beat || e.tail.includes(n.beat)));
     if (!chosen.length) return null;
     const start = Math.min(...chosen.map((e) => e.start));
@@ -658,14 +677,14 @@
   // Cola o recorte a partir do tique `start` da pauta, por cima do que estava: o que começa no trecho sai, o que vem de
   // antes encurta até ele, e os compassos são refeitos com figuras, pausas e ligaduras. Devolve true ou o motivo
   // ("end": passa do fim da música; "grace", "figure" como o retime).
-  function paste(at, staff, start, clip) {
+  function paste(at, staff, start, clip, v = 0) {
     if (!clip || !clip.events) return "missing";
     start = Math.round(start);
     const end = start + Math.round(clip.length);
     const bars = staff.bars;
     const songEnd = bars[bars.length - 1].masterBar.start + bars[bars.length - 1].masterBar.calculateDuration();
     if (end > songEnd + 0.5) return "end";
-    const events = timeline(staff);
+    const events = timeline(staff, v);
     let low = start;
     let high = end;
     const kept = [];
@@ -687,13 +706,119 @@
     kept.sort((a, b) => a.start - b.start);
     const first = barAt(staff, low);
     const last = barAt(staff, high - 1);
+    if (hasGrace(at, staff, first, last, v)) return "grace";
     for (let b = first; b <= last; b++) {
-      if (bars[b].voices[0].beats.some((x) => x.graceType !== at.model.GraceType.None)) return "grace";
-    }
-    for (let b = first; b <= last; b++) {
-      if (!rebuildBar(at, bars[b], kept)) return "figure";
+      if (!rebuildBar(at, bars[b], kept, v)) return "figure";
     }
     return true;
+  }
+
+  // MARK: compassos (em todas as pistas)
+
+  // Notas da primeira batida de cada voz do compasso `index` (na cópia JSON) deixam de ser ligadas à anterior: o
+  // compasso de antes mudou (um compasso posto, apagado ou com outra fórmula) e a ligadura ficaria sem origem.
+  function untieStart(obj, index) {
+    for (const track of obj.get("tracks")) {
+      for (const staff of track.get("staves")) {
+        const bar = staff.get("bars")[index];
+        if (!bar) continue;
+        for (const voice of bar.get("voices")) {
+          const first = voice.get("beats")[0];
+          for (const note of first ? first.get("notes") || [] : []) note.set("istiedestination", false);
+        }
+      }
+    }
+  }
+
+  // Um compasso novo antes do compasso `index` (no fim, se `index` é o número de compassos), com a fórmula e a
+  // armadura do vizinho e pausas em todas as pautas. Devolve { score, tick, oldLength: 0, newLength } (a partitura é
+  // outra: quem chama troca).
+  function insertBar(at, score, index) {
+    const masters = score.masterBars;
+    index = Math.max(0, Math.min(Math.round(index), masters.length));
+    const ref = masters[Math.min(index, masters.length - 1)];
+    const tick = index < masters.length ? masters[index].start : ref.start + ref.calculateDuration();
+    const obj = snapshot(at, score);
+    const jsMasters = obj.get("masterbars");
+    const master = new Map(jsMasters[Math.min(index, jsMasters.length - 1)]);
+    master.set("tempoautomations", []);
+    master.set("isrepeatstart", false);
+    master.set("repeatcount", 0);
+    master.set("alternateendings", 0);
+    master.set("isanacrusis", false);
+    master.delete("section");
+    jsMasters.splice(index, 0, master);
+    for (const track of obj.get("tracks")) {
+      for (const staff of track.get("staves")) {
+        const bars = staff.get("bars");
+        const refBar = bars[Math.min(index, bars.length - 1)];
+        const bar = new Map(refBar);
+        for (const key of ["id", "barlineleft", "barlineright", "similemark", "sustainpedals"]) bar.delete(key);
+        bar.set("voices", refBar.get("voices").map((_, v) =>
+          new Map([["beats", [new Map([["notes", []], ["isempty", v > 0], ["duration", at.model.Duration.Whole]])]]])));
+        bars.splice(index, 0, bar);
+      }
+    }
+    untieStart(obj, index + 1);
+    const fresh = restore(at, obj);
+    // As pausas certas na voz 1 (a fórmula pode não ser 4/4).
+    for (const track of fresh.tracks) {
+      for (const staff of track.staves) {
+        if (!rebuildBar(at, staff.bars[index], [], 0)) return "figure";
+      }
+    }
+    return { score: refinish(at, fresh), tick, oldLength: 0, newLength: fresh.masterBars[index].calculateDuration() };
+  }
+
+  // Apaga o compasso `index` de todas as pistas. Devolve { score, tick, oldLength, newLength: 0 }, ou "last" (a
+  // música não fica sem compasso).
+  function deleteBar(at, score, index) {
+    const masters = score.masterBars;
+    if (masters.length < 2) return "last";
+    index = Math.max(0, Math.min(Math.round(index), masters.length - 1));
+    const tick = masters[index].start;
+    const oldLength = masters[index].calculateDuration();
+    const obj = snapshot(at, score);
+    obj.get("masterbars").splice(index, 1);
+    for (const track of obj.get("tracks")) {
+      for (const staff of track.get("staves")) staff.get("bars").splice(index, 1);
+    }
+    untieStart(obj, index);
+    return { score: restore(at, obj), tick, oldLength, newLength: 0 };
+  }
+
+  // A fórmula do compasso `index` (só dele) passa a `numerator`/`denominator`: em todas as pautas e vozes o compasso é
+  // refeito, o que passar do fim novo sai e o que faltar vira pausa. Devolve { score, tick, oldLength, newLength } ou o
+  // motivo ("signature", "grace", "figure").
+  function setTimeSignature(at, score, index, numerator, denominator) {
+    const master = score.masterBars[index];
+    if (!master) return "missing";
+    if (!(numerator >= 1 && numerator <= 32) || ![1, 2, 4, 8, 16, 32].includes(denominator)) return "signature";
+    const tick = master.start;
+    const oldLength = master.calculateDuration();
+    const plans = [];
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        const bar = staff.bars[index];
+        for (let v = 0; v < bar.voices.length; v++) {
+          if (hasGrace(at, staff, index, index, v)) return "grace";
+          if (v > 0 && !bar.voices[v].beats.some((b) => b.notes.length)) continue;
+          // Só o que começa no compasso (ou vem ligado de antes), cortado no fim antigo.
+          const events = timeline(staff, v).filter((e) => e.start < tick + oldLength)
+            .map((e) => ({ ...e, end: Math.min(e.end, tick + oldLength) }));
+          plans.push({ bar, events, v });
+        }
+      }
+    }
+    master.timeSignatureNumerator = numerator;
+    master.timeSignatureDenominator = denominator;
+    for (const plan of plans) {
+      if (!rebuildBar(at, plan.bar, plan.events, plan.v)) return "figure";
+    }
+    const obj = snapshot(at, score);
+    untieStart(obj, index + 1);
+    const fresh = restore(at, obj);
+    return { score: fresh, tick, oldLength, newLength: fresh.masterBars[index].calculateDuration() };
   }
 
   // MARK: várias notas de uma vez (⇧ clique, ⌘ clique, ⇧← →)
@@ -800,13 +925,13 @@
   // o que soava continua, ligado (menos na corda da nota nova, que é atacada de novo), e a nota nova ataca em `tick`.
   // Numa pausa, a nota vai até a próxima (ou até o fim do compasso). Devolve true ou o motivo ("fret", "short",
   // "grace", "figure").
-  function insertAt(at, staff, tick, alphaString, fret) {
+  function insertAt(at, staff, tick, alphaString, fret, v = 0) {
     const m = at.model;
     if (!staff.tuning || alphaString < 1 || alphaString > staff.tuning.length) return "fret";
     if (fret < 0 || fret > MAX_FRET) return "fret";
     tick = Math.round(tick);
     const bars = staff.bars;
-    const events = timeline(staff);
+    const events = timeline(staff, v);
     const index = events.findIndex((e) => e.start <= tick && tick < e.end);
     const note = new m.Note();
     note.string = alphaString;
@@ -841,11 +966,9 @@
     beat.addNote(note);
     const first = barAt(staff, low);
     const last = barAt(staff, high - 1);
+    if (hasGrace(at, staff, first, last, v)) return "grace";
     for (let b = first; b <= last; b++) {
-      if (bars[b].voices[0].beats.some((x) => x.graceType !== m.GraceType.None)) return "grace";
-    }
-    for (let b = first; b <= last; b++) {
-      if (!rebuildBar(at, bars[b], events)) return "figure";
+      if (!rebuildBar(at, bars[b], events, v)) return "figure";
     }
     return true;
   }
@@ -894,6 +1017,7 @@
     const rhythm = rhythmOf(length);
     return { track: staff.track.index, string: tabString(note), fret: note.fret,
       pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note),
+      voice: note.beat.voice.index + 1,
       figure: figureName(length), length, base: rhythm ? rhythm.base : null, dots: rhythm ? rhythm.dots : 0,
       triplet: rhythm ? rhythm.triplet : false, strings };
   }
@@ -912,6 +1036,9 @@
     nudge,
     retime,
     rangeOf,
+    insertBar,
+    deleteBar,
+    setTimeSignature,
     copy,
     paste,
     resolveBeat,

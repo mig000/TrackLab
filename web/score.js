@@ -148,6 +148,8 @@
     anchor: null,
     // O cursor de inserção: uma corda sem nota numa batida (o endereço da batida e a corda do alphaTab), ou null.
     caret: null,
+    // A voz em que a nota nova entra (0: voz 1; 1: voz 2).
+    caretVoice: 0,
     undo: [],
     redo: [],
     saveTimer: 0,
@@ -831,12 +833,91 @@
       && tick < b.masterBar.start + b.masterBar.calculateDuration() - 0.5);
     const holder = bar && bar.voices[voiceIndex] && bar.voices[voiceIndex].beats.find((b) =>
       b.absolutePlaybackStart <= tick + 0.5 && tick < b.absolutePlaybackStart + b.playbackDuration - 0.5);
+    if (state.caretVoice > 0) {
+      // Na voz 2 a nota nova entra sempre no tique (a voz 2 tem as batidas dela).
+      const at = holder || target;
+      state.caret = [...edit.caretOf(at, string), tick === null ? at.absolutePlaybackStart : tick, state.caretVoice];
+      return;
+    }
     if (!holder || Math.abs(holder.absolutePlaybackStart - tick) < 1) {
       const at = holder || target;
       if (!at.notes.some((n) => n.string === string)) state.caret = edit.caretOf(at, string);
       return;
     }
     state.caret = [...edit.caretOf(holder, string), tick];
+  }
+
+  // O compasso da escolha (da nota principal ou do cursor de inserção), ou null.
+  function chosenBar() {
+    if (state.caret) {
+      const beat = edit.resolveBeat(state.score, state.caret);
+      const tick = state.caret.length > 6 && state.caret[6] !== null ? state.caret[6] : beat && beat.absolutePlaybackStart;
+      const master = tick === null || tick === undefined ? null : masterAt(tick);
+      return master ? master.index : null;
+    }
+    const note = selectedNote();
+    return note ? note.beat.voice.bar.index : null;
+  }
+
+  // Os compassos para o app: quantos, onde cada um começa (mais o fim do último: a Fita desenha por eles) e as seções
+  // do Guitar Pro (Intro, Verse 1…), de que o app faz trechos de estudo.
+  function barInfo() {
+    const masters = state.score.masterBars;
+    const last = masters[masters.length - 1];
+    return {
+      bars: masters.length,
+      barTicks: masters.map((m) => m.start).concat(last ? [last.start + last.calculateDuration()] : []),
+      sections: masters
+        .filter((m) => m.section && (m.section.text || m.section.marker))
+        .map((m) => ({ tick: m.start, name: m.section.text || m.section.marker })),
+    };
+  }
+
+  // Pôr um compasso antes ou depois do da escolha, apagá-lo ou mudar a fórmula dele, em todas as pistas. O mapa de
+  // tempo acompanha (o que vem depois fica no mesmo lugar do áudio) e vai ao app com os compassos novos; o Desfazer
+  // volta os dois.
+  function barEdit(value) {
+    const index = chosenBar();
+    if (index === null || !value) {
+      post({ type: "notice", text: "Escolha uma nota ou uma linha da TAB no compasso." });
+      return;
+    }
+    let info = null;
+    let reason = null;
+    change((step) => {
+      let result;
+      if (value.action === "insert-before") result = edit.insertBar(alphaTab, state.score, index);
+      else if (value.action === "insert-after") result = edit.insertBar(alphaTab, state.score, index + 1);
+      else if (value.action === "delete") result = edit.deleteBar(alphaTab, state.score, index);
+      else if (value.action === "signature") {
+        result = edit.setTimeSignature(alphaTab, state.score, index, value.numerator, value.denominator);
+      }
+      if (!result || typeof result === "string") {
+        reason = result || "missing";
+        return false;
+      }
+      const kind = value.action === "delete" ? "delete" : value.action === "signature" ? "signature" : "insert";
+      const bar = value.action === "insert-after" ? index + 1 : index;
+      info = { tick: result.tick, oldLength: result.oldLength, newLength: result.newLength, bar, kind };
+      // O passo do Desfazer volta a mudança ao contrário.
+      step.change = { ...info, oldLength: info.newLength, newLength: info.oldLength,
+        kind: { insert: "delete", delete: "insert", signature: "signature" }[kind] };
+      state.score = result.score;
+      state.points = core.reshapePoints(state.points, info.tick, info.oldLength, info.newLength);
+      return true;
+    });
+    if (reason) {
+      const text = { last: "A música não fica sem compasso.", signature: "Fórmula de compasso inválida.",
+        grace: RETIME_REASONS.grace, figure: "O compasso não cabe em figuras nessa fórmula." }[reason];
+      post({ type: "notice", text: text || "Não deu para mudar o compasso." });
+      return;
+    }
+    choose(null);
+    drawSelection();
+    postSelection();
+    post({ type: "structure", points: state.points, change: info, ...barInfo() });
+    const what = { insert: "Compasso posto", delete: "Compasso apagado", signature: "Fórmula mudada" }[info.kind];
+    post({ type: "notice", text: `${what} · o mapa de tempo acompanhou · ⌘Z desfaz` });
   }
 
   // O compasso (do score) em que um tique cai.
@@ -1048,7 +1129,14 @@
       type: "selection",
       caret: caretBeat ? { place: placeName(state.caret.length > 6 ? state.caret[6] : caretBeat.absolutePlaybackStart),
         string: caretBeat.voice.bar.staff.tuning.length - state.caret[5] + 1, rest: caretBeat.notes.length === 0,
-        inside: state.caret.length > 6, figure: edit.figureName(caretBeat.playbackDuration) } : null,
+        inside: state.caret.length > 6 && Math.abs(state.caret[6] - caretBeat.absolutePlaybackStart) >= 1,
+        voice: (state.caret[7] || 0) + 1, figure: edit.figureName(caretBeat.playbackDuration) } : null,
+      bar: (() => {
+        const index = state.score ? chosenBar() : null;
+        const master = index === null ? null : state.score.masterBars[index];
+        return master ? { index, numerator: master.timeSignatureNumerator, denominator: master.timeSignatureDenominator }
+          : null;
+      })(),
       note: note ? Object.assign(edit.describe(alphaTab, note), {
         place: placeName(note.beat.absolutePlaybackStart),
         count: notes.length,
@@ -1064,13 +1152,14 @@
   // Uma mudança na partitura: o passo do Desfazer antes, a cópia (o finish) depois, o desenho novo, a gravação adiada.
   function change(apply) {
     const before = { score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
-      anchor: state.anchor };
-    if (!apply()) {
+      anchor: state.anchor, points: state.points, change: null };
+    if (!apply(before)) {
       // Uma mudança que não deu pode ter mexido em parte (várias notas, um compasso refeito pela metade): volta tudo.
       state.score = edit.restore(alphaTab, before.score);
       state.selected = before.selected;
       state.group = before.group;
       state.anchor = before.anchor;
+      state.points = before.points;
       core.showPreferences(state.score);
       render();
       return;
@@ -1120,13 +1209,23 @@
         return;
       }
       // Cada passo leva a nota escolhida de então: desfazer uma troca de corda volta a escolher a nota na corda antiga.
-      to.push({ score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
-        anchor: state.anchor });
       const step = from.pop();
+      // Um passo que mudou os compassos leva o mapa de tempo junto (e o app desfaz o que andou com ele).
+      const reverse = step.change ? { ...step.change, oldLength: step.change.newLength, newLength: step.change.oldLength,
+        kind: { insert: "delete", delete: "insert", signature: "signature" }[step.change.kind] } : null;
+      to.push({ score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
+        anchor: state.anchor, points: state.points, change: reverse });
       state.selected = step.selected;
       state.group = step.group || null;
       state.anchor = step.anchor || step.selected;
       state.caret = null;
+      if (step.points && step.points !== state.points) {
+        state.points = step.points;
+        replace(edit.restore(alphaTab, step.score));
+        // O que acontece agora é a mudança guardada no passo (a contrária da que ele desfaz).
+        post({ type: "structure", points: state.points, change: step.change, ...barInfo() });
+        return;
+      }
       replace(edit.restore(alphaTab, step.score));
       return;
     }
@@ -1146,6 +1245,23 @@
     }
     if (op === "paste") {
       pasteAt(value);
+      return;
+    }
+    if (op === "bar") {
+      barEdit(value);
+      return;
+    }
+    if (op === "voice") {
+      // A voz da nota nova (1 ou 2): o cursor de inserção passa a pôr nela.
+      state.caretVoice = value === 2 ? 1 : 0;
+      if (state.caret) {
+        const beat = edit.resolveBeat(state.score, state.caret);
+        const tick = state.caret.length > 6 && state.caret[6] !== null ? state.caret[6] : beat ? beat.absolutePlaybackStart : null;
+        state.caret = [...state.caret.slice(0, 6), state.caretVoice > 0 ? tick : state.caret[6] ?? null, state.caretVoice];
+        if (state.caretVoice === 0 && beat && Math.abs(beat.absolutePlaybackStart - tick) < 1) state.caret = state.caret.slice(0, 6);
+      }
+      drawSelection();
+      postSelection();
       return;
     }
     if (state.caret) {
@@ -1408,7 +1524,7 @@
           const where = { track: staff.track.index, tick, string: count - string + 1 };
           let reason = null;
           change(() => {
-            const result = edit.insertAt(alphaTab, staff, tick, string, value);
+            const result = edit.insertAt(alphaTab, staff, tick, string, value, state.caret[7] || 0);
             if (result !== true) reason = result;
             return result === true;
           });
@@ -1757,13 +1873,9 @@
       state.others = Array.isArray(payload.others) ? payload.others.filter(Number.isInteger) : [];
       setPage(Boolean(payload.page));
       state.points = core.cleanPoints(payload.points);
-      const masters = state.score.masterBars;
-      const last = masters[masters.length - 1];
       post({
         type: "loaded",
-        bars: masters.length,
-        // Início de cada compasso em tiques, mais o fim do último: a Fita desenha os compassos por eles.
-        barTicks: masters.map((m) => m.start).concat(last ? [last.start + last.calculateDuration()] : []),
+        ...barInfo(),
         tracks: state.score.tracks.map((track, index) => ({
           index,
           name: track.name || "Faixa " + (index + 1),
@@ -1771,10 +1883,6 @@
         })),
         // As notas de cada pista, para as barras sobre o espectro da Fita.
         notes: core.trackNotes(state.score),
-        // As seções marcadas no Guitar Pro (Intro, Verse 1…): o app faz trechos de estudo com elas.
-        sections: masters
-          .filter((m) => m.section && (m.section.text || m.section.marker))
-          .map((m) => ({ tick: m.start, name: m.section.text || m.section.marker })),
       });
       render();
     },

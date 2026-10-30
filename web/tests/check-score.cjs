@@ -32,6 +32,28 @@ test("segundos e tiques pelo mapa", () => {
   assert.ok(Math.abs(core.tickToSeconds(points, core.secondsToTick(points, 3.7)) - 3.7) < 1e-9);
 });
 
+test("o mapa acompanha um compasso posto, apagado ou com outra fórmula", () => {
+  // Compassos 4/4 de 2 s (pontos em 0, 3840, 7680, 11520).
+  const map = core.cleanPoints([
+    { tick: 0, seconds: 0, kind: "detected" }, { tick: 1920, seconds: 1, kind: "interpolated" },
+    { tick: 3840, seconds: 2, kind: "detected" }, { tick: 7680, seconds: 4, kind: "detected" },
+    { tick: 11520, seconds: 6, kind: "detected" },
+  ]);
+  // Um compasso posto antes do 2 (tique 3840): o 2 de antes continua em 2 s, agora no tique 7680; o 1 e o novo
+  // repartem os 2 s do 1 pelos tiques (metade cada), o meio do 1 junto.
+  const put = core.reshapePoints(map, 3840, 0, 3840);
+  assert.deepEqual(put.map((p) => [p.tick, p.seconds]), [[0, 0], [1920, 0.5], [3840, 1], [7680, 2], [11520, 4], [15360, 6]]);
+  // Apagado o compasso 2 (3840–7680): o 3 continua em 4 s, agora no tique 3840; o 1 estica por igual até lá.
+  const gone = core.reshapePoints(map, 3840, 3840, 0);
+  assert.deepEqual(gone.map((p) => [p.tick, p.seconds]), [[0, 0], [1920, 2], [3840, 4], [7680, 6]]);
+  // O compasso 1 em 2/4: o de dentro estica no tempo dele, o 2 continua em 2 s, agora no tique 1920.
+  const two = core.reshapePoints(map, 0, 3840, 1920);
+  assert.deepEqual(two.map((p) => [p.tick, p.seconds]), [[0, 0], [960, 1], [1920, 2], [5760, 4], [9600, 6]]);
+  // O último compasso apagado: a música termina onde ele começava.
+  const last = core.reshapePoints(map, 7680, 3840, 0);
+  assert.deepEqual(last.map((p) => [p.tick, p.seconds]).at(-1), [7680, 6]);
+});
+
 test("pontos fora de ordem ou repetidos saem", () => {
   const clean = core.cleanPoints([{ tick: 960, seconds: 2 }, { tick: 0, seconds: 1 }, { tick: 960, seconds: 2.1 }, { tick: 1920, seconds: 1.5 }, { tick: "x" }]);
   assert.deepEqual(clean.map((p) => p.tick), [0, 960]);

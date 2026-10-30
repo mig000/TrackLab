@@ -85,6 +85,52 @@
     return piecewise(points, tick, (p) => p.tick, (p) => p.seconds);
   }
 
+  // O mapa de tempo depois de um trecho de `oldLength` tiques em `tick` virar `newLength` (um compasso posto, apagado ou
+  // com outra fórmula). O que vem depois anda nos tiques e fica nos mesmos segundos (continua no lugar do áudio); os
+  // pontos de dentro de um compasso que mudou de fórmula se esticam no tempo dele. Um compasso posto reparte com o de
+  // antes o tempo que era dele, e um apagado deixa o tempo dele para o de antes: o de antes (desde o último ponto que não
+  // é interpolado) encolhe ou estica por igual, com as batidas dele na mesma proporção.
+  function reshapePoints(points, tick, oldLength, newLength) {
+    const end = tick + oldLength;
+    const delta = newLength - oldLength;
+    const before = points.filter((p) => p.tick < tick - 0.5);
+    const base = before.slice().reverse().find((p) => p.kind !== "interpolated") || before[0] || null;
+    // O tempo do compasso de antes: até `tick` hoje; depois, até onde o seguinte começa (posto: o novo cabe nele).
+    const was = tickToSeconds(points, tick);
+    const will = newLength === 0 ? tickToSeconds(points, end) : was;
+    const share = base && oldLength === 0 ? (tick - base.tick) / (tick + newLength - base.tick) : 1;
+    const stretch = base && newLength === 0 && was > base.seconds ? (will - base.seconds) / (was - base.seconds) : 1;
+    const scale = (p) => (base && p.tick > base.tick + 0.5 && p.tick < tick - 0.5
+      ? { ...p, seconds: base.seconds + (p.seconds - base.seconds) * share * stretch } : p);
+    const out = [];
+    for (const p of points) {
+      if (p.tick < tick - 0.5) {
+        out.push(scale(p));
+      } else if (p.tick >= end - 0.5 && (oldLength > 0 || p.tick >= tick - 0.5)) {
+        out.push({ ...p, tick: p.tick + delta });
+      } else if (oldLength > 0 && newLength > 0) {
+        out.push({ ...p, tick: tick + (p.tick - tick) * (newLength / oldLength) });
+      }
+      // Apagado: os pontos de dentro (e o do começo, que o seguinte ocupa) saem.
+    }
+    if (oldLength === 0 && newLength > 0) {
+      // O começo do compasso posto: o compasso de antes e ele repartem o tempo, pelos tiques.
+      const seconds = base ? base.seconds + (was - base.seconds) * share : was - newLength * slopeAt(points);
+      out.push({ tick, seconds, kind: "interpolated" });
+    }
+    if (newLength === 0 && !out.some((p) => Math.abs(p.tick - tick) < 0.5)) {
+      // O último compasso apagado: o fim dele vira o fim da música.
+      out.push({ tick, seconds: tickToSeconds(points, end), kind: "interpolated" });
+    }
+    return cleanPoints(out.sort((a, b) => a.tick - b.tick));
+  }
+
+  // Segundos por tique no começo do mapa (para um compasso posto antes de tudo).
+  function slopeAt(points) {
+    if (points.length < 2) return 0.5 / 960;
+    return (points[1].seconds - points[0].seconds) / Math.max(1, points[1].tick - points[0].tick);
+  }
+
   // Âncoras [tique, x] da pauta desenhada, em ordem de tique; x nunca volta. Num tique repetido (o fim de um
   // compasso e o início do seguinte) fica o maior x: depois da clave e da fórmula, quando o seguinte as tem.
   function cleanAnchors(anchors) {
@@ -256,6 +302,7 @@
     secondsToTick,
     beatIndexAt,
     tickToSeconds,
+    reshapePoints,
     cleanAnchors,
     tickAtX,
     followX,
