@@ -10,6 +10,7 @@ import TrackLabCore
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
+///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
 struct TabEditBar: View {
     let model: SongModel
 
@@ -100,18 +101,28 @@ struct TabEditBar: View {
             if let message = model.tabMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            HStack(spacing: 2) {
+                Button { model.nextSuspect(-1) } label: { Image(systemName: "chevron.left") }
+                    .help("⇧Tab: a nota suspeita anterior")
+                Text("\(model.suspects(track: model.scoreTrack).count) suspeitas")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Button { model.nextSuspect(1) } label: { Image(systemName: "chevron.right") }
+                    .help("Tab: a nota suspeita seguinte (o som discorda da escrita: altura, bend, trinado)")
+            }
+            .fixedSize()
             Button("Encaixar no som") { model.fitToSound() }
                 .disabled(selection == nil)
                 .help("F: a altura, o bend e o vibrato que o som da nota tem (pela curva do espectro)")
-                        Button("Concluir") { model.editingTab = false }
+            Button("Concluir") { model.editingTab = false }
         }
-        .background(TabEditKeys(model: model))
     }
 }
 
-/// As teclas da edição: um monitor local de teclado, ligado só com a edição, que pega as teclas antes dos atalhos
-/// do transporte (setas, letras) e deixa passar o espaço (tocar) e o que tem ⌘ (os menus).
-private struct TabEditKeys: NSViewRepresentable {
+/// As teclas da edição: um monitor local de teclado, na tela da música (`SongView`), que só age com a edição ligada
+/// (e no Tab com o espectro à vista), pega as teclas antes dos atalhos do transporte (setas, letras) e deixa passar o
+/// espaço (tocar) e o que tem ⌘ (os menus).
+struct TabEditKeys: NSViewRepresentable {
     let model: SongModel
 
     func makeNSView(context: Context) -> KeyView {
@@ -154,9 +165,14 @@ private struct TabEditKeys: NSViewRepresentable {
 
         @MainActor
         private func handle(_ event: NSEvent, _ model: SongModel) -> Bool {
-            guard model.editingTab else { return false }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if flags.contains(.command) || flags.contains(.control) { return false }
+            // Tab: a suspeita seguinte; com o espectro à vista vale também fora da edição (ela liga a edição).
+            if event.keyCode == 48, model.editingTab || model.fitaMode == .spectrum {
+                model.nextSuspect(flags.contains(.shift) ? -1 : 1)
+                return true
+            }
+            guard model.editingTab else { return false }
             let option = flags.contains(.option)
             switch event.keyCode {
             case 126: model.tabEdit(option ? "transpose" : "string", 1); return true      // ↑

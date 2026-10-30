@@ -155,7 +155,14 @@ a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao s
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
 bend e o vibrato do som (`fit` na página). O Guitar Pro 7 guarda o bend como origem, meio de um valor só e destino, e
 reduz um Bend aos dois da ponta: o encaixe manda `(sai, 0) → (chega, q)` ou, se volta, quatro pontos
-(`CurveFit.guitarPro`). O trinado ainda não se escreve (a nota fica na casa mais perto). Mover a nota no tempo, que a
+(`CurveFit.guitarPro`). O trinado ainda não se escreve (a nota fica na casa mais perto).
+Notas suspeitas (`SoundNote.disagreements`): o som discorda da escrita na altura, no bend (meio tom de diferença; uma
+subida que só sai no último quarto da nota é a passagem para a seguinte) ou num trinado; o vibrato fica de fora (no
+Sunshine eram 22 das 75, quase sempre um vibrato que a TAB não escreve) e notas de acorde não acusam. Com o espectro à
+vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
+notas, pista ou mapa; a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
+com o espectro) vão de uma a outra: escolhem a nota, levam a agulha e dizem o que o som tem; o monitor de teclas da
+edição (`TabEditKeys`) fica na tela da música. Sunshine (lead): 56 de 1.657 notas. Mover a nota no tempo, que a
 Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a

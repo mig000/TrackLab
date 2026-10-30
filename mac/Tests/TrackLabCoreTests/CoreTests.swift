@@ -362,3 +362,29 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: nil, count: 120)),
                       start: 1, end: 2, pitch: 60).fit == nil)
 }
+
+@Test func notasSuspeitasPeloSom() throws {
+    let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
+    let flat = SoundNote(curve: soundCurve(1, 2) { _ in 60.1 }, start: 1, end: 2, pitch: 60)
+    #expect(flat.disagreements(with: plain).isEmpty)
+    // Um semitom acima do escrito: só a altura.
+    let sharp = SoundNote(curve: soundCurve(1, 2) { _ in 61 }, start: 1, end: 2, pitch: 60)
+    #expect(sharp.disagreements(with: plain) == [.pitch(61)])
+    // Bend de um tom escrito que o som não faz; e o mesmo som numa nota de acorde: nada a dizer.
+    let bent = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1,
+                         bend: [.init(offset: 0, value: 0), .init(offset: 30, value: 4)])
+    #expect(flat.disagreements(with: bent) == [.bend(0)])
+    #expect(SoundNote(curve: soundCurve(1, 2) { _ in 61 }, start: 1, end: 2, pitch: 60, chord: true)
+        .disagreements(with: plain).isEmpty)
+    // O som sobe um tom e a nota não tem bend; com o bend escrito de um tom, nada.
+    let rising = SoundNote(curve: soundCurve(1, 2) { $0 < 1.25 ? 60 : min(62, 60 + ($0 - 1.25) * 20) },
+                           start: 1, end: 2, pitch: 60)
+    #expect(rising.disagreements(with: plain) == [.bend(4)])
+    #expect(rising.disagreements(with: bent).isEmpty)
+    // Subindo só nos últimos 120 ms: a passagem para a nota seguinte, não um bend.
+    let leaving = SoundNote(curve: soundCurve(1, 2) { $0 < 1.88 ? 60 : 60 + ($0 - 1.88) * 25 }, start: 1, end: 2, pitch: 60)
+    #expect((leaving.fit?.quarterTones ?? 0) >= 2 && leaving.disagreements(with: plain).isEmpty)
+    // Vibrato no som e não na nota: não é suspeita (a TAB costuma não escrever).
+    let wavy = SoundNote(curve: soundCurve(1, 2) { 60 + 0.15 * (1 - cos(2 * .pi * 6 * ($0 - 1))) }, start: 1, end: 2, pitch: 60)
+    #expect(wavy.disagreements(with: plain).isEmpty)
+}

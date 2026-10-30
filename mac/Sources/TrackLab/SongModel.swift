@@ -30,11 +30,16 @@ final class SongModel {
             guard scoreTrack != oldValue else { return }
             if scoreSecond == scoreTrack { scoreSecond = nil }
             bridge.showTrack(scoreTrack)
+            measureLater()
         }
     }
     /// Uma segunda pista embaixo da principal (a base, o baixo, a bateria…), nos mesmos compassos.
     var scoreSecond: Int? {
-        didSet { if scoreSecond != oldValue { bridge.showSecond(scoreSecond) } }
+        didSet {
+            guard scoreSecond != oldValue else { return }
+            bridge.showSecond(scoreSecond)
+            measureLater()
+        }
     }
     private(set) var scoreMessage: String?
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
@@ -84,7 +89,10 @@ final class SongModel {
     }
 
     var fitaMode = FitaMode.wave {
-        didSet { if fitaMode == .spectrum, spectrum == nil { Task { await loadSpectrum() } } }
+        didSet {
+            if fitaMode == .spectrum, spectrum == nil { Task { await loadSpectrum() } }
+            measureLater()
+        }
     }
     /// O espectro da guitarra separada (ou do original) e a imagem dele, feitos uma vez por música.
     private(set) var spectrum: Spectrum?
@@ -101,7 +109,15 @@ final class SongModel {
     /// A janela de alturas do espectro na Fita (desliza até a das notas do trecho).
     @ObservationIgnored let pitchWindow = PitchWindow()
     /// As notas de cada pista da partitura (pelo índice da pista), para as barras sobre o espectro.
-    private(set) var scoreNotes: [[ScoreNote]] = []
+    private(set) var scoreNotes: [[ScoreNote]] = [] {
+        didSet {
+            notesVersion += 1
+            measureLater()
+        }
+    }
+    /// Muda com as notas e com o mapa (as chaves das curvas levam o tempo da nota): a lista de suspeitas se refaz.
+    @ObservationIgnored private var notesVersion = 0
+    @ObservationIgnored private var suspectCache: (key: [Int], list: [(note: ScoreNote, reasons: [SoundDisagreement])])?
 
     /// ⇧ + arrastar em curso: quanto a onda da Fita andou sob as linhas paradas, em segundos.
     private(set) var soundShift = 0.0
@@ -283,33 +299,61 @@ final class SongModel {
 
     /// Pede ao motor as curvas das notas que aparecem e ainda não têm (de fora do desenho: a Fita chama no quadro).
     func askCurves(_ notes: [ScoreNote], track: Int) {
-        let missing = notes.filter { !curvesAsked.contains(curveKey($0, track: track)) }
-        guard !missing.isEmpty else { return }
-        let list = missing.prefix(120).map { note in
+        let batch = Array(notes.filter { !curvesAsked.contains(curveKey($0, track: track)) }.prefix(120))
+        guard !batch.isEmpty else { return }
+        batch.forEach { curvesAsked.insert(curveKey($0, track: track)) }
+        DispatchQueue.main.async { [weak self] in
+            Task { await self?.fetchCurves(batch, track: track) }
+        }
+    }
+
+    /// As curvas de `batch` (já marcadas como pedidas), guardadas como `SoundNote`.
+    private func fetchCurves(_ batch: [ScoreNote], track: Int) async {
+        let list = batch.map { note in
             (key: curveKey(note, track: track), start: grid.seconds(at: note.tick),
              end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
         }
-        list.forEach { curvesAsked.insert($0.key) }
         // As notas de acorde (outra nota da pista na mesma batida): a faixa fica na escrita, sem trinado.
-        let ticks = Set(missing.prefix(120).map(\.tick))
+        let ticks = Set(batch.map(\.tick))
         var count: [Double: Int] = [:]
         if scoreNotes.indices.contains(track) {
             for note in scoreNotes[track] where ticks.contains(note.tick) { count[note.tick, default: 0] += 1 }
         }
-        let chords = Set(missing.prefix(120).filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            Task {
-                guard let curves = try? await Backend.shared.pitchCurves(self.id, notes: list) else { return }
-                for item in list {
-                    guard let curve = curves[item.key] else { continue }
-                    self.soundNotes[item.key] = SoundNote(curve: curve, start: item.start, end: item.end,
-                                                          pitch: Double(item.pitch), chord: chords.contains(item.key))
+        let chords = Set(batch.filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
+        guard let curves = try? await Backend.shared.pitchCurves(id, notes: list) else { return }
+        for item in list {
+            guard let curve = curves[item.key] else { continue }
+            soundNotes[item.key] = SoundNote(curve: curve, start: item.start, end: item.end,
+                                             pitch: Double(item.pitch), chord: chords.contains(item.key))
+        }
+        pitchCurvesVersion += 1
+    }
+
+    /// No espectro, as curvas da pista inteira (e da segunda), em lotes, um pouco depois da última mudança (notas,
+    /// pista, mapa): as suspeitas valem para a música toda, não só para a tela.
+    private func measureLater() {
+        measureTask?.cancel()
+        guard fitaMode == .spectrum else { return }
+        measureTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard let self, !Task.isCancelled else { return }
+            measuring = true
+            defer { measuring = false }
+            for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? []) where scoreNotes.indices.contains(track) {
+                while !Task.isCancelled {
+                    let batch = Array(scoreNotes[track].filter { !self.curvesAsked.contains(self.curveKey($0, track: track)) }
+                        .prefix(120))
+                    guard !batch.isEmpty else { break }
+                    batch.forEach { self.curvesAsked.insert(self.curveKey($0, track: track)) }
+                    await fetchCurves(batch, track: track)
                 }
-                self.pitchCurvesVersion += 1
             }
         }
     }
+
+    @ObservationIgnored private var measureTask: Task<Void, Never>?
+    /// Medindo as curvas da pista inteira (as suspeitas ainda podem aumentar).
+    private(set) var measuring = false
 
     func loadSpectrum() async {
         guard let detail else { return }
@@ -673,6 +717,65 @@ final class SongModel {
             .map { ($0, selection.track) }
     }
 
+    /// As notas da pista em que o som discorda da escrita (`SoundNote.disagreements`), em ordem de tempo e de corda.
+    func suspects(track: Int) -> [(note: ScoreNote, reasons: [SoundDisagreement])] {
+        guard scoreNotes.indices.contains(track) else { return [] }
+        let key = [pitchCurvesVersion, notesVersion, track]
+        if let suspectCache, suspectCache.key == key { return suspectCache.list }
+        let list = scoreNotes[track].compactMap { note -> (note: ScoreNote, reasons: [SoundDisagreement])? in
+            guard let reasons = soundNotes[curveKey(note, track: track)]?.disagreements(with: note), !reasons.isEmpty
+            else { return nil }
+            return (note, reasons)
+        }
+        .sorted { ($0.note.tick, $0.note.string) < ($1.note.tick, $1.note.string) }
+        suspectCache = (key, list)
+        return list
+    }
+
+    /// Tab e ⇧Tab: a suspeita seguinte (ou a anterior) da pista, a partir da nota escolhida ou da agulha. Escolhe a
+    /// nota (liga a edição), leva a agulha até ela e diz o que o som tem.
+    func nextSuspect(_ delta: Int) {
+        let track = scoreTrack
+        let list = suspects(track: track)
+        guard !list.isEmpty else {
+            tabMessage = measuring ? "Medindo o som das notas…" : "Nenhuma nota suspeita nesta pista."
+            return
+        }
+        let here: (tick: Double, string: Int)? = selectedScoreNote().flatMap { $0.track == track ? ($0.note.tick, $0.note.string) : nil }
+        let index: Int
+        if let here {
+            let key = (here.tick, here.string)
+            if delta > 0 {
+                index = list.firstIndex { ($0.note.tick, $0.note.string) > key } ?? 0
+            } else {
+                index = list.lastIndex { ($0.note.tick, $0.note.string) < key } ?? list.count - 1
+            }
+        } else {
+            let now = grid.tick(at: engine.currentTime)
+            if delta > 0 {
+                index = list.firstIndex { $0.note.tick >= now - 1 } ?? 0
+            } else {
+                index = list.lastIndex { $0.note.tick < now - 1 } ?? list.count - 1
+            }
+        }
+        let (note, reasons) = list[index]
+        selectNote(note, track: track)
+        engine.seek(to: grid.seconds(at: note.tick))
+        tabMessage = "Suspeita \(index + 1) de \(list.count)\(measuring ? "…" : ""): " + Self.describe(reasons) + " · F encaixa"
+    }
+
+    /// O que o som tem, em palavras.
+    static func describe(_ reasons: [SoundDisagreement]) -> String {
+        reasons.map { reason in
+            switch reason {
+            case let .pitch(pitch): "soa \(pitchName(pitch))"
+            case let .bend(quarterTones): quarterTones > 0 ? "o som dobra \(bendName(quarterTones))" : "o som não dobra"
+            case let .trill(low, high): "trinado \(pitchName(low))⇄\(pitchName(high))"
+            }
+        }
+        .joined(separator: ", ")
+    }
+
     /// F: encaixa a nota escolhida no som (a altura medida, o bend que ele faz e o vibrato), como o Encaixar da Lente.
     func fitToSound() {
         guard editingTab, let (note, track) = selectedScoreNote() else { return }
@@ -815,6 +918,8 @@ final class SongModel {
         tempoMap = map
         grid = TempoGrid(points: map.points, barTicks: grid.barTicks)
         bridge.setTempo(map.points)
+        notesVersion += 1
+        measureLater()
     }
 
     // MARK: - Separação (a escada da Fase 4)

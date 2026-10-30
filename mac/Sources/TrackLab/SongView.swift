@@ -69,6 +69,7 @@ struct SongView: View {
                     .padding(.vertical, 8)
             }
         }
+        .background(TabEditKeys(model: model))
         // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
         .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
         // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.

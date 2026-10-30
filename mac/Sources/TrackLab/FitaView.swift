@@ -298,6 +298,7 @@ struct FitaView: View {
             var shapes = Path()
             var attacks = Path()
             var dots = Path()
+            var suspect = Path()
             var chosen: (shape: Path, line: Path?)?
             for note in notes {
                 let s0 = model.grid.seconds(at: note.tick)
@@ -328,6 +329,11 @@ struct FitaView: View {
                                    style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     context.draw(Text(SongModel.pitchName(note.pitch + Int(lift))).font(.caption.weight(.semibold))
                         .foregroundStyle(color), at: CGPoint(x: x1 + 6, y: centers[0].y), anchor: .leading)
+                }
+                // Suspeita (o som discorda da escrita): contorno vermelho e um ponto sobre o ataque.
+                if let sound, !sound.disagreements(with: note).isEmpty {
+                    suspect.addPath(band)
+                    suspect.addEllipse(in: CGRect(x: x0 - 3, y: Double(centers[0].y) - thick / 2 - 9, width: 6, height: 6))
                 }
                 // O ataque: um traço mais forte na ponta.
                 attacks.addRect(CGRect(x: x0.rounded() - 1, y: Double(centers[0].y) - thick / 2 - 2, width: 2.5, height: thick + 4))
@@ -373,6 +379,8 @@ struct FitaView: View {
                 glow.stroke(chosen.shape, with: .color(color), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
             }
             context.fill(attacks, with: .color(color))
+            let red = Color(red: 1, green: 0.36, blue: 0.36)
+            context.stroke(suspect, with: .color(red), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
             let orange = Color(red: 1, green: 138 / 255, blue: 61 / 255)
             context.fill(dots, with: .color(orange.opacity(0.55)))
             if let line = chosen?.line {
@@ -386,6 +394,15 @@ struct FitaView: View {
         }
         if let index = model.scoreSecond { bands(second, track: index, rgb: (91, 155, 255)) }
         bands(main, track: model.scoreTrack, rgb: (245, 181, 68))
+        // Quantas suspeitas a pista tem (a música toda), no canto: Tab vai de uma a outra.
+        let suspects = model.suspects(track: model.scoreTrack).count
+        if suspects > 0 || model.measuring {
+            let text = suspects == 0 ? "Medindo o som das notas…"
+                : "\(suspects) nota\(suspects == 1 ? "" : "s") suspeita\(suspects == 1 ? "" : "s")\(model.measuring ? "…" : "") · Tab"
+            context.draw(Text(text).font(.caption.weight(.medium))
+                            .foregroundStyle(suspects > 0 ? Color(red: 1, green: 0.45, blue: 0.45) : .secondary),
+                         at: CGPoint(x: width - 8, y: 6), anchor: .topTrailing)
+        }
 
         // O teclado à esquerda (o da Lente): as teclas brancas e pretas de cada semitom, os Dós e os Mis com nome.
         let gutter = Self.keyboardWidth

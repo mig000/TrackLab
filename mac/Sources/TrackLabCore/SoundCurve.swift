@@ -281,3 +281,32 @@ public struct SoundNote: Sendable {
         return CurveFit.Trill(low: Int(bottom.rounded()), high: Int(top.rounded()), gap: gap)
     }
 }
+
+/// O que o som diz contra a nota escrita: as notas suspeitas da Fita (contorno vermelho) e o Tab do editor, que vai de
+/// uma a outra. É o que o Encaixar (F) mudaria no que se toca, com folga para não acusar à toa: a altura, o bend com
+/// meio tom de diferença e o trinado. O vibrato fica de fora (no Sunshine eram 22 das 75, quase sempre um vibrato que a
+/// TAB não escreve; o F ainda o põe). Sem curva clara ou numa nota de acorde (a curva pula entre as cordas) não há o
+/// que dizer.
+public enum SoundDisagreement: Hashable, Sendable {
+    /// Soa noutra altura (a medida, presa no semitom).
+    case pitch(Int)
+    /// O bend que soa, em quartos de tom (0: o som não dobra), longe do escrito.
+    case bend(Int)
+    /// Ligados rápidos entre duas casas, que a TAB não tem.
+    case trill(low: Int, high: Int)
+}
+
+extension SoundNote {
+    public func disagreements(with note: ScoreNote) -> [SoundDisagreement] {
+        guard !chord, let fit else { return [] }
+        if let trill = fit.trill { return [.trill(low: trill.low, high: trill.high)] }
+        // Noutra altura, o bend e o vibrato foram medidos em volta da nota errada: só a altura.
+        if fit.base != note.pitch { return [.pitch(fit.base)] }
+        let written = Int(note.bend.map(\.value).max() ?? 0)
+        guard abs(fit.quarterTones - written) >= 2 else { return [] }
+        // Uma subida que só sai no último quarto da nota é a passagem para a seguinte (ligado, slide), não um bend.
+        let leave = fit.points?.prefix { $0.value == 0 }.last?.offset ?? 0
+        if written == 0, leave >= 45 { return [] }
+        return [.bend(fit.quarterTones)]
+    }
+}
