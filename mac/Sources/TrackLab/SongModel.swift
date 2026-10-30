@@ -639,13 +639,53 @@ final class SongModel {
     // MARK: - Ajuste
 
     /// Leva a batida do `tick` até `seconds` como âncora: as vizinhas acompanham até 8 batidas ou até a próxima âncora.
-    func moveBeat(tick: Double, to seconds: Double) {
-        edit(.init(action: "move", tick: tick, seconds: seconds))
+    func moveBeat(tick: Double, to seconds: Double, message: String? = nil) {
+        edit(.init(action: "move", tick: tick, seconds: seconds), message: message)
     }
 
     /// Duplo clique: uma âncora se solta (fica onde está); uma batida solta vira âncora onde está.
     func toggleAnchor(_ point: TempoPoint) {
         edit(.init(action: point.isAnchor ? "release" : "move", tick: point.tick, seconds: point.isAnchor ? nil : point.seconds))
+    }
+
+    /// Em cada compasso (índice 0…), quanto os ataques medidos das notas (da pista e da segunda) chegam depois (+) ou
+    /// antes (−) da escrita: `SoundSync.barOffsets`. Vem das curvas, então só com o espectro, que as mede.
+    func barOffsets() -> [Int: Double] {
+        let key = [pitchCurvesVersion, notesVersion]
+        if let offsetCache, offsetCache.key == key { return offsetCache.offsets }
+        var notes: [(start: Double, attack: Double?)] = []
+        for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? []) where scoreNotes.indices.contains(track) {
+            for note in scoreNotes[track] {
+                guard let sound = soundNotes[curveKey(note, track: track)], !sound.chord else { continue }
+                notes.append((grid.seconds(at: note.tick), sound.curve.attack))
+            }
+        }
+        let offsets = SoundSync.barOffsets(notes, bars: grid.bars)
+        offsetCache = (key, offsets)
+        return offsets
+    }
+
+    @ObservationIgnored private var offsetCache: (key: [Int], offsets: [Int: Double])?
+
+    /// A: o 1 do compasso que toca vai para onde os ataques dele soam (a mediana, `barOffsets`); vira âncora e as
+    /// vizinhas acompanham, como num arrasto.
+    func syncBarToSound() {
+        guard let bar = grid.bar(at: engine.currentTime), grid.barTicks.indices.contains(bar - 1) else { return }
+        guard fitaMode == .spectrum else {
+            adjustMessage = "Abra o espectro: é ele que mede quando as notas soam."
+            return
+        }
+        guard let offset = barOffsets()[bar - 1] else {
+            adjustMessage = measuring ? "Medindo o som das notas…" : "Compasso \(bar): poucas notas com ataque claro para dizer."
+            return
+        }
+        guard abs(offset) >= 0.01 else {
+            adjustMessage = "Compasso \(bar): o som já cai na batida."
+            return
+        }
+        moveBeat(tick: grid.barTicks[bar - 1], to: grid.bars[bar - 1] + offset,
+                 message: "Compasso \(bar): o som vinha \(Int((abs(offset) * 1000).rounded())) ms "
+                    + (offset > 0 ? "depois" : "antes") + "; o 1 foi até ele.")
     }
 
     /// U, "o 1 é aqui": o início de compasso mais perto do que se ouve agora vai até este instante.
@@ -843,6 +883,7 @@ final class SongModel {
             case let .pitch(pitch): "soa \(pitchName(pitch))"
             case let .bend(quarterTones): quarterTones > 0 ? "o som dobra \(bendName(quarterTones))" : "o som não dobra"
             case let .trill(low, high): "trinado \(pitchName(low))⇄\(pitchName(high))"
+            case .noTrill: "o som não faz o trinado escrito"
             }
         }
         .joined(separator: ", ")
@@ -919,10 +960,14 @@ final class SongModel {
             return
         }
         if let trill = fit.trill {
-            // O trinado ainda não se escreve: a nota fica na casa das duas mais perto da escrita.
-            let pitch = abs(center - Double(trill.high)) <= abs(center - Double(trill.low)) ? trill.high : trill.low
-            bridge.edit("fit", ["pitch": pitch, "bend": NSNull(), "vibrato": false])
-            tabMessage = "Soa como trinado \(Self.pitchName(trill.low))⇄\(Self.pitchName(trill.high)) (o trinado ainda não se escreve)."
+            // O trinado: a nota na de baixo e o trinado na de cima (como o Guitar Pro escreve), sem bend nem vibrato.
+            let name = "trinado \(Self.pitchName(trill.low))⇄\(Self.pitchName(trill.high))"
+            guard note.pitch != trill.low || note.trill != trill.high || !note.bend.isEmpty || note.vibrato > 0 else {
+                tabMessage = "Já está como soa."
+                return
+            }
+            bridge.edit("fit", ["pitch": trill.low, "bend": NSNull(), "vibrato": false, "trill": trill.high])
+            tabMessage = "Encaixou no som: \(name) · ⌘Z desfaz"
             return
         }
         // Só o que muda, como a Lente: a altura, o bend (pelo tamanho) e o vibrato.
@@ -931,6 +976,7 @@ final class SongModel {
         if fit.base != note.pitch { parts.append(Self.pitchName(fit.base)) }
         if fit.quarterTones != before { parts.append(fit.quarterTones > 0 ? "bend \(Self.bendName(fit.quarterTones))" : "sem bend") }
         if fit.vibrato != (note.vibrato > 0) { parts.append(fit.vibrato ? "vibrato" : "sem vibrato") }
+        if note.trill != nil { parts.append("sem trinado") }
         guard !parts.isEmpty else {
             tabMessage = "Já está como soa."
             return
@@ -979,7 +1025,8 @@ final class SongModel {
     }
 
     /// Um gesto por vez: o motor aplica ao mapa gravado e devolve o novo, que entra no Desfazer.
-    private func edit(_ gesture: Backend.TempoGesture) {
+    /// `message`: o aviso do Ajuste depois que o mapa novo chega (o mapa novo limpa o anterior).
+    private func edit(_ gesture: Backend.TempoGesture, message: String? = nil) {
         guard !saving, let before = tempoMap else { return }
         saving = true
         Task {
@@ -989,6 +1036,7 @@ final class SongModel {
                 undoStack.append(before)
                 redoStack.removeAll()
                 show(map)
+                if let message { adjustMessage = message }
             } catch {
                 adjustMessage = error.localizedDescription
             }

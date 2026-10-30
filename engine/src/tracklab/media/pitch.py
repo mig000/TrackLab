@@ -23,6 +23,8 @@ CLARITY = 0.6
 HARMONICS = 6
 HARMONIC_STEP = 0.05
 HARMONIC_CLARITY = 0.45
+ATTACK_REACH = 0.12     # o ataque procurado até 120 ms antes ou depois do começo escrito
+ATTACK_RISE = 6.0       # dB em 10 ms: menos que isso não é ataque (ligado, nota que já soava)
 BELOW = 2.0             # semitons abaixo da altura escrita
 ABOVE = 4.0             # e acima (um bend de 2 tons cabe)
 
@@ -163,6 +165,31 @@ def smooth(values: np.ndarray) -> np.ndarray:
     return out
 
 
+def attack(x: np.ndarray, start: float, rate: int = RATE) -> float | None:
+    """Quando a nota soa de fato: a maior subida de energia (em 10 ms, do sinal sem os graves, onde a palhetada
+    aparece) até `ATTACK_REACH` antes ou depois de `start`; None sem uma subida clara (ligado, slide, nota já soando).
+    A diferença para o começo escrito diz se o mapa de tempo está adiantado ou atrasado ali."""
+    hop, size, lag = int(0.0025 * rate), int(0.01 * rate), 4
+    first = max(0, int((start - ATTACK_REACH) * rate) - (lag + 1) * hop - size)
+    last = min(len(x), int((start + ATTACK_REACH) * rate) + size)
+    if last - first < size * 4:
+        return None
+    edge = np.diff(x[first:last])
+    count = (len(edge) - size) // hop + 1
+    if count <= lag:
+        return None
+    frames = np.lib.stride_tricks.sliding_window_view(edge, size)[::hop][:count]
+    level = 10 * np.log10(np.mean(frames * frames, axis=1) + 1e-12)
+    rise = level[lag:] - level[:-lag]
+    # A janela que acaba de entrar no ataque: o começo dela é o instante da subida.
+    times = first / rate + (np.arange(lag, count) * hop + size) / rate - 0.005
+    inside = np.abs(times - start) <= ATTACK_REACH
+    if not inside.any():
+        return None
+    best = int(np.argmax(np.where(inside, rise, -np.inf)))
+    return round(float(times[best]), 4) if rise[best] >= ATTACK_RISE else None
+
+
 def note_curve(x: np.ndarray, start: float, end: float, pitch: float, rate: int = RATE) -> dict:
     """A curva de uma nota: a correlação; se ela tem menos da metade dos pontos, os harmônicos, se acham mais."""
     low, high = pitch - BELOW, pitch + ABOVE
@@ -174,8 +201,8 @@ def note_curve(x: np.ndarray, start: float, end: float, pitch: float, rate: int 
         if share(second) > share(first):
             values = second
     values = smooth(values)
-    return {"from": start, "hop": HOP,
+    return {"from": start, "hop": HOP, "attack": attack(x, start, rate),
             "values": [None if not math.isfinite(v) else round(float(v), 3) for v in values]}
 
 
-__all__ = ["HOP", "RATE", "note_curve", "samples", "smooth", "track_harmonics", "track_pitch"]
+__all__ = ["HOP", "RATE", "attack", "note_curve", "samples", "smooth", "track_harmonics", "track_pitch"]

@@ -267,6 +267,10 @@ struct AdjustBar: View {
             Button { model.downbeatHere() } label: { Label("O 1 é aqui", systemImage: "metronome") }
                 .keyboardShortcut("u", modifiers: [])
                 .help("U: tocando, aperte no tempo forte; o começo de compasso mais perto vem até o toque")
+            Button { model.syncBarToSound() } label: { Label("Pelo som", systemImage: "waveform.badge.magnifyingglass") }
+                .keyboardShortcut("a", modifiers: [])
+                .help("A: o 1 do compasso que toca vai para onde as notas dele soam (os ataques medidos no espectro; "
+                      + "a Fita mostra no alto de cada compasso quanto o som vem antes ou depois)")
             Button { model.tap() } label: { Label("Bater junto", systemImage: "hand.tap") }
                 .keyboardShortcut("t", modifiers: [])
                 .help("T: com a música tocando, aperte em cada batida de um trecho; quando parar, as batidas dele viram os seus toques")

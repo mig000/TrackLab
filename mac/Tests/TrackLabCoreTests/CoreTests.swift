@@ -303,7 +303,8 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let notes = ScoreNote.list([[0, 4800, 74, 1, 10], [960, 0, 60, 2, 1], [1, 2]])
     #expect(notes == [ScoreNote(tick: 0, duration: 4800, pitch: 74, string: 1, fret: 10)])
     // Bend de um tom (4 quartos) que sobe até a metade da nota; vibrato leve.
-    let bent = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 0, 30, 4, 60, 4]]).first)
+    let bent = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 0, 0, 30, 4, 60, 4]]).first)
+    #expect(bent.trill == nil && ScoreNote.list([[0, 960, 64, 2, 5, 0, 66]]).first?.trill == 66)
     #expect(bent.shape(fraction: 0, elapsed: 0) == 0 && bent.shape(fraction: 1, elapsed: 1) == 2)
     #expect(abs(bent.shape(fraction: 0.25, elapsed: 0) - 1) < 1e-9)
     let wavy = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 1]]).first)
@@ -384,6 +385,12 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // Subindo só nos últimos 120 ms: a passagem para a nota seguinte, não um bend.
     let leaving = SoundNote(curve: soundCurve(1, 2) { $0 < 1.88 ? 60 : 60 + ($0 - 1.88) * 25 }, start: 1, end: 2, pitch: 60)
     #expect((leaving.fit?.quarterTones ?? 0) >= 2 && leaving.disagreements(with: plain).isEmpty)
+    // O trinado: suspeito sem estar escrito, certo escrito entre as mesmas duas notas; escrito e não tocado, suspeito.
+    let trilling = SoundNote(curve: soundCurve(1, 2) { Int(($0 - 1) / 0.08) % 2 == 0 ? 60 : 62 }, start: 1, end: 2, pitch: 60)
+    #expect(trilling.disagreements(with: plain) == [.trill(low: 60, high: 62)])
+    let written = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, trill: 62)
+    #expect(trilling.disagreements(with: written).isEmpty)
+    #expect(flat.disagreements(with: written) == [.noTrill])
     // Vibrato no som e não na nota: não é suspeita (a TAB costuma não escrever).
     let wavy = SoundNote(curve: soundCurve(1, 2) { 60 + 0.15 * (1 - cos(2 * .pi * 6 * ($0 - 1))) }, start: 1, end: 2, pitch: 60)
     #expect(wavy.disagreements(with: plain).isEmpty)
@@ -437,4 +444,14 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // Nota de acorde: nada a dizer.
     #expect(SoundNote(curve: soundCurve(1, 2) { _ in 60 }, start: 1, end: 2, pitch: 60, chord: true)
         .report(for: plain, start: 1, end: 2) == nil)
+}
+
+@Test func oSomContraOMapa() {
+    // Compasso 0: quatro ataques ~40 ms depois; compasso 1: dois só (pouco para dizer); compasso 2: sem ataque claro.
+    let notes: [(start: Double, attack: Double?)] = [(0.0, 0.04), (0.5, 0.55), (1.0, 1.03), (1.5, 1.54),
+                                                     (2.0, 1.9), (2.5, 2.4), (4.0, nil), (4.5, nil), (5.0, nil)]
+    let offsets = SoundSync.barOffsets(notes, bars: [0, 2, 4, 6])
+    #expect(offsets.count == 1 && abs((offsets[0] ?? 0) - 0.04) < 0.006)
+    // A curva descontada da afinação leva o ataque junto.
+    #expect(PitchCurve(from: 0, hop: 0.008, values: [60], attack: 0.1).shifted(by: -0.2).attack == 0.1)
 }

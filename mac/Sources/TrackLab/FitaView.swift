@@ -301,6 +301,7 @@ struct FitaView: View {
             var attacks = Path()
             var dots = Path()
             var suspect = Path()
+            var timing = Path()
             var chosen: (shape: Path, line: Path?)?
             for note in notes {
                 let s0 = model.grid.seconds(at: note.tick)
@@ -336,6 +337,14 @@ struct FitaView: View {
                 if let sound, !sound.disagreements(with: note).isEmpty {
                     suspect.addPath(band)
                     suspect.addEllipse(in: CGRect(x: x0 - 3, y: Double(centers[0].y) - thick / 2 - 9, width: 6, height: 6))
+                }
+                // Onde a nota soa de fato, quando passa de 30 ms da escrita: um traço branco no ataque medido, ligado
+                // ao começo escrito (o mapa de tempo está fora ali; o Ajuste acerta).
+                if let attack = sound?.curve.attack, abs(attack - s0) >= 0.03 {
+                    let x = gx(attack)
+                    let top = Double(centers[0].y) - thick / 2 - 3
+                    timing.addRect(CGRect(x: x - 0.75, y: top, width: 1.5, height: thick + 6))
+                    timing.addRect(CGRect(x: min(x, x0), y: Double(centers[0].y) - 0.5, width: abs(x - x0), height: 1))
                 }
                 // O ataque: um traço mais forte na ponta.
                 attacks.addRect(CGRect(x: x0.rounded() - 1, y: Double(centers[0].y) - thick / 2 - 2, width: 2.5, height: thick + 4))
@@ -381,6 +390,7 @@ struct FitaView: View {
                 glow.stroke(chosen.shape, with: .color(color), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
             }
             context.fill(attacks, with: .color(color))
+            context.fill(timing, with: .color(.white.opacity(0.75)))
             let red = Color(red: 1, green: 0.36, blue: 0.36)
             context.stroke(suspect, with: .color(red), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
             let orange = Color(red: 1, green: 138 / 255, blue: 61 / 255)
@@ -396,6 +406,19 @@ struct FitaView: View {
         }
         if let index = model.scoreSecond { bands(second, track: index, rgb: (91, 155, 255)) }
         bands(main, track: model.scoreTrack, rgb: (245, 181, 68))
+        // No Ajuste, no alto de cada compasso: quanto os ataques chegam depois (+) ou antes (−) do mapa, de 25 ms para
+        // cima (A leva o 1 até eles).
+        if model.adjusting {
+            let offsets = model.barOffsets()
+            for (index, offset) in offsets where abs(offset) >= 0.025 && model.grid.bars.indices.contains(index) {
+                let x = gx(model.grid.bars[index])
+                guard x > -40, x < width else { continue }
+                let ms = Int((offset * 1000).rounded())
+                context.draw(Text("\(ms > 0 ? "+" : "−")\(abs(ms)) ms").font(.caption2.weight(.semibold).monospacedDigit())
+                                .foregroundStyle(Color(red: 0.45, green: 0.85, blue: 1)),
+                             at: CGPoint(x: x + 4, y: 4), anchor: .topLeading)
+            }
+        }
         // Quantas suspeitas a pista tem (a música toda), no canto: Tab vai de uma a outra.
         // E a afinação da gravação, quando passa de 5 cents (descontada em tudo o que está na tela).
         let suspects = model.suspects(track: model.scoreTrack).count

@@ -155,9 +155,11 @@ a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao s
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
 bend e o vibrato do som (`fit` na página). O Guitar Pro 7 guarda o bend como origem, meio de um valor só e destino, e
 reduz um Bend aos dois da ponta: o encaixe manda `(sai, 0) → (chega, q)` ou, se volta, quatro pontos
-(`CurveFit.guitarPro`). O trinado ainda não se escreve (a nota fica na casa mais perto).
+(`CurveFit.guitarPro`). O trinado se escreve: a nota na de baixo e o trinado na de cima (`fit` com `trill`, a altura MIDI; em semicolcheias,
+porque o Guitar Pro 7 do alphaTab grava a nota do trinado mas não a velocidade); o `trackNotes` manda a altura do
+trinado escrito (`ScoreNote.trill`) e um trinado escrito entre as mesmas notas não é suspeito, um que o som não faz é.
 Notas suspeitas (`SoundNote.disagreements`): o som discorda da escrita na altura, no bend (meio tom de diferença; uma
-subida que só sai no último quarto da nota é a passagem para a seguinte) ou num trinado; o vibrato fica de fora (no
+subida que só sai no último quarto da nota é a passagem para a seguinte) ou no trinado; o vibrato fica de fora (no
 Sunshine eram 22 das 75, quase sempre um vibrato que a TAB não escreve) e notas de acorde não acusam. Com o espectro à
 vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
 notas, pista ou mapa; a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
@@ -172,7 +174,12 @@ separação a tem, senão a guitarra; a bateria não é medida): `POST songs/{id
 últimas faixas decodificadas, a chave da curva leva a separação ativa e o espectro segue a faixa da pista escolhida (os
 dois últimos ficam guardados). Na barra de edição, embaixo da nota escolhida, o que o som fez (`SoundReport`): "Soou
 Dó♯ 3 +8 cents · bend ¼, não escrito", o bend em % do escrito ou "não dobrou", a largura do vibrato, o trinado. As
-mensagens do espectro usam os nomes da paleta ("Sol 3", `TabSelection.name`). Mover a nota no tempo, que a
+mensagens do espectro usam os nomes da paleta ("Sol 3", `TabSelection.name`).
+O som contra o mapa: a curva de cada nota traz `attack` (`media/pitch.py`, `attack`: a maior subida de energia em 10 ms
+do sinal sem graves, até 120 ms antes ou depois do começo escrito, de 6 dB para cima; nil num ligado). Na Fita, um
+traço branco no ataque medido quando passa de 30 ms da escrita; no Ajuste, no alto de cada compasso, a mediana dos
+ataques dele (`SoundSync.barOffsets`, ao menos 3 notas, de 25 ms para cima) e "Pelo som" (A) leva o 1 do compasso que
+toca até eles. Sunshine: a primeira nota soa 93 ms antes do mapa, o compasso 12 30 ms antes, o resto a menos de 25 ms. Mover a nota no tempo, que a
 Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a

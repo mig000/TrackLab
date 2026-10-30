@@ -203,8 +203,8 @@
   }
 
   // As notas de cada pista do Guitar Pro lido, para as barras sobre o espectro da Fita: [tique, duração em tiques, altura
-  // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), e os pontos do bend em pares (deslocamento de
-  // 0 a 60 ao longo da nota, valor em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não
+  // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), a altura MIDI do trinado (0 sem trinado), e os
+  // pontos do bend em pares (deslocamento de 0 a 60 ao longo da nota, valor em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não
   // entram; a bateria não tem altura e fica de fora (lista vazia).
   function trackNotes(score) {
     return score.tracks.map((track) => {
@@ -227,8 +227,9 @@
                 const strings = staff.tuning ? staff.tuning.length : 0;
                 const vibrato = note.vibrato === 2 ? 2 : note.vibrato ? 1 : 0;
                 const bend = (note.bendPoints || []).flatMap((p) => [p.offset, p.value]);
+                const trill = note.isTrill ? note.realValue + note.trillFret - note.fret : 0;
                 notes.push([beat.absolutePlaybackStart, duration, note.realValue, strings ? strings - note.string + 1 : 0,
-                  note.fret, vibrato, ...bend]);
+                  note.fret, vibrato, trill, ...bend]);
               }
             }
           }

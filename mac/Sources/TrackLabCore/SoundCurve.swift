@@ -292,14 +292,21 @@ public enum SoundDisagreement: Hashable, Sendable {
     case pitch(Int)
     /// O bend que soa, em quartos de tom (0: o som não dobra), longe do escrito.
     case bend(Int)
-    /// Ligados rápidos entre duas casas, que a TAB não tem.
+    /// Ligados rápidos entre duas casas, que a TAB não tem (ou tem entre outras).
     case trill(low: Int, high: Int)
+    /// O trinado escrito que o som não faz.
+    case noTrill
 }
 
 extension SoundNote {
     public func disagreements(with note: ScoreNote) -> [SoundDisagreement] {
         guard !chord, let fit else { return [] }
-        if let trill = fit.trill { return [.trill(low: trill.low, high: trill.high)] }
+        if let trill = fit.trill {
+            // O trinado escrito entre as mesmas duas notas (de qualquer uma para a outra) está certo.
+            let written = note.trill.map { Set([note.pitch, $0]) }
+            return written == Set([trill.low, trill.high]) ? [] : [.trill(low: trill.low, high: trill.high)]
+        }
+        if note.trill != nil { return [.noTrill] }
         // Noutra altura, o bend e o vibrato foram medidos em volta da nota errada: só a altura.
         if fit.base != note.pitch { return [.pitch(fit.base)] }
         let written = Int(note.bend.map(\.value).max() ?? 0)
@@ -314,7 +321,8 @@ extension SoundNote {
 extension PitchCurve {
     /// A mesma curva `semitones` acima (abaixo, se negativo): a afinação da gravação descontada.
     public func shifted(by semitones: Double) -> PitchCurve {
-        semitones == 0 ? self : PitchCurve(from: from, hop: hop, values: values.map { $0.map { $0 + semitones } })
+        semitones == 0 ? self
+            : PitchCurve(from: from, hop: hop, values: values.map { $0.map { $0 + semitones } }, attack: attack)
     }
 }
 
@@ -397,5 +405,28 @@ extension SoundNote {
                            bend: fit.quarterTones,
                            reached: written > 0 ? Int((max(0, fit.rise) / (written / 2) * 100).rounded()) : nil,
                            vibrato: fit.vibrato ? Int((fit.depth * 100).rounded()) : nil, trill: fit.trill)
+    }
+}
+
+/// O mapa de tempo contra o som: em cada compasso, quanto os ataques das notas chegam depois (+) ou antes (−) do começo
+/// escrito delas. A mediana, com ao menos `minimum` ataques no compasso: uma nota sozinha pode ser um atraso de
+/// propósito; várias juntas dizem que a batida está no lugar errado.
+public enum SoundSync {
+    /// `bars`: o início de cada compasso em segundos (com o fim do último). A chave é o índice do compasso (0…).
+    public static func barOffsets(_ notes: [(start: Double, attack: Double?)], bars: [Double],
+                                  minimum: Int = 3) -> [Int: Double] {
+        guard bars.count >= 2 else { return [:] }
+        var lists: [Int: [Double]] = [:]
+        for note in notes {
+            guard let attack = note.attack, note.start >= bars[0], note.start < bars[bars.count - 1] else { continue }
+            var low = 0
+            var high = bars.count - 1
+            while high - low > 1 {
+                let middle = (low + high) / 2
+                if bars[middle] <= note.start { low = middle } else { high = middle }
+            }
+            lists[low, default: []].append(attack - note.start)
+        }
+        return lists.compactMapValues { $0.count >= minimum ? SoundNote.percentile($0, 0.5) : nil }
     }
 }

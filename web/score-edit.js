@@ -329,6 +329,16 @@
       note.vibrato = vibrato;
       changed = true;
     }
+    // O trinado: a outra nota (`trill`, a altura MIDI, na mesma corda); sem ele, sai. Em semicolcheias: o Guitar Pro 7
+    // do alphaTab grava a nota do trinado mas não a velocidade (volta semicolcheia).
+    const trill = wanted.trill != null && Number.isFinite(wanted.trill) ? Math.round(wanted.trill) : null;
+    const fret = trill === null ? -1 : note.fret + trill - note.realValue;
+    const value = fret >= 0 && fret <= 30 ? note.stringTuning + fret : -1;
+    if (value !== note.trillValue) {
+      note.trillValue = value;
+      if (value >= 0) note.trillSpeed = m.Duration.Sixteenth;
+      changed = true;
+    }
     return changed;
   }
 

@@ -48,3 +48,16 @@ def test_silence_has_no_curve_and_lonely_points_go():
     assert all(v is None for v in pitch.note_curve(x, 0.1, 0.9, 60)["values"])
     smoothed = pitch.smooth(np.array([np.nan, 60.0, np.nan, 61, 61.1, 61.2, np.nan]))
     assert math.isnan(smoothed[1]) and np.isfinite(smoothed[3:6]).all()
+
+
+def test_the_attack_is_when_the_note_really_sounds():
+    """A nota escrita em 0,5 s soa em 0,53 (o mapa está adiantado 30 ms ali); a que vem logo depois de outra que ainda
+    soa também tem ataque; um ligado (a altura muda sem subida de energia) não tem."""
+    t = np.arange(int(1.2 * RATE)) / RATE
+    late = np.where(t >= 0.53, tone(lambda _: 57.0, 1.2), 0) * np.exp(-np.maximum(0, t - 0.53) * 3)
+    assert pitch.attack(late, 0.5) == pytest.approx(0.53, abs=0.008)
+    first = tone(lambda _: 57.0, 1.2) * np.exp(-t * 4)
+    second = np.where(t >= 0.6, tone(lambda _: 60.0, 1.2), 0) * np.exp(-np.maximum(0, t - 0.6) * 4)
+    assert pitch.attack(first + second, 0.62) == pytest.approx(0.6, abs=0.008)
+    legato = tone(lambda s: 57.0 if s < 0.6 else 59.0, 1.2)
+    assert pitch.attack(legato, 0.6) is None

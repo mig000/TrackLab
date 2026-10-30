@@ -118,6 +118,15 @@ test("o encaixe no som da Fita: altura, bend que volta e vibrato, e a nota achad
   assert.ok(!edit.fit(alphaTab, edit.resolve(score, where), { pitch, bend: [[12, 0], [30, 4], [44, 4], [50, 0]], vibrato: true }));
   assert.ok(edit.fit(alphaTab, edit.resolve(score, where), { pitch, bend: null, vibrato: false }));
   assert.deepEqual(edit.techniquesOf(alphaTab, edit.resolve(score, where)).filter((k) => k.includes("bend") || k.includes("vibrato")), []);
+  // O trinado: a outra nota um tom acima sobrevive ao Guitar Pro; o mesmo de novo não muda; sem `trill`, sai.
+  let trilled = load();
+  const base = first(trilled);
+  assert.ok(edit.fit(alphaTab, base, { pitch: base.realValue, bend: null, vibrato: false, trill: base.realValue + 2 }));
+  trilled = reread(edit.refinish(alphaTab, trilled));
+  const back = edit.resolve(trilled, where);
+  assert.ok(back.isTrill && back.trillFret === back.fret + 2);
+  assert.ok(!edit.fit(alphaTab, back, { pitch: back.realValue, bend: null, vibrato: false, trill: back.realValue + 2 }));
+  assert.ok(edit.fit(alphaTab, back, { pitch: back.realValue, bend: null, vibrato: false }) && !back.isTrill);
 });
 
 console.log(`${passed} verificações passaram`);

@@ -171,9 +171,11 @@ public struct ScoreNote: Hashable, Sendable {
     public let fret: Int
     public let vibrato: Int
     public let bend: [BendPoint]
+    /// A altura MIDI da outra nota do trinado escrito; nil sem trinado.
+    public let trill: Int?
 
     public init(tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int = 0,
-                bend: [BendPoint] = []) {
+                bend: [BendPoint] = [], trill: Int? = nil) {
         self.tick = tick
         self.duration = duration
         self.pitch = pitch
@@ -181,17 +183,19 @@ public struct ScoreNote: Hashable, Sendable {
         self.fret = fret
         self.vibrato = vibrato
         self.bend = bend
+        self.trill = trill
     }
 
-    /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, deslocamento, valor, …], …]; o que não
-    /// tiver os cinco primeiros números fica de fora.
+    /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, trinado?, deslocamento, valor, …], …] (o
+    /// trinado é a altura da outra nota, 0 sem); o que não tiver os cinco primeiros números fica de fora.
     public static func list(_ raw: [[Double]]) -> [ScoreNote] {
         raw.compactMap { item in
             guard item.count >= 5, item.allSatisfy(\.isFinite), item[1] > 0 else { return nil }
-            let pairs = item.count > 6 ? Array(item[6...]) : []
+            let pairs = item.count > 7 ? Array(item[7...]) : []
             let bend = stride(from: 0, to: pairs.count - 1, by: 2).map { BendPoint(offset: pairs[$0], value: pairs[$0 + 1]) }
+            let trill = item.count > 6 && item[6] > 0 ? Int(item[6]) : nil
             return ScoreNote(tick: item[0], duration: item[1], pitch: Int(item[2]), string: Int(item[3]),
-                             fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend)
+                             fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend, trill: trill)
         }
     }
 
@@ -306,15 +310,18 @@ public struct TabSelection: Hashable, Sendable {
 }
 
 /// A curva de altura do som numa nota (o motor calcula: `POST songs/{id}/pitch`): um valor MIDI a cada `hop`
-/// segundos desde `from`, nil onde o som não diz (silêncio, ruído).
+/// segundos desde `from`, nil onde o som não diz (silêncio, ruído); e `attack`, o instante em que a nota soa de fato
+/// (nil sem um ataque claro: ligado, slide).
 public struct PitchCurve: Codable, Hashable, Sendable {
     public let from: Double
     public let hop: Double
     public let values: [Double?]
+    public let attack: Double?
 
-    public init(from: Double, hop: Double, values: [Double?]) {
+    public init(from: Double, hop: Double, values: [Double?], attack: Double? = nil) {
         self.from = from
         self.hop = hop
         self.values = values
+        self.attack = attack
     }
 }
