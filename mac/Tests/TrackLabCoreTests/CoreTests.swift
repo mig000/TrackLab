@@ -365,6 +365,9 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let caret = TabCaret(page: ["place": "c. 2 · tempo 1", "string": NSNumber(value: 3), "rest": true])
     #expect(caret == TabCaret(place: "c. 2 · tempo 1", string: 3, rest: true))
     #expect(TabCaret(page: nil) == nil && TabCaret(page: ["place": "c. 1"]) == nil)
+    // No meio de uma nota longa (a nota nova a divide).
+    let inside = TabCaret(page: ["place": "c. 2 · tempo 1 + 1/8", "string": NSNumber(value: 2), "inside": true])
+    #expect(inside?.inside == true && inside?.rest == false)
 }
 
 /// Uma curva do som a cada 8 ms de `start` a `end` pela função.

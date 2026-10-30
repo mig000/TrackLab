@@ -75,6 +75,12 @@ struct FitaView: View {
         }
         .contentShape(Rectangle())
         .gesture(dragGesture(size: size, start: start))
+        // O botão direito numa faixa da Lente toca a nota sintetizada (como na TAB).
+        .background(RightClickCatcher { point in
+            guard let hit = noteAt(point, size: size, start: start) else { return false }
+            model.hearNote(hit.note, track: hit.track, synth: true)
+            return true
+        })
         .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
             guard model.adjusting,
                   let point = model.grid.beat(near: time(at: value.location.x, width: width, start: start),

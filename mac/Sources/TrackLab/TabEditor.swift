@@ -129,7 +129,9 @@ struct TabEditPanel: View {
                     Text("Nota nova · corda \(caret.string)")
                         .font(.callout.weight(.medium).monospacedDigit())
                         .lineLimit(2, reservesSpace: true)
-                    Text(caret.place + (caret.rest ? " · na pausa" : " · no acorde") + " — digite a casa (0–9; 10–24 em dois dígitos)")
+                    Text(caret.place + (caret.inside ? (caret.rest ? " · no meio da pausa" : " · no meio da nota, que se divide")
+                                        : (caret.rest ? " · na pausa" : " · no acorde"))
+                         + " — digite a casa (0–9; 10–24 em dois dígitos)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {

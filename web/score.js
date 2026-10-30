@@ -804,15 +804,47 @@
       choose(found ? edit.pathOf(found) : null);
       // Sem nota sob o clique, numa linha da TAB: o cursor de inserção naquela corda da batida.
       const string = !found && beat ? stringAt(beat, y) : null;
-      if (string) {
-        const target = edit.resolveBeat(state.score, edit.caretOf(beat, string));
-        if (target && !target.notes.some((n) => n.string === string)) state.caret = edit.caretOf(target, string);
-      }
+      if (string) placeCaret(beat, string, event);
       // O clique numa nota a faz soar (o som gravado dela; o botão direito, a sintetizada).
       if (found) hear(found, false);
     }
     drawSelection();
     postSelection();
+  }
+
+  // O cursor de inserção na corda do clique. Na faixa, no tempo do clique (na grade, contada do começo do compasso):
+  // no começo de uma batida, o cursor é o dela (acorde ou pausa); no meio de uma nota longa ou de uma pausa, guarda o
+  // tique também (a nota nova divide a longa, ou entra no meio da pausa).
+  function placeCaret(beat, string, event) {
+    const target = edit.resolveBeat(state.score, edit.caretOf(beat, string));
+    if (!target) return;
+    let tick = null;
+    if (!state.page && state.anchors.length && state.grid > 0) {
+      const page = sheet.getBoundingClientRect();
+      const raw = core.tickAtX(state.anchors, (event.clientX - page.left) / zoomStretch());
+      const master = masterAt(raw);
+      if (master) tick = master.start + Math.round((raw - master.start) / state.grid) * state.grid;
+    }
+    const staff = target.voice.bar.staff;
+    const voiceIndex = target.voice.index;
+    const bar = tick === null ? null : staff.bars.find((b) => b.masterBar.start <= tick + 0.5
+      && tick < b.masterBar.start + b.masterBar.calculateDuration() - 0.5);
+    const holder = bar && bar.voices[voiceIndex] && bar.voices[voiceIndex].beats.find((b) =>
+      b.absolutePlaybackStart <= tick + 0.5 && tick < b.absolutePlaybackStart + b.playbackDuration - 0.5);
+    if (!holder || Math.abs(holder.absolutePlaybackStart - tick) < 1) {
+      const at = holder || target;
+      if (!at.notes.some((n) => n.string === string)) state.caret = edit.caretOf(at, string);
+      return;
+    }
+    state.caret = [...edit.caretOf(holder, string), tick];
+  }
+
+  // O compasso (do score) em que um tique cai.
+  function masterAt(tick) {
+    const masters = state.score ? state.score.masterBars : [];
+    let master = masters[0] || null;
+    for (const m of masters) if (m.start <= tick + 0.5) master = m;
+    return master;
   }
 
   // A corda (do alphaTab) da linha da TAB sob `y` na batida, ou null fora das linhas: as cordas ficam igualmente
@@ -964,8 +996,10 @@
     const stretch = zoomStretch();
     const box = bounds.barBounds.visualBounds;
     const y = box.y + (count - state.caret[5]) * (box.h / (count - 1));
+    // No meio de uma nota ou pausa, no x do tique (a faixa é tempo); senão, no x das notas da batida.
+    const timed = state.caret.length > 6 ? xAtSeconds(core.tickToSeconds(state.points, state.caret[6])) : null;
     caretBox.hidden = false;
-    caretBox.style.left = (surface.left - page.left) / stretch + bounds.onNotesX - 7 + "px";
+    caretBox.style.left = (timed !== null ? timed / stretch : (surface.left - page.left) / stretch + bounds.onNotesX) - 7 + "px";
     caretBox.style.top = surface.top - page.top + y - 8 + "px";
   }
 
@@ -1012,9 +1046,9 @@
     const caretBeat = state.caret && state.score ? edit.resolveBeat(state.score, state.caret) : null;
     post({
       type: "selection",
-      caret: caretBeat ? { place: placeName(caretBeat.absolutePlaybackStart),
+      caret: caretBeat ? { place: placeName(state.caret.length > 6 ? state.caret[6] : caretBeat.absolutePlaybackStart),
         string: caretBeat.voice.bar.staff.tuning.length - state.caret[5] + 1, rest: caretBeat.notes.length === 0,
-        figure: edit.figureName(caretBeat.playbackDuration) } : null,
+        inside: state.caret.length > 6, figure: edit.figureName(caretBeat.playbackDuration) } : null,
       note: note ? Object.assign(edit.describe(alphaTab, note), {
         place: placeName(note.beat.absolutePlaybackStart),
         count: notes.length,
@@ -1365,8 +1399,31 @@
       drawSelection();
       postSelection();
     };
+    const tick = state.caret.length > 6 ? state.caret[6] : null;
     switch (op) {
       case "fret": {
+        if (tick !== null) {
+          // No meio de uma nota longa ou de uma pausa: a nota nova entra no tique (a longa se divide).
+          const staff = beat.voice.bar.staff;
+          const where = { track: staff.track.index, tick, string: count - string + 1 };
+          let reason = null;
+          change(() => {
+            const result = edit.insertAt(alphaTab, staff, tick, string, value);
+            if (result !== true) reason = result;
+            return result === true;
+          });
+          if (reason) {
+            post({ type: "notice", text: reason === "fret" ? "Essa casa não cabe nessa corda."
+              : RETIME_REASONS[reason] || "Não deu para pôr a nota aqui." });
+          } else {
+            chooseWheres([where]);
+            const added = selectedNote();
+            if (added) hear(added, true);
+          }
+          drawSelection();
+          postSelection();
+          return;
+        }
         let path = null;
         change(() => {
           const added = edit.insertNote(alphaTab, beat, string, value);
@@ -1386,10 +1443,22 @@
       }
       case "string": {
         const alpha = string + Math.sign(value);
-        if (alpha >= 1 && alpha <= count) land(beat, alpha);
+        if (alpha < 1 || alpha > count) return;
+        if (tick !== null) {
+          state.caret = [...edit.caretOf(beat, alpha), tick];
+          drawSelection();
+          postSelection();
+          return;
+        }
+        land(beat, alpha);
         return;
       }
       case "nav": {
+        // Do meio de uma nota: ← volta ao começo dela, → vai à batida seguinte.
+        if (tick !== null && value < 0) {
+          land(beat, string);
+          return;
+        }
         const beats = beat.voice.bar.staff.bars.flatMap((bar) => bar.voices[beat.voice.index] ? bar.voices[beat.voice.index].beats : []);
         const next = beats[beats.indexOf(beat) + (value > 0 ? 1 : -1)];
         if (next) land(next, string);

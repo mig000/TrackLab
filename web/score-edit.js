@@ -796,6 +796,60 @@
     return note;
   }
 
+  // Uma nota nova no tique `tick` (da grade), onde não começa batida nenhuma. No meio de uma nota longa, ela se divide:
+  // o que soava continua, ligado (menos na corda da nota nova, que é atacada de novo), e a nota nova ataca em `tick`.
+  // Numa pausa, a nota vai até a próxima (ou até o fim do compasso). Devolve true ou o motivo ("fret", "short",
+  // "grace", "figure").
+  function insertAt(at, staff, tick, alphaString, fret) {
+    const m = at.model;
+    if (!staff.tuning || alphaString < 1 || alphaString > staff.tuning.length) return "fret";
+    if (fret < 0 || fret > MAX_FRET) return "fret";
+    tick = Math.round(tick);
+    const bars = staff.bars;
+    const events = timeline(staff);
+    const index = events.findIndex((e) => e.start <= tick && tick < e.end);
+    const note = new m.Note();
+    note.string = alphaString;
+    note.fret = fret;
+    const beat = new m.Beat();
+    let low = tick;
+    let high;
+    if (index >= 0) {
+      const ev = events[index];
+      if (tick - ev.start < MIN_TICKS || ev.end - tick < MIN_TICKS) return "short";
+      for (const old of ev.beat.notes) {
+        if (old.string === alphaString) continue;
+        const copy = new m.Note();
+        copy.string = old.string;
+        copy.fret = old.fret;
+        copy.isTieDestination = true;
+        beat.addNote(copy);
+      }
+      events.splice(index + 1, 0, { start: tick, end: ev.end, beat, tail: [] });
+      low = ev.start;
+      high = ev.end;
+      ev.end = tick;
+    } else {
+      const next = events.find((e) => e.start > tick);
+      const bar = bars[barAt(staff, tick)];
+      const barEnd = bar.masterBar.start + bar.masterBar.calculateDuration();
+      high = Math.min(next ? next.start : Infinity, barEnd);
+      if (high - tick < MIN_TICKS) return "short";
+      events.push({ start: tick, end: high, beat, tail: [] });
+      events.sort((a, b) => a.start - b.start);
+    }
+    beat.addNote(note);
+    const first = barAt(staff, low);
+    const last = barAt(staff, high - 1);
+    for (let b = first; b <= last; b++) {
+      if (bars[b].voices[0].beats.some((x) => x.graceType !== m.GraceType.None)) return "grace";
+    }
+    for (let b = first; b <= last; b++) {
+      if (!rebuildBar(at, bars[b], events)) return "figure";
+    }
+    return true;
+  }
+
   function resolve(score, path) {
     if (!path) return null;
     const [t, s, b, v, i, string] = path;
@@ -863,6 +917,7 @@
     resolveBeat,
     caretOf,
     insertNote,
+    insertAt,
     moveAll,
     rhythmOf,
     setLength,

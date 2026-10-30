@@ -248,11 +248,14 @@ só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, ⌥Es
 toca. Nota nova: um clique numa linha da TAB sem nota (uma corda vazia de um acorde, ou uma pausa) põe o cursor de
 inserção ali (`state.caret`, o endereço da batida com a corda; a corda sai da caixa do compasso, `stringAt`, com as
 linhas igualmente espaçadas); digitar a casa (ou − + e "Pôr nota" na coluna) põe a nota (`edit.insertNote`) e a escolhe;
-↑↓ andam de corda e ←→ de batida (numa corda com nota, a nota fica escolhida). Ouvir uma nota: o clique numa nota (na
+↑↓ andam de corda e ←→ de batida (numa corda com nota, a nota fica escolhida). Na faixa o cursor cai no tempo do clique,
+na grade (`placeCaret`, pelas âncoras): no meio de uma nota longa, a nota nova a divide (`edit.insertAt`: o que soava
+continua ligado, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
+fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. Ouvir uma nota: o clique numa nota (na
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
 (`StemEngine.audition`: a mixagem fica de lado enquanto toca e a agulha volta ao começo; tocando, não interrompe; o
-seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição) e
-a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
+seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição),
+numa faixa da Lente (`RightClickCatcher`, um monitor local de `rightMouseDown`) e a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
 dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
 velocidade do estudo). Copiar e colar (⌘C ⌘X ⌘V na edição, ou os botões da coluna): o recorte são as batidas inteiras
 das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fim da última, em valores simples

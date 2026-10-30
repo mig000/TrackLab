@@ -327,6 +327,38 @@ test("copiar e colar: o trecho com as articulações, por cima do que estava, e 
   assert.equal(edit.paste(alphaTab, other.tracks[0].staves[0], lastBar.start + 2880, clip), "end");
 });
 
+test("nota nova no meio de uma nota longa (que se divide, ligada) e no meio de uma pausa", () => {
+  let score = load();
+  const staff = score.tracks[0].staves[0];
+  const long = at(score, 0);
+  const free = [1, 2, 3, 4, 5, 6].find((s) => s !== long.string);
+  // Na metade da primeira semínima, noutra corda: a semínima vira colcheia ligada a outra, e a nota nova entra junto.
+  assert.equal(edit.insertAt(alphaTab, staff, 480, free, 5), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const head = at(score, 0);
+  assert.equal(head.beat.playbackDuration, 480);
+  const at480 = edit.notesOf(score.tracks[0].staves[0]).filter((n) => Math.abs(n.beat.absolutePlaybackStart - 480) < 1);
+  const held = at480.find((n) => n.string === long.string);
+  assert.ok(held && held.isTieDestination && held.fret === long.fret, "o que soava continua, ligado");
+  assert.equal(held.beat.playbackDuration, 480);
+  const middle = at480.find((n) => n.string === free);
+  assert.ok(middle && middle.fret === 5 && !middle.isTieDestination, "a nota nova ataca no meio");
+  assert.ok(at(score, 960), "a seguinte fica");
+  // Numa pausa: abre espaço com uma pausa e põe a nota no meio dela; a nota vai até a próxima.
+  let other = load();
+  assert.equal(edit.toRest(alphaTab, at(other, 960)), true);
+  other = edit.refinish(alphaTab, other);
+  assert.equal(edit.insertAt(alphaTab, other.tracks[0].staves[0], 1440, 2, 3), true);
+  other = reread(edit.refinish(alphaTab, other));
+  barsAreWhole(other);
+  const filled = at(other, 1440);
+  assert.ok(filled && filled.fret === 3);
+  assert.deepEqual(edit.span(filled), { start: 1440, end: 1920 });
+  // Perto demais do começo da nota: não.
+  assert.equal(edit.insertAt(alphaTab, other.tracks[0].staves[0], 1930, 2, 3), "short");
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");

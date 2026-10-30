@@ -268,16 +268,19 @@ public struct Spectrum: Sendable {
 /// mais aguda), a casa, a altura MIDI e as articulações ligadas (as chaves da paleta).
 /// O cursor de inserção da edição: uma corda sem nota numa batida (ou uma pausa), onde a casa digitada põe uma nota.
 public struct TabCaret: Hashable, Sendable {
-    /// Onde a batida está ("c. 2 · tempo 1"), a corda da TAB (1, a mais aguda), se a batida é pausa e a figura dela.
+    /// Onde o cursor está ("c. 2 · tempo 1 + 1/16"), a corda da TAB (1, a mais aguda), se a batida é pausa, se o
+    /// cursor está no meio dela (a nota nova divide a longa, ou entra no meio da pausa) e a figura da batida.
     public let place: String
     public let string: Int
     public let rest: Bool
+    public let inside: Bool
     public let figure: String?
 
-    public init(place: String, string: Int, rest: Bool, figure: String? = nil) {
+    public init(place: String, string: Int, rest: Bool, inside: Bool = false, figure: String? = nil) {
         self.place = place
         self.string = string
         self.rest = rest
+        self.inside = inside
         self.figure = figure
     }
 
@@ -285,7 +288,8 @@ public struct TabCaret: Hashable, Sendable {
         guard let page, let place = page["place"] as? String, let string = (page["string"] as? NSNumber)?.intValue else {
             return nil
         }
-        self.init(place: place, string: string, rest: page["rest"] as? Bool ?? false, figure: page["figure"] as? String)
+        self.init(place: place, string: string, rest: page["rest"] as? Bool ?? false,
+                  inside: page["inside"] as? Bool ?? false, figure: page["figure"] as? String)
     }
 }
 
