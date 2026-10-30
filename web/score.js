@@ -29,6 +29,9 @@
   const core = window.trackCore;
   const edit = window.trackEdit;
   const selectionBox = document.getElementById("selection");
+  // Os contornos das outras notas escolhidas (com ⇧ ou ⌘), embaixo do da principal.
+  const groupLayer = document.createElement("div");
+  groupLayer.id = "group-selection";
   const SAVE_MS = 1500;
   const UNDO_LIMIT = 50;
   const viewport = document.getElementById("viewport");
@@ -134,6 +137,10 @@
     // Refazer (cópias da partitura) e a gravação pendente.
     editing: false,
     selected: null,
+    // Várias notas escolhidas (⇧ clique, ⌘ clique, ⇧← →): os endereços de todas, com a principal, ou null para uma só;
+    // `anchor` é de onde um ⇧ estende.
+    group: null,
+    anchor: null,
     undo: [],
     redo: [],
     saveTimer: 0,
@@ -779,7 +786,15 @@
     const lookup = api.renderer.boundsLookup;
     const beat = lookup.getBeatAtPos(x, y);
     const note = beat ? lookup.getNoteAtPos(beat, x, y) : null;
-    state.selected = note ? edit.pathOf(note) : null;
+    // ⇧: da nota de partida até esta, todas no meio; ⌘: põe ou tira só esta; sem tecla, só esta.
+    const found = note ? edit.resolve(state.score, edit.pathOf(note)) : null;
+    if (found && event.shiftKey && selectedNote()) {
+      extendTo(found);
+    } else if (found && event.metaKey && selectedNote()) {
+      toggleInGroup(found);
+    } else {
+      choose(found ? edit.pathOf(found) : null);
+    }
     drawSelection();
     postSelection();
   }
@@ -788,8 +803,73 @@
     return state.score ? edit.resolve(state.score, state.selected) : null;
   }
 
+  const samePath = (a, b) => Boolean(a && b) && JSON.stringify(a) === JSON.stringify(b);
+
+  // Uma nota só (ou nenhuma).
+  function choose(path) {
+    state.selected = path;
+    state.group = null;
+    state.anchor = path;
+  }
+
+  // As notas escolhidas, a principal primeiro e as outras em ordem de tempo.
+  function selectedNotes() {
+    const main = selectedNote();
+    if (!main) return [];
+    if (!state.group) return [main];
+    const others = state.group.map((p) => edit.resolve(state.score, p)).filter((n) => n && n !== main);
+    return [main, ...others];
+  }
+
+  // ⇧: da nota de partida (`anchor`) até `note`, na ordem de tempo da pauta; a principal passa a ser `note`.
+  function extendTo(note) {
+    const from = (state.anchor && edit.resolve(state.score, state.anchor)) || selectedNote();
+    const range = from ? edit.rangeOf(from, note) : [];
+    if (range.length < 2) {
+      choose(edit.pathOf(note));
+      return;
+    }
+    state.anchor = edit.pathOf(from);
+    state.selected = edit.pathOf(note);
+    state.group = range.map((n) => edit.pathOf(n));
+  }
+
+  // ⌘: põe ou tira uma nota; tirar a principal passa o papel para a última que sobrou.
+  function toggleInGroup(note) {
+    const path = edit.pathOf(note);
+    const group = state.group ? state.group.slice() : [state.selected];
+    const index = group.findIndex((p) => samePath(p, path));
+    if (index >= 0) {
+      if (group.length === 1) return;
+      group.splice(index, 1);
+      if (samePath(state.selected, path)) state.selected = group[group.length - 1];
+    } else {
+      group.push(path);
+      state.selected = path;
+    }
+    state.group = group.length > 1 ? group : null;
+  }
+
+  // Onde cada nota escolhida está (pista, tique, corda), para achá-las de novo depois de um compasso refeito.
+  function wheresOf(notes) {
+    return notes.map((n) => ({ track: n.beat.voice.bar.staff.track.index, tick: n.beat.absolutePlaybackStart,
+      string: edit.tabString(n) }));
+  }
+
+  // A escolha de novo pelos lugares (a primeira é a principal); as que sumiram ficam de fora.
+  function chooseWheres(wheres) {
+    const found = wheres.map((w) => edit.findNote(state.score, w.track, w.tick, w.string)).filter(Boolean);
+    if (!found.length) {
+      choose(null);
+      return;
+    }
+    choose(edit.pathOf(found[0]));
+    if (found.length > 1) state.group = found.map((n) => edit.pathOf(n));
+  }
+
   // O destaque da nota escolhida, em coordenadas de #sheet (as do desenho; o zoom vem do transform da #sheet).
   function drawSelection() {
+    drawGroup();
     const note = state.editing ? selectedNote() : null;
     // A barra de duração da nota escolhida acende.
     for (const bar of durationLayer.children) bar.classList.toggle("chosen", Boolean(note) && bar.beat === note.beat);
@@ -810,12 +890,55 @@
     selectionBox.style.height = box.h + 6 + "px";
   }
 
+  // Os contornos das outras notas escolhidas.
+  function drawGroup() {
+    if (!groupLayer.parentNode) sheet.appendChild(groupLayer);
+    groupLayer.innerHTML = "";
+    const lookup = state.api && state.api.renderer.boundsLookup;
+    if (!state.editing || !state.group || !lookup) return;
+    const surface = state.api.canvasElement.element.getBoundingClientRect();
+    const page = sheet.getBoundingClientRect();
+    const stretch = zoomStretch();
+    const main = selectedNote();
+    for (const note of selectedNotes()) {
+      if (note === main) continue;
+      const bounds = lookup.findBeat(note.beat);
+      const head = bounds && bounds.notes ? bounds.notes.find((b) => b.note === note) : null;
+      if (!head) continue;
+      const box = head.noteHeadBounds;
+      const mark = document.createElement("div");
+      mark.className = "group-note";
+      mark.style.left = (surface.left - page.left) / stretch + box.x - 3 + "px";
+      mark.style.top = surface.top - page.top + box.y - 3 + "px";
+      mark.style.width = box.w + 6 + "px";
+      mark.style.height = box.h + 6 + "px";
+      groupLayer.appendChild(mark);
+    }
+  }
+
   function postSelection() {
     const note = selectedNote();
+    const notes = selectedNotes();
+    // Com várias, quantas são e o trecho delas (do começo da primeira ao fim da última, com as ligadas), para o Ouvir.
+    let from = Infinity;
+    let to = -Infinity;
+    for (const n of notes) {
+      const span = edit.span(n);
+      if (!span) continue;
+      from = Math.min(from, span.start);
+      to = Math.max(to, span.end);
+    }
+    const first = notes.reduce((a, n) => (!a || n.beat.absolutePlaybackStart < a.beat.absolutePlaybackStart ? n : a), null);
+    const last = notes.reduce((a, n) => (!a || n.beat.absolutePlaybackStart > a.beat.absolutePlaybackStart ? n : a), null);
     post({
       type: "selection",
-      note: note ? Object.assign(edit.describe(alphaTab, note), { place: placeName(note.beat.absolutePlaybackStart) })
-        : null,
+      note: note ? Object.assign(edit.describe(alphaTab, note), {
+        place: placeName(note.beat.absolutePlaybackStart),
+        count: notes.length,
+        from: Number.isFinite(from) ? from : null,
+        to: Number.isFinite(to) ? to : null,
+        span: notes.length > 1 ? `${placeName(first.beat.absolutePlaybackStart)} → ${placeName(last.beat.absolutePlaybackStart)}` : null,
+      }) : null,
       canUndo: state.undo.length > 0,
       canRedo: state.redo.length > 0,
     });
@@ -823,8 +946,16 @@
 
   // Uma mudança na partitura: o passo do Desfazer antes, a cópia (o finish) depois, o desenho novo, a gravação adiada.
   function change(apply) {
-    const before = { score: edit.snapshot(alphaTab, state.score), selected: state.selected };
+    const before = { score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
+      anchor: state.anchor };
     if (!apply()) {
+      // Uma mudança que não deu pode ter mexido em parte (várias notas, um compasso refeito pela metade): volta tudo.
+      state.score = edit.restore(alphaTab, before.score);
+      state.selected = before.selected;
+      state.group = before.group;
+      state.anchor = before.anchor;
+      core.showPreferences(state.score);
+      render();
       return;
     }
     state.undo.push(before);
@@ -872,14 +1003,17 @@
         return;
       }
       // Cada passo leva a nota escolhida de então: desfazer uma troca de corda volta a escolher a nota na corda antiga.
-      to.push({ score: edit.snapshot(alphaTab, state.score), selected: state.selected });
+      to.push({ score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
+        anchor: state.anchor });
       const step = from.pop();
       state.selected = step.selected;
+      state.group = step.group || null;
+      state.anchor = step.anchor || step.selected;
       replace(edit.restore(alphaTab, step.score));
       return;
     }
     if (op === "clear") {
-      state.selected = null;
+      choose(null);
       drawSelection();
       postSelection();
       return;
@@ -887,7 +1021,7 @@
     if (op === "select") {
       // A nota que a Fita apontou (pista, tique, corda).
       const found = value ? edit.findNote(state.score, value.track, value.tick, value.string) : null;
-      state.selected = found ? edit.pathOf(found) : null;
+      choose(found ? edit.pathOf(found) : null);
       drawSelection();
       postSelection();
       return;
@@ -896,59 +1030,103 @@
     if (!note) {
       return;
     }
+    const notes = selectedNotes();
+    const several = notes.length > 1;
     switch (op) {
+      case "single":
+        // Esc com várias: fica só a principal.
+        choose(state.selected);
+        drawSelection();
+        postSelection();
+        return;
       case "nav": {
         const next = edit.neighbor(note, value > 0 ? 1 : -1);
         if (next) {
-          state.selected = edit.pathOf(next);
+          choose(edit.pathOf(next));
+          drawSelection();
+          postSelection();
+        }
+        return;
+      }
+      case "extend": {
+        // ⇧← ⇧→: a escolha cresce ou encolhe de nota em nota a partir da de partida.
+        const next = edit.neighbor(note, value > 0 ? 1 : -1);
+        if (next) {
+          if (!state.anchor) state.anchor = state.selected;
+          extendTo(next);
           drawSelection();
           postSelection();
         }
         return;
       }
       case "technique":
-        change(() => edit.toggle(alphaTab, note, value));
+        change(() => (several ? edit.toggleAll(alphaTab, notes, value) : edit.toggle(alphaTab, note, value)));
         return;
       case "fret":
         change(() => edit.setFret(note, value));
         return;
       case "string":
-        // +1 sobe para a corda mais aguda: no alphaTab, a corda de número maior.
+        // +1 sobe para a corda mais aguda: no alphaTab, a corda de número maior. Com várias, todas andam o mesmo.
         change(() => {
-          const moved = edit.moveString(note, value);
+          const moved = several ? edit.moveAll(notes, value) : edit.moveString(note, value);
           if (moved) {
             state.selected = edit.pathOf(note);
+            if (several) state.group = notes.map((n) => edit.pathOf(n));
+            state.anchor = state.selected;
+          } else if (several) {
+            post({ type: "notice", text: "Uma das notas não cabe nessa corda (fora do braço ou corda ocupada)." });
           }
           return moved;
         });
         return;
       case "transpose":
-        change(() => edit.transpose(note, value));
+        change(() => (several ? edit.transposeAll(notes, value) : edit.transpose(note, value)));
         return;
       case "fit":
         change(() => edit.fit(alphaTab, note, value));
         return;
-      case "nudge":
-        // Um passo da grade (⌥← ⌥→, o arrasto lateral da Lente), mantendo a duração.
-        retimeSelected(note, (span) => [span.start + Math.round(value) * state.grid, span.end + Math.round(value) * state.grid]);
+      case "nudge": {
+        // Um passo da grade (⌥← ⌥→, o arrasto lateral da Lente), mantendo a duração; com várias, todas andam juntas.
+        const delta = Math.round(value) * state.grid;
+        if (several) {
+          eachBeat(notes, delta > 0, delta, (n) => {
+            const span = edit.span(n);
+            return span ? edit.retime(alphaTab, n, span.start + delta, span.end + delta) : "missing";
+          });
+          return;
+        }
+        retimeSelected(note, (span) => [span.start + delta, span.end + delta]);
         return;
+      }
       case "retime":
         // Começo e fim novos em tiques (a barra de duração arrastada).
         retimeSelected(note, () => [value.start, value.end]);
         return;
       case "length": {
-        // A figura nova (tiques), do mesmo começo.
+        // A figura nova (tiques), do mesmo começo; com várias, cada batida escolhida.
+        if (several) {
+          eachBeat(notes, false, 0, (n) => edit.setLength(alphaTab, n, value));
+          return;
+        }
         const span = edit.span(note);
         if (span) rewriteSelected(note, span.start, () => edit.setLength(alphaTab, note, value));
         return;
       }
       case "rest": {
         // A batida inteira (o acorde, as ligadas) vira pausa; a escolha passa para a nota seguinte.
-        // A seguinte fora do acorde e das ligadas dela (ou, no fim, a anterior).
-        const span = edit.span(note);
+        // A seguinte fora do acorde e das ligadas dela (ou, no fim, a anterior); com várias, depois da última.
+        let span = edit.span(note);
+        for (const n of notes) {
+          const s = edit.span(n);
+          if (s && span) span = { start: Math.min(span.start, s.start), end: Math.max(span.end, s.end) };
+        }
         const list = edit.notesOf(note.beat.voice.bar.staff);
         const next = span && (list.find((n) => n.beat.absolutePlaybackStart >= span.end - 0.5)
           || list.slice().reverse().find((n) => n.beat.absolutePlaybackStart < span.start - 0.5));
+        if (several) {
+          eachBeat(notes, false, 0, (n) => edit.toRest(alphaTab, n), next ? wheresOf([next]) : []);
+          return;
+        }
         const where = next ? { track: next.beat.voice.bar.staff.track.index, string: edit.tabString(next),
           tick: next.beat.absolutePlaybackStart } : null;
         let reason = null;
@@ -962,16 +1140,23 @@
           return;
         }
         const found = where ? edit.findNote(state.score, where.track, where.tick, where.string) : null;
-        state.selected = found ? edit.pathOf(found) : null;
+        choose(found ? edit.pathOf(found) : null);
         drawSelection();
         postSelection();
         return;
       }
       case "delete": {
-        const next = edit.neighbor(note, 1) || edit.neighbor(note, -1);
-        const nextPath = next ? edit.pathOf(next) : null;
-        change(() => edit.remove(note));
-        state.selected = nextPath;
+        // Com várias, todas; a escolha passa para a nota depois da última (ou antes da primeira).
+        const list = edit.notesOf(note.beat.voice.bar.staff);
+        const chosen = new Set(notes);
+        const indexes = notes.map((n) => list.indexOf(n)).filter((i) => i >= 0);
+        const after = list.slice(Math.max(...indexes) + 1).find((n) => !chosen.has(n));
+        const before = list.slice(0, Math.min(...indexes)).reverse().find((n) => !chosen.has(n));
+        const target = after || before;
+        const where = target ? wheresOf([target]) : [];
+        change(() => notes.every((n) => edit.remove(n)));
+        chooseWheres(where);
+        drawSelection();
         postSelection();
         return;
       }
@@ -1006,6 +1191,53 @@
     rewriteSelected(note, start, () => edit.retime(alphaTab, note, start, end));
   }
 
+  // Uma mudança no ritmo em várias notas, uma batida de cada vez (refazer um compasso muda os tiques das outras: a
+  // partitura passa pelo finish entre uma e outra e cada nota é achada de novo pelo tique e pela corda). `later`: as de
+  // trás primeiro (andando para depois). Se uma não dá, nenhuma muda. A escolha volta às notas em `tick + delta`, ou a
+  // `after` se dado.
+  function eachBeat(notes, later, delta, apply, after) {
+    const wheres = wheresOf(notes);
+    const beats = [];
+    for (const n of notes) {
+      const span = edit.span(n);
+      if (!span) continue;
+      const where = { track: n.beat.voice.bar.staff.track.index, tick: span.start, string: edit.tabString(n) };
+      if (!beats.some((b) => b.track === where.track && Math.abs(b.tick - where.tick) < 1)) beats.push(where);
+    }
+    beats.sort((a, b) => (later ? b.tick - a.tick : a.tick - b.tick));
+    let reason = null;
+    change(() => {
+      for (const where of beats) {
+        let target = edit.findNote(state.score, where.track, where.tick, where.string);
+        if (!target) {
+          // A nota da cabeça de uma ligadura noutra corda do acorde: qualquer nota da batida serve.
+          const staff = state.score.tracks[where.track].staves.find((s) => s.tuning && s.tuning.length);
+          target = staff && edit.notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - where.tick) < 1);
+        }
+        if (!target) {
+          reason = "missing";
+          return false;
+        }
+        const result = apply(target);
+        if (result !== true) {
+          reason = result;
+          return false;
+        }
+        state.score = edit.refinish(alphaTab, state.score);
+      }
+      return true;
+    });
+    if (reason) {
+      post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para mudar todas as notas." });
+      drawSelection();
+      postSelection();
+      return;
+    }
+    chooseWheres(after || wheres.map((w) => ({ track: w.track, tick: w.tick + delta, string: w.string })));
+    drawSelection();
+    postSelection();
+  }
+
   // Uma mudança no ritmo (o compasso refeito): o motivo vira aviso, e a nota é achada de novo pelo tique `tick` e pela
   // corda.
   function rewriteSelected(note, tick, apply) {
@@ -1021,7 +1253,7 @@
       return;
     }
     const found = edit.findNote(state.score, where.track, where.tick, where.string);
-    state.selected = found ? edit.pathOf(found) : state.selected;
+    choose(found ? edit.pathOf(found) : state.selected);
     drawSelection();
     postSelection();
   }
@@ -1081,7 +1313,7 @@
     const edge = Math.min(8, box.width / 3);
     const mode = event.clientX - box.left <= edge ? "start" : box.right - event.clientX <= edge ? "end" : "move";
     const note = bar.beat.notes[0];
-    state.selected = edit.pathOf(note);
+    choose(edit.pathOf(note));
     drawSelection();
     postSelection();
     state.durDrag = { bar, mode, from: event.clientX, start: Number(bar.dataset.start), end: Number(bar.dataset.end),
@@ -1193,7 +1425,7 @@
     if (!drag.moved) {
       drag.moved = true;
       // A nota arrastada fica escolhida (o contorno dela é o ponto de partida do tracejado).
-      state.selected = drag.path;
+      choose(drag.path);
       drawSelection();
       postSelection();
     }
@@ -1242,7 +1474,7 @@
       }
       show("");
       state.before = null;
-      state.selected = null;
+      choose(null);
       state.undo = [];
       state.redo = [];
       state.track = Number.isInteger(payload.track) ? payload.track : 0;
@@ -1347,7 +1579,7 @@
       state.editing = Boolean(value);
       sheet.classList.toggle("editing", state.editing);
       if (!state.editing) {
-        state.selected = null;
+        choose(null);
       }
       drawSelection();
       drawDurations();

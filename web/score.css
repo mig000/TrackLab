@@ -224,3 +224,18 @@ body.page #sheet {
   border-left: 1px solid var(--loop-edge);
   border-right: 1px solid var(--loop-edge);
 }
+
+/* As outras notas escolhidas (⇧ clique, ⌘ clique, ⇧← →): o contorno da principal, mais leve. */
+#group-selection {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.group-note {
+  position: absolute;
+  border: 1.5px solid var(--cursor);
+  border-radius: 4px;
+  background: rgba(255, 149, 0, 0.1);
+}

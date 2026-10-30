@@ -1100,6 +1100,16 @@ final class SongModel {
         tabEdit("length", TabSelection.ticks(base: base, dotted: dot, triplet: three))
     }
 
+    /// Ouvir (⌥Espaço): o trecho das notas escolhidas vira o loop e toca (no ritmo do estudo); a tela fica onde está.
+    func listenSelection() {
+        guard let range = tabSelection?.range, !grid.isEmpty else { return }
+        let seconds = grid.seconds(at: range.lowerBound)...grid.seconds(at: range.upperBound)
+        guard seconds.upperBound - seconds.lowerBound >= LoopRegion.minimum else { return }
+        if engine.isPlaying { engine.pause() }
+        setLoop(seconds, seekToStart: true)
+        engine.play()
+    }
+
     /// − e = na edição: a figura da metade ou do dobro (com o mesmo ponto ou tercina).
     func stepFigure(_ direction: Int) {
         guard let base = tabSelection?.base else { return }
@@ -1109,7 +1119,15 @@ final class SongModel {
     }
 
     /// ⌥← ⌥→ na edição: a nota escolhida um passo da grade mais cedo ou mais tarde.
+    /// Com várias notas escolhidas, todas andam juntas (sem escolher de novo, que deixaria só uma).
     func shiftSelected(_ steps: Int) {
+        if let count = tabSelection?.count, count > 1, steps != 0 {
+            tabEdit("nudge", steps)
+            let name = Self.grids.first { $0.ticks == gridTicks }?.name ?? "passo"
+            tabMessage = "As \(count) notas andaram \(abs(steps)) × \(name) " + (steps > 0 ? "para depois" : "para antes")
+                + " · ⌘Z desfaz"
+            return
+        }
         guard let (note, track) = selectedScoreNote() else { return }
         shiftNote(note, track: track, steps: steps)
     }

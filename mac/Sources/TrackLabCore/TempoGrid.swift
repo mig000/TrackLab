@@ -286,10 +286,17 @@ public struct TabSelection: Hashable, Sendable {
     public let base: Int?
     public let dotted: Bool
     public let triplet: Bool
+    /// Quantas notas estão escolhidas (⇧ clique, ⌘ clique, ⇧← →; esta é a principal), o trecho delas em tiques (do
+    /// começo da primeira ao fim da última, com as ligadas) e, com várias, de onde a onde ("c. 1 · tempo 1 → c. 2 ·
+    /// tempo 3").
+    public let count: Int
+    public let range: ClosedRange<Double>?
+    public let span: String?
 
     public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String],
                 place: String? = nil, figure: String? = nil, strings: [Int?] = [], length: Double? = nil,
-                base: Int? = nil, dotted: Bool = false, triplet: Bool = false) {
+                base: Int? = nil, dotted: Bool = false, triplet: Bool = false, count: Int = 1,
+                range: ClosedRange<Double>? = nil, span: String? = nil) {
         self.track = track
         self.string = string
         self.fret = fret
@@ -303,6 +310,9 @@ public struct TabSelection: Hashable, Sendable {
         self.base = base
         self.dotted = dotted
         self.triplet = triplet
+        self.count = count
+        self.range = range
+        self.span = span
     }
 
     /// A duração em tiques de uma figura: a base, com ponto (1,5×) ou em tercina (⅔).
@@ -326,7 +336,14 @@ public struct TabSelection: Hashable, Sendable {
                   place: page["place"] as? String, figure: page["figure"] as? String,
                   strings: (page["strings"] as? [Any])?.map { ($0 as? NSNumber)?.intValue } ?? [],
                   length: (page["length"] as? NSNumber)?.doubleValue, base: int("base"),
-                  dotted: (int("dots") ?? 0) > 0, triplet: page["triplet"] as? Bool ?? false)
+                  dotted: (int("dots") ?? 0) > 0, triplet: page["triplet"] as? Bool ?? false,
+                  count: int("count") ?? 1,
+                  range: { () -> ClosedRange<Double>? in
+                      guard let from = (page["from"] as? NSNumber)?.doubleValue,
+                            let to = (page["to"] as? NSNumber)?.doubleValue, to > from else { return nil }
+                      return from...to
+                  }(),
+                  span: page["span"] as? String)
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

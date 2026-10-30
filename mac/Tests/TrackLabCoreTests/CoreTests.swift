@@ -353,6 +353,14 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(TabSelection.ticks(base: 480, dotted: true, triplet: false) == 720)
     #expect(TabSelection.ticks(base: 480, dotted: false, triplet: true) == 320)
     #expect(TabSelection.ticks(base: 120, dotted: false, triplet: false) == 120)
+    // Várias notas: quantas, o trecho em tiques e de onde a onde.
+    full["count"] = NSNumber(value: 3)
+    full["from"] = NSNumber(value: 960)
+    full["to"] = NSNumber(value: 2880)
+    full["span"] = "c. 1 · tempo 2 → c. 1 · tempo 3"
+    let group = TabSelection(page: full)
+    #expect(group?.count == 3 && group?.range == 960...2880 && group?.span == "c. 1 · tempo 2 → c. 1 · tempo 3")
+    #expect(TabSelection(page: page)?.count == 1 && TabSelection(page: page)?.range == nil)
 }
 
 /// Uma curva do som a cada 8 ms de `start` a `end` pela função.

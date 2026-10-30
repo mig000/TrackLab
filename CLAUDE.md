@@ -237,7 +237,15 @@ pela `base` do `describe`, e a pausa: `length` refaz o compasso do mesmo começo
 pausa e mais longa não passa da nota seguinte; `rest` tira a batida inteira, `edit.toRest`; teclas − = . T ⇧⌫), as
 articulações em grupos, o som e o encaixe, o tempo
 (barras de duração, grade, um passo para os lados), as suspeitas e, embaixo, o aviso da página, Desfazer, Refazer e
-Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. Várias notas de uma
+vez: ⇧ clique (da nota de partida até ali, `edit.rangeOf`), ⌘ clique (põe ou tira uma) e ⇧← ⇧→ (`extend`); a página
+guarda `group` (os endereços) e a principal, contorna as outras (`#group-selection`) e manda à coluna quantas são, de
+onde a onde e o trecho em tiques. Articulação (liga em todas se a principal não tem, `toggleAll`), casa e meio tom
+(`transposeAll`), corda (`moveAll`, o trecho noutra posição do braço), apagar, pausa, figura e ⌥← ⌥→ valem para todas;
+as do ritmo uma batida por vez, com o finish entre uma e outra (`eachBeat`). Se uma não dá, nenhuma muda: o `change`
+volta a partitura de antes (também numa só, que um compasso refeito pela metade deixava estragada). Esc com várias deixa
+só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, ⌥Espaço) põe o loop no trecho escolhido e
+toca. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo

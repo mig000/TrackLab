@@ -11,6 +11,8 @@ import TrackLabCore
 ///     ⌥← ⌥→         a nota um passo da grade mais cedo / mais tarde   D   as barras de duração
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
 ///     − =           a figura da metade / do dobro             .  T  ponto / tercina          ⇧⌫  vira pausa
+///     ⇧← ⇧→         escolhe mais uma nota para trás / para a frente (⇧ clique: até ali; ⌘ clique: põe ou tira)
+///     ⌥Espaço       ouvir: o trecho escolhido vira o loop e toca
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
 ///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
@@ -110,24 +112,37 @@ struct TabEditPanel: View {
     /// A nota: onde está, a figura, a casa, a altura, a corda (a mesma altura em outra corda) e andar de nota em nota.
     private func noteSection(_ selection: TabSelection?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            title("Nota", keys: "Esc solta")
+            title((selection?.count ?? 1) > 1 ? "\(selection?.count ?? 0) notas escolhidas" : "Nota", keys: "Esc solta")
             VStack(alignment: .leading, spacing: 1) {
-                Text(selection?.place ?? "Clique numa nota da TAB")
-                    .font(.callout.weight(.medium).monospacedDigit())
-                Text(selection.map { [$0.pitchName, $0.figure].compactMap { $0 }.joined(separator: " · ") } ?? " ")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let selection, selection.count > 1 {
+                    // Com várias: de onde a onde, e a principal (a última clicada), cujos valores a coluna mostra.
+                    Text(selection.span ?? "")
+                        .font(.caption.weight(.medium).monospacedDigit())
+                        .lineLimit(2, reservesSpace: true)
+                    Text("Principal: " + [selection.place, selection.pitchName].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(selection?.place ?? "Clique numa nota da TAB")
+                        .font(.callout.weight(.medium).monospacedDigit())
+                        .lineLimit(2, reservesSpace: true)
+                    Text(selection.map { [$0.pitchName, $0.figure].compactMap { $0 }.joined(separator: " · ") }
+                         ?? "⇧ clique ou ⇧← → escolhem várias; ⌘ clique põe ou tira uma")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
                 GridRow {
                     Text("Casa").font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 4) {
-                        Button { model.tabEdit("fret", (selection?.fret ?? 0) - 1) } label: { Image(systemName: "minus") }
+                        // Uma casa abaixo ou acima na mesma corda é meio tom: com várias notas, vale para todas.
+                        Button { model.tabEdit("transpose", -1) } label: { Image(systemName: "minus") }
                             .disabled((selection?.fret ?? 0) <= 0)
                         Text(selection.map { "\($0.fret)" } ?? "–")
                             .font(.title3.weight(.semibold).monospacedDigit())
                             .frame(minWidth: 28)
-                        Button { model.tabEdit("fret", (selection?.fret ?? 0) + 1) } label: { Image(systemName: "plus") }
+                        Button { model.tabEdit("transpose", 1) } label: { Image(systemName: "plus") }
                             .disabled((selection?.fret ?? Self.maxFret) >= Self.maxFret)
                     }
                     .help("A casa na mesma corda; as teclas 0–9 digitam a casa (dois dígitos em 0,6 s: 10–24)")
@@ -159,8 +174,11 @@ struct TabEditPanel: View {
                 Button { model.tabEdit("nav", 1) } label: { Label("Seguinte", systemImage: "chevron.right") }
                     .help("A nota seguinte (→)")
                 Spacer()
+                Button { model.listenSelection() } label: { Image(systemName: "ear") }
+                    .help("Ouvir: o trecho das notas escolhidas vira o loop e toca (⌥Espaço)")
+                    .accessibilityLabel("Ouvir")
                 Button(role: .destructive) { model.tabEdit("delete") } label: { Image(systemName: "trash") }
-                    .help("Apagar a nota (⌫)")
+                    .help("Apagar a nota, ou as escolhidas (⌫)")
                     .accessibilityLabel("Apagar")
             }
             .labelStyle(.titleAndIcon)
@@ -430,14 +448,29 @@ struct TabEditKeys: NSViewRepresentable {
             switch event.keyCode {
             case 126: model.tabEdit(option ? "transpose" : "string", 1); return true      // ↑
             case 125: model.tabEdit(option ? "transpose" : "string", -1); return true     // ↓
-            case 123: if option { model.shiftSelected(-1) } else { model.tabEdit("nav", -1) }; return true  // ←, ⌥←
-            case 124: if option { model.shiftSelected(1) } else { model.tabEdit("nav", 1) }; return true    // →, ⌥→
+            case 123, 124:                                                                // ← →, ⌥← ⌥→, ⇧← ⇧→
+                let step = event.keyCode == 123 ? -1 : 1
+                if option {
+                    model.shiftSelected(step)
+                } else if flags.contains(.shift) {
+                    model.tabEdit("extend", step)
+                } else {
+                    model.tabEdit("nav", step)
+                }
+                return true
+            case 49 where option:                                                         // ⌥Espaço: ouvir
+                model.listenSelection()
+                return true
             case 51, 117: model.tabEdit(flags.contains(.shift) ? "rest" : "delete"); return true  // ⌫, ⇧⌫ pausa
             case 27, 78: model.stepFigure(-1); return true                                 // −, − do teclado numérico
             case 24, 69: model.stepFigure(1); return true                                  // = (+), + do numérico
             case 47: model.setFigure(dotted: !(model.tabSelection?.dotted ?? false)); return true  // .
             case 53:                                                                      // Esc
-                if model.tabSelection == nil { model.editingTab = false } else { model.tabEdit("clear") }
+                if model.tabSelection == nil {
+                    model.editingTab = false
+                } else {
+                    model.tabEdit((model.tabSelection?.count ?? 1) > 1 ? "single" : "clear")
+                }
                 return true
             default: break
             }

@@ -593,6 +593,47 @@
     return true;
   }
 
+  // MARK: várias notas de uma vez (⇧ clique, ⌘ clique, ⇧← →)
+
+  // As notas de `a` a `b` (inclusive) na ordem de tempo da pauta; vazio se estão em pautas diferentes.
+  function rangeOf(a, b) {
+    const staff = a.beat.voice.bar.staff;
+    if (b.beat.voice.bar.staff !== staff) return [];
+    const list = notesOf(staff);
+    const i = list.indexOf(a);
+    const j = list.indexOf(b);
+    if (i < 0 || j < 0) return [];
+    return list.slice(Math.min(i, j), Math.max(i, j) + 1);
+  }
+
+  // Uma articulação em várias notas: liga em todas se a principal (a primeira) não tem; senão desliga em todas.
+  function toggleAll(at, notes, key) {
+    if (!notes.length || !GROUPS[key]) return false;
+    const on = techniquesOf(at, notes[0]).includes(key);
+    let changed = false;
+    for (const note of notes) {
+      if (techniquesOf(at, note).includes(key) === on) changed = toggle(at, note, key) || changed;
+    }
+    return changed;
+  }
+
+  // Todas meio tom acima ou abaixo na mesma corda; se uma não pode (fora do braço), nenhuma muda.
+  function transposeAll(notes, semitones) {
+    if (notes.some((n) => n.fret + semitones < 0 || n.fret + semitones > MAX_FRET)) return false;
+    for (const note of notes) setFret(note, note.fret + semitones);
+    return true;
+  }
+
+  // Todas para outra corda na mesma altura (o trecho noutra posição do braço); as da ponta para onde andam vão primeiro,
+  // para uma não ocupar a corda da vizinha de acorde. Se uma não pode, devolve false (quem chama desfaz).
+  function moveAll(notes, delta) {
+    const sorted = notes.slice().sort((a, b) => (delta > 0 ? b.string - a.string : a.string - b.string));
+    for (const note of sorted) {
+      if (!moveString(note, delta)) return false;
+    }
+    return true;
+  }
+
   // As notas de uma pauta em ordem de tempo e, na mesma batida, da corda mais aguda para a mais grave.
   function notesOf(staff) {
     const list = [];
@@ -684,10 +725,15 @@
     notesOf,
     nudge,
     retime,
+    rangeOf,
+    moveAll,
     rhythmOf,
     setLength,
     span,
     toRest,
+    toggleAll,
+    transposeAll,
+    techniquesOf,
     timeline,
     figureName,
     pathOf,

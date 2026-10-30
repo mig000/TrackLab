@@ -233,6 +233,42 @@ test("a nota vira pausa: a batida sai e as outras ficam no lugar", () => {
   assert.ok(beats.some((b) => b.isRest && Math.abs(b.absolutePlaybackStart - 960) < 1));
 });
 
+test("várias notas: o trecho entre duas, articulação, meio tom e corda em todas", () => {
+  let score = load();
+  const staff = score.tracks[0].staves[0];
+  const list = edit.notesOf(staff);
+  const notes = edit.rangeOf(list[2], list[0]);
+  assert.equal(notes.length, 3);
+  assert.deepEqual(notes, list.slice(0, 3), "em ordem de tempo, de qualquer ponta");
+  // A articulação liga em todas (a principal não tem) e desliga em todas.
+  assert.equal(edit.toggleAll(alphaTab, notes, "palm-mute"), true);
+  assert.ok(notes.every((n) => edit.techniquesOf(alphaTab, n).includes("palm-mute")));
+  assert.equal(edit.toggleAll(alphaTab, notes, "palm-mute"), true);
+  assert.ok(notes.every((n) => !edit.techniquesOf(alphaTab, n).includes("palm-mute")));
+  // Meio tom em todas; se uma sairia do braço, nenhuma muda.
+  const frets = notes.map((n) => n.fret);
+  assert.equal(edit.transposeAll(notes, 1), true);
+  assert.deepEqual(notes.map((n) => n.fret), frets.map((f) => f + 1));
+  const low = Math.min(...notes.map((n) => n.fret));
+  assert.equal(edit.transposeAll(notes, -(low + 1)), false);
+  assert.deepEqual(notes.map((n) => n.fret), frets.map((f) => f + 1));
+  // Outra corda, mesma altura, para todas (quando cabe em todas).
+  const pitches = notes.map((n) => n.realValue);
+  const tuning = staff.tuning;
+  const delta = [1, -1].find((d) => notes.every((n) => {
+    const target = n.string + d;
+    if (target < 1 || target > tuning.length) return false;
+    const fret = tuning[tuning.length - n.string] + n.fret - tuning[tuning.length - target];
+    return fret >= 0 && fret <= edit.MAX_FRET;
+  }));
+  if (delta) {
+    assert.equal(edit.moveAll(notes, delta), true);
+    score = edit.refinish(alphaTab, score);
+    const moved = edit.notesOf(score.tracks[0].staves[0]).slice(0, 3);
+    assert.deepEqual(moved.map((n) => n.realValue), pitches, "a altura fica");
+  }
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");
