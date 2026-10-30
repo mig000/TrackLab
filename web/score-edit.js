@@ -593,6 +593,109 @@
     return true;
   }
 
+  // MARK: copiar e colar
+
+  // As propriedades que não vão no recorte: endereço e tempo (o compasso refeito dá a figura e o lugar), e as calculadas.
+  const SKIP = new Set(["id", "index", "duration", "dots", "tupletNumerator", "tupletDenominator", "graceType",
+    "graceIndex", "playbackStart", "displayStart", "playbackDuration", "displayDuration", "isEmpty", "isTieDestination",
+    "isContinuedBend", "isContinuedWhammy"]);
+
+  // Os valores simples de um objeto do alphaTab (números, sim e não, textos); as ligações com outras notas e batidas
+  // ficam de fora (o finish as refaz).
+  function plain(object) {
+    const out = {};
+    for (const key of Object.keys(object)) {
+      const value = object[key];
+      if (SKIP.has(key) || key.startsWith("_")) continue;
+      if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") out[key] = value;
+    }
+    return out;
+  }
+
+  // O recorte das notas: o trecho do começo da primeira ao fim da última (com as ligadas), cada batida com todas as notas
+  // dela (o acorde inteiro) e as pausas no meio. Só valores simples: vai ao app e serve noutra música.
+  function copy(notes) {
+    if (!notes.length) return null;
+    const staff = notes[0].beat.voice.bar.staff;
+    const events = timeline(staff);
+    const chosen = events.filter((e) => notes.some((n) => e.beat === n.beat || e.tail.includes(n.beat)));
+    if (!chosen.length) return null;
+    const start = Math.min(...chosen.map((e) => e.start));
+    const end = Math.max(...chosen.map((e) => e.end));
+    const clip = { length: end - start, events: [] };
+    for (const ev of events) {
+      if (ev.start < start || ev.start >= end) continue;
+      clip.events.push({
+        offset: ev.start - start,
+        length: Math.min(ev.end, end) - ev.start,
+        beat: Object.assign(plain(ev.beat), {
+          whammy: ev.beat.whammyBarPoints ? ev.beat.whammyBarPoints.map((p) => [p.offset, p.value]) : null }),
+        notes: ev.beat.notes.map((n) => Object.assign(plain(n), {
+          bend: n.bendPoints ? n.bendPoints.map((p) => [p.offset, p.value]) : null })),
+      });
+    }
+    return clip;
+  }
+
+  // Uma batida nova de um recorte, com as notas que cabem nas cordas da pauta.
+  function beatFrom(at, staff, item) {
+    const m = at.model;
+    const beat = new m.Beat();
+    const { whammy, ...props } = item.beat;
+    Object.assign(beat, props);
+    if (whammy) for (const [offset, value] of whammy) beat.addWhammyBarPoint(new m.BendPoint(offset, value));
+    for (const data of item.notes) {
+      if (data.string < 1 || data.string > staff.tuning.length) continue;
+      const { bend, ...rest } = data;
+      const note = new m.Note();
+      Object.assign(note, rest);
+      if (bend) for (const [offset, value] of bend) note.addBendPoint(new m.BendPoint(offset, value));
+      beat.addNote(note);
+    }
+    return beat;
+  }
+
+  // Cola o recorte a partir do tique `start` da pauta, por cima do que estava: o que começa no trecho sai, o que vem de
+  // antes encurta até ele, e os compassos são refeitos com figuras, pausas e ligaduras. Devolve true ou o motivo
+  // ("end": passa do fim da música; "grace", "figure" como o retime).
+  function paste(at, staff, start, clip) {
+    if (!clip || !clip.events) return "missing";
+    start = Math.round(start);
+    const end = start + Math.round(clip.length);
+    const bars = staff.bars;
+    const songEnd = bars[bars.length - 1].masterBar.start + bars[bars.length - 1].masterBar.calculateDuration();
+    if (end > songEnd + 0.5) return "end";
+    const events = timeline(staff);
+    let low = start;
+    let high = end;
+    const kept = [];
+    for (const ev of events) {
+      if (ev.end <= start || ev.start >= end) {
+        kept.push(ev);
+      } else if (ev.start < start) {
+        low = Math.min(low, ev.start);
+        high = Math.max(high, ev.end);
+        kept.push({ start: ev.start, end: start, beat: ev.beat, tail: [] });
+      } else {
+        high = Math.max(high, ev.end);
+      }
+    }
+    for (const item of clip.events) {
+      const at0 = start + Math.round(item.offset);
+      kept.push({ start: at0, end: at0 + Math.round(item.length), beat: beatFrom(at, staff, item), tail: [] });
+    }
+    kept.sort((a, b) => a.start - b.start);
+    const first = barAt(staff, low);
+    const last = barAt(staff, high - 1);
+    for (let b = first; b <= last; b++) {
+      if (bars[b].voices[0].beats.some((x) => x.graceType !== at.model.GraceType.None)) return "grace";
+    }
+    for (let b = first; b <= last; b++) {
+      if (!rebuildBar(at, bars[b], kept)) return "figure";
+    }
+    return true;
+  }
+
   // MARK: várias notas de uma vez (⇧ clique, ⌘ clique, ⇧← →)
 
   // As notas de `a` a `b` (inclusive) na ordem de tempo da pauta; vazio se estão em pautas diferentes.
@@ -755,6 +858,8 @@
     nudge,
     retime,
     rangeOf,
+    copy,
+    paste,
     resolveBeat,
     caretOf,
     insertNote,

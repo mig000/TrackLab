@@ -254,7 +254,13 @@ TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só
 seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição) e
 a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
 dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
-velocidade do estudo). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+velocidade do estudo). Copiar e colar (⌘C ⌘X ⌘V na edição, ou os botões da coluna): o recorte são as batidas inteiras
+das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fim da última, em valores simples
+(`edit.copy`: as propriedades de número, sim e não e texto de cada batida e nota, mais os pontos de bend e de alavanca;
+sem endereço nem figura); vai para a área de transferência do macOS como `local.tracklab.tab-clip` (cola noutra música e
+depois de reabrir o app). Colar (`edit.paste`) entra a partir da nota escolhida ou do cursor de inserção, por cima do que
+estava: o que começa no trecho sai, o que vem de antes encurta até ele, e os compassos são refeitos com figuras, pausas e
+ligaduras; não passa do fim da música. Recortar copia e deixa pausa. As coladas ficam escolhidas. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo

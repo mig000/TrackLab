@@ -65,6 +65,7 @@
     figure: "A duração não cabe em figuras (nem com tercinas): use outra grade.",
     missing: "Não achei a nota na voz 1.",
     next: "Não cabe: a nota seguinte começa antes. Apague ou encurte a seguinte primeiro.",
+    end: "Não cabe: o trecho passaria do fim da música.",
   };
 
   const THEMES = {
@@ -1109,6 +1110,10 @@
       postSelection();
       return;
     }
+    if (op === "paste") {
+      pasteAt(value);
+      return;
+    }
     if (state.caret) {
       caretEdit(op, value);
       return;
@@ -1120,6 +1125,15 @@
     const notes = selectedNotes();
     const several = notes.length > 1;
     switch (op) {
+      case "copy":
+      case "cut": {
+        // O recorte vai ao app (a área de transferência: cola noutra música); recortar deixa pausa no lugar.
+        const clip = edit.copy(notes);
+        if (!clip) return;
+        post({ type: "clip", clip, beats: clip.events.length, cut: op === "cut" });
+        if (op === "cut") runEdit("rest");
+        return;
+      }
       case "single":
         // Esc com várias: fica só a principal.
         choose(state.selected);
@@ -1276,6 +1290,57 @@
     if (!span) return;
     const [start, end] = target(span);
     rewriteSelected(note, start, () => edit.retime(alphaTab, note, start, end));
+  }
+
+  // Cola o recorte (do app) a partir da nota escolhida (o começo dela) ou do cursor de inserção, por cima do que
+  // estava; as notas coladas ficam escolhidas.
+  function pasteAt(clip) {
+    let staff = null;
+    let start = null;
+    if (state.caret) {
+      const beat = edit.resolveBeat(state.score, state.caret);
+      if (beat) {
+        staff = beat.voice.bar.staff;
+        start = beat.absolutePlaybackStart;
+      }
+    } else {
+      const note = selectedNote();
+      const span = note && edit.span(note);
+      if (span) {
+        staff = note.beat.voice.bar.staff;
+        start = span.start;
+      }
+    }
+    if (!staff || !clip || !Array.isArray(clip.events)) {
+      post({ type: "notice", text: "Escolha onde colar: uma nota ou uma linha vazia da TAB." });
+      return;
+    }
+    const track = staff.track.index;
+    const strings = staff.tuning.length;
+    const wheres = [];
+    for (const item of clip.events) {
+      for (const n of item.notes) {
+        if (n.string >= 1 && n.string <= strings) {
+          wheres.push({ track, tick: start + Math.round(item.offset), string: strings - n.string + 1 });
+        }
+      }
+    }
+    let reason = null;
+    change(() => {
+      const result = edit.paste(alphaTab, staff, start, clip);
+      if (result !== true) reason = result;
+      return result === true;
+    });
+    if (reason) {
+      post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para colar aqui." });
+      drawSelection();
+      postSelection();
+      return;
+    }
+    chooseWheres(wheres);
+    drawSelection();
+    postSelection();
+    post({ type: "notice", text: `Colado: ${clip.events.length} ${clip.events.length === 1 ? "batida" : "batidas"} · ⌘Z desfaz` });
   }
 
   // Com o cursor de inserção: a casa digitada põe a nota (e a escolhe); ↑↓ andam de corda e ←→ de batida (numa corda

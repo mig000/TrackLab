@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Observation
@@ -249,6 +250,7 @@ final class SongModel {
             self?.canRedoTab = redo
         }
         bridge.onCaret = { [weak self] caret in self?.tabCaret = caret }
+        bridge.onClip = { [weak self] clip, beats, cut in self?.storeClip(clip, beats: beats, cut: cut) }
         bridge.onHear = { [weak self] body in
             func number(_ key: String) -> Double? { (body[key] as? NSNumber)?.doubleValue }
             guard let self, let track = number("track"), let tick = number("tick"), let string = number("string"),
@@ -1137,6 +1139,40 @@ final class SongModel {
         }
         keepView = viewStart(now: engine.currentTime)
         engine.audition(from: start, to: end, track: pitchStem(track: track).stem)
+    }
+
+    // MARK: - Copiar e colar na TAB
+
+    /// O tipo do recorte da TAB na área de transferência do macOS: cola noutra música (e depois de reabrir o app).
+    static let clipType = NSPasteboard.PasteboardType("local.tracklab.tab-clip")
+
+    /// ⌘C e ⌘X na edição: a página faz o recorte das notas escolhidas (as batidas inteiras) e o manda para cá.
+    func copyTab(cut: Bool) {
+        guard tabSelection != nil else {
+            tabMessage = "Escolha as notas para copiar (um clique, ⇧ clique ou ⇧← →)."
+            return
+        }
+        tabEdit(cut ? "cut" : "copy")
+    }
+
+    /// ⌘V na edição: o recorte entra a partir da nota escolhida ou do cursor de inserção, por cima do que estava.
+    func pasteTab() {
+        guard let data = NSPasteboard.general.data(forType: Self.clipType),
+              let clip = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            tabMessage = "Nada da TAB copiado ainda: ⌘C numa nota ou num trecho escolhido."
+            return
+        }
+        tabEdit("paste", clip)
+    }
+
+    private func storeClip(_ clip: [String: Any], beats: Int, cut: Bool) {
+        guard let data = try? JSONSerialization.data(withJSONObject: clip) else { return }
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setData(data, forType: Self.clipType)
+        board.setString("TrackLab: \(beats) \(beats == 1 ? "batida" : "batidas") da TAB", forType: .string)
+        tabMessage = (cut ? "Recortado" : "Copiado") + ": \(beats) \(beats == 1 ? "batida" : "batidas")"
+            + " · ⌘V cola a partir da nota ou da linha escolhida (também noutra música)"
     }
 
     /// Uma nota da Lente (clicada ou com o botão direito).

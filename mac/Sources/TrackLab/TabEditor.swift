@@ -209,7 +209,21 @@ struct TabEditPanel: View {
                     .accessibilityLabel("Apagar")
             }
             .labelStyle(.titleAndIcon)
-            .disabled(selection == nil)
+            .disabled(selection == nil && model.tabCaret == nil)
+            // Copiar e colar: as batidas inteiras das notas escolhidas; colar a partir da nota ou da linha escolhida,
+            // por cima do que estava (também noutra música).
+            HStack(spacing: 4) {
+                Button { model.copyTab(cut: false) } label: { Label("Copiar", systemImage: "doc.on.doc") }
+                    .disabled(selection == nil)
+                    .help("⌘C: copia as batidas das notas escolhidas (o acorde inteiro, as articulações)")
+                Button { model.copyTab(cut: true) } label: { Label("Recortar", systemImage: "scissors") }
+                    .disabled(selection == nil)
+                    .help("⌘X: copia e deixa pausa no lugar")
+                Button { model.pasteTab() } label: { Label("Colar", systemImage: "doc.on.clipboard") }
+                    .disabled(selection == nil && model.tabCaret == nil)
+                    .help("⌘V: cola a partir da nota escolhida ou da linha vazia, por cima do que estava")
+            }
+            .labelStyle(.titleAndIcon)
         }
     }
 
@@ -464,6 +478,15 @@ struct TabEditKeys: NSViewRepresentable {
         @MainActor
         private func handle(_ event: NSEvent, _ model: SongModel) -> Bool {
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            // ⌘C ⌘X ⌘V na edição: as notas da TAB (num campo de texto, o monitor já deixou passar).
+            if model.editingTab, flags.intersection([.command, .shift, .option, .control]) == .command {
+                switch event.keyCode {
+                case 8: model.copyTab(cut: false); return true      // C
+                case 7: model.copyTab(cut: true); return true       // X
+                case 9: model.pasteTab(); return true                // V
+                default: break
+                }
+            }
             if flags.contains(.command) || flags.contains(.control) { return false }
             // Tab: a suspeita seguinte; com o espectro à vista vale também fora da edição (ela liga a edição).
             if event.keyCode == 48, model.editingTab || model.lensVisible {

@@ -295,6 +295,38 @@ test("nota nova: numa corda vazia da batida (acorde) e numa pausa, que vira nota
   assert.equal(at(score, 960).fret, 5);
 });
 
+test("copiar e colar: o trecho com as articulações, por cima do que estava, e noutra partitura", () => {
+  let score = load();
+  const staff = score.tracks[0].staves[0];
+  const list = edit.notesOf(staff);
+  // Duas notas do compasso 1, a primeira com palm mute e bend.
+  edit.toggle(alphaTab, list[0], "palm-mute");
+  edit.toggle(alphaTab, list[0], "bend-full");
+  const clip = JSON.parse(JSON.stringify(edit.copy([list[0], list[1]])));
+  assert.equal(clip.length, 1920);
+  assert.equal(clip.events.length, 2);
+  // Cola no compasso 2: as duas primeiras batidas de lá saem, o resto fica.
+  const before = at(score, 5760);
+  assert.equal(edit.paste(alphaTab, staff, 3840, clip), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const pasted = at(score, 3840);
+  assert.ok(edit.techniquesOf(alphaTab, pasted).includes("palm-mute"));
+  assert.ok(edit.techniquesOf(alphaTab, pasted).includes("bend-full"));
+  assert.ok(at(score, 4800), "a segunda colada");
+  assert.equal(at(score, 5760).fret, before.fret, "o que vem depois do trecho fica");
+  // Noutra partitura (outra música), no meio de uma nota: a de antes encurta até o trecho.
+  let other = load();
+  assert.equal(edit.paste(alphaTab, other.tracks[0].staves[0], 480, clip), true);
+  other = reread(edit.refinish(alphaTab, other));
+  barsAreWhole(other);
+  assert.equal(at(other, 0).beat.playbackDuration, 480);
+  assert.ok(at(other, 480) && at(other, 1440));
+  // Passar do fim da música, não.
+  const lastBar = other.tracks[0].staves[0].bars.at(-1).masterBar;
+  assert.equal(edit.paste(alphaTab, other.tracks[0].staves[0], lastBar.start + 2880, clip), "end");
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");

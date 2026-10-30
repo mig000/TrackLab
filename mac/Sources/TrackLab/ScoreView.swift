@@ -38,6 +38,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     /// Uma nota para ouvir: o clique (o som gravado) ou o botão direito (sintetizada); pista, tique, corda, altura e o
     /// trecho em tiques (`from`, `to`).
     var onHear: (([String: Any]) -> Void)?
+    /// Um recorte da TAB (⌘C, ⌘X): as batidas com as notas, em valores simples, e quantas são.
+    var onClip: ((_ clip: [String: Any], _ beats: Int, _ cut: Bool) -> Void)?
     var onSave: ((Data) -> Void)?
     var onNotes: (([[ScoreNote]]) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -287,6 +289,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 onCaret?(TabCaret(page: body["caret"] as? [String: Any]))
             case "hear":
                 onHear?(body)
+            case "clip":
+                if let clip = body["clip"] as? [String: Any] {
+                    onClip?(clip, (body["beats"] as? NSNumber)?.intValue ?? 0, body["cut"] as? Bool ?? false)
+                }
             case "save":
                 if let text = body["gp"] as? String, let data = Data(base64Encoded: text) { onSave?(data) }
             case "notes":
