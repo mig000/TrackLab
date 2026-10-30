@@ -149,8 +149,11 @@ da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o
 como na Lente (`SoundNote`, em TrackLabCore/SoundCurve.swift, porta o `fitCurve` e o `shapeAt` do `lens-core.js`): a
 faixa segue o som (o vibrato e o bend copiados da curva quando ela os tem; senão, a escrita), com o traço do ataque e os
 pontos laranja da altura que soa (as curvas chegam do motor aos poucos, pelas notas que aparecem; a chave leva a altura,
-então uma nota editada é medida de novo). Nota de acorde (outra nota da pista na mesma batida) fica na forma escrita e
-nunca vira trinado: a curva pula entre as cordas. Editável como na Lente: um clique numa faixa liga a edição e escolhe
+então uma nota editada é medida de novo). Nota de acorde (outra nota da pista na mesma batida): o app manda as outras (`others`) e o
+motor mede só pelos harmônicos, entre as vizinhas (até meio semitom delas), sem os harmônicos que caem perto dos delas
+(a correlação acha o período comum das cordas, uma altura entre elas). No Sunshine, a de cima e a de baixo passam a ter
+80–100 % dos pontos; a do meio ainda oscila, então a faixa fica na escrita, sem trinado, e acorde não entra nas
+suspeitas nem na afinação; o resumo da nota vale. Editável como na Lente: um clique numa faixa liga a edição e escolhe
 a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao soltar, mede o som de novo em volta da
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
 bend e o vibrato do som (`fit` na página). O Guitar Pro 7 guarda o bend como origem, meio de um valor só e destino, e

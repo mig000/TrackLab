@@ -327,14 +327,21 @@ final class SongModel {
             (key: curveKey(note, track: track), start: grid.seconds(at: note.tick),
              end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
         }
-        // As notas de acorde (outra nota da pista na mesma batida): a faixa fica na escrita, sem trinado.
+        // As notas de acorde (outra nota da pista na mesma batida): o motor mede cada uma entre as outras; a faixa
+        // fica na escrita, sem trinado, e não entram nas suspeitas (a do meio ainda oscila).
         let ticks = Set(batch.map(\.tick))
-        var count: [Double: Int] = [:]
+        var together: [Double: [Int]] = [:]
         if scoreNotes.indices.contains(track) {
-            for note in scoreNotes[track] where ticks.contains(note.tick) { count[note.tick, default: 0] += 1 }
+            for note in scoreNotes[track] where ticks.contains(note.tick) { together[note.tick, default: []].append(note.pitch) }
         }
-        let chords = Set(batch.filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
-        guard let curves = try? await Backend.shared.pitchCurves(id, notes: list, stem: pitchStem(track: track).stem)
+        var others: [String: [Int]] = [:]
+        for note in batch {
+            let rest = (together[note.tick] ?? []).filter { $0 != note.pitch }
+            if !rest.isEmpty { others[curveKey(note, track: track)] = rest }
+        }
+        let chords = Set(others.keys)
+        guard let curves = try? await Backend.shared.pitchCurves(id, notes: list, others: others,
+                                                                stem: pitchStem(track: track).stem)
         else { return }
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
@@ -896,7 +903,6 @@ final class SongModel {
         guard pitchStem(track: track).measured else { return nil }
         // Sem o espectro as curvas não são medidas: nada a dizer.
         guard let sound = soundNotes[curveKey(note, track: track)] else { return fitaMode == .spectrum ? "Medindo o som…" : nil }
-        if sound.chord { return "Nota de acorde: o som mistura as cordas." }
         let start = grid.seconds(at: note.tick)
         guard let report = sound.report(for: note, start: start, end: grid.seconds(at: note.tick + note.duration)) else {
             return "O som não tem uma altura clara."

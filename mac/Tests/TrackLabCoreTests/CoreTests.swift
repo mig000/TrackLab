@@ -441,9 +441,11 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     let short = try #require(SoundNote(curve: soundCurve(1, 2) { $0 < 1.25 ? 60 : min(61.8, 60 + ($0 - 1.25) * 20) },
                                        start: 1, end: 2, pitch: 60).report(for: bent, start: 1, end: 2))
     #expect(short.bend == 4 && short.reached == 90 && short.cents == 0)
-    // Nota de acorde: nada a dizer.
-    #expect(SoundNote(curve: soundCurve(1, 2) { _ in 60 }, start: 1, end: 2, pitch: 60, chord: true)
-        .report(for: plain, start: 1, end: 2) == nil)
+    // Nota de acorde (medida entre as outras): a altura também; sem curva clara, nada.
+    #expect(SoundNote(curve: soundCurve(1, 2) { _ in 60.1 }, start: 1, end: 2, pitch: 60, chord: true)
+        .report(for: plain, start: 1, end: 2)?.cents == 10)
+    #expect(SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: nil, count: 120)),
+                      start: 1, end: 2, pitch: 60, chord: true).report(for: plain, start: 1, end: 2) == nil)
 }
 
 @Test func oSomContraOMapa() {

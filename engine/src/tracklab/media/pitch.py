@@ -23,6 +23,7 @@ CLARITY = 0.6
 HARMONICS = 6
 HARMONIC_STEP = 0.05
 HARMONIC_CLARITY = 0.45
+CHORD_CLARITY = 0.15
 ATTACK_REACH = 0.12     # o ataque procurado até 120 ms antes ou depois do começo escrito
 ATTACK_RISE = 6.0       # dB em 10 ms: menos que isso não é ataque (ligado, nota que já soava)
 BELOW = 2.0             # semitons abaixo da altura escrita
@@ -92,8 +93,10 @@ def track_pitch(x: np.ndarray, rate: int, start: float, end: float, low: float, 
     return values
 
 
-def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: float, high: float) -> np.ndarray:
-    """A altura pelos harmônicos (quando outra corda soa junto e a correlação se perde)."""
+def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: float, high: float,
+                    others: tuple[float, ...] | list[float] = ()) -> np.ndarray:
+    """A altura pelos harmônicos (quando outra corda soa junto e a correlação se perde). Com `others` (as outras
+    notas do acorde), os harmônicos que caem a menos de 0,3 semitom de um harmônico delas não contam: são delas."""
     size = 2048 if frequency(low) < 165 else 1024
     padded = size * 4
     window = np.hanning(size)
@@ -102,6 +105,10 @@ def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: flo
     f0 = 440.0 * 2 ** ((candidates - 69) / 12)
     bins = f0[:, None] * np.arange(1, HARMONICS + 1)[None, :] * per_bin
     usable = bins * (1 / per_bin) < 0.45 * rate
+    for other in others:
+        theirs = frequency(other) * np.arange(1, 2 * HARMONICS + 1)
+        near = np.abs(12 * np.log2((bins / per_bin)[:, :, None] / theirs[None, None, :])).min(axis=2) < 0.3
+        usable &= ~near
     first_bin = max(1, int(frequency(low) * 0.8 * per_bin))
     last_bin = min(padded // 2 - 2, math.ceil(frequency(high) * (HARMONICS + 0.5) * per_bin))
     count = max(0, int((end - start) / HOP + 1e-9) + 1)
@@ -135,7 +142,9 @@ def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: flo
             continue
         best = scores[chosen]
         strong = max(at[chosen, 0], at[chosen, 1]) - floor >= 12
-        if (best - middle) / best < HARMONIC_CLARITY or not strong:
+        # No acorde a janela é estreita (entre as vizinhas): quase todas as candidatas estão perto do pico e o vazamento
+        # as levanta; a folga sobre a mediana fica menor.
+        if (best - middle) / best < (CHORD_CLARITY if others else HARMONIC_CLARITY) or not strong:
             previous = math.nan
             continue
         a, c = scores[chosen - 1], scores[chosen + 1]
@@ -190,9 +199,24 @@ def attack(x: np.ndarray, start: float, rate: int = RATE) -> float | None:
     return round(float(times[best]), 4) if rise[best] >= ATTACK_RISE else None
 
 
-def note_curve(x: np.ndarray, start: float, end: float, pitch: float, rate: int = RATE) -> dict:
-    """A curva de uma nota: a correlação; se ela tem menos da metade dos pontos, os harmônicos, se acham mais."""
+def note_curve(x: np.ndarray, start: float, end: float, pitch: float, rate: int = RATE,
+               others: tuple[float, ...] | list[float] = ()) -> dict:
+    """A curva de uma nota: a correlação; se ela tem menos da metade dos pontos, os harmônicos, se acham mais.
+
+    `others`: as outras notas da pista na mesma batida (um acorde, um double stop). A busca fica entre elas, até meio
+    semitom antes da vizinha de baixo e da de cima: sem isso, com as duas cordas no mesmo volume, a curva caía entre as
+    duas ou pulava de uma para a outra."""
     low, high = pitch - BELOW, pitch + ABOVE
+    for other in others:
+        if other < pitch:
+            low = max(low, other + 0.5)
+        elif other > pitch:
+            high = min(high, other - 0.5)
+    if others:
+        # Num acorde a correlação acha o período comum das cordas (uma altura entre elas): só os harmônicos.
+        values = smooth(track_harmonics(x, rate, start, end, low, high, others))
+        return {"from": start, "hop": HOP, "attack": attack(x, start, rate),
+                "values": [None if not math.isfinite(v) else round(float(v), 3) for v in values]}
     first = track_pitch(x, rate, start, end, low, high)
     share = lambda v: float(np.isfinite(v).mean()) if len(v) else 0.0  # noqa: E731
     values = first

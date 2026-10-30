@@ -258,15 +258,15 @@ final class Backend {
     }
 
     /// A curva de altura do som de cada nota (key, início, fim, altura escrita), na guitarra da separação ativa.
-    /// A altura do som em cada nota, na faixa `stem` da separação ativa (nil: a guitarra, ou o original).
+    /// A altura do som em cada nota, na faixa `stem` da separação ativa (nil: a guitarra, ou o original). `others`:
+    /// as outras notas do acorde, para o motor medir entre elas.
     func pitchCurves(_ id: String, notes: [(key: String, start: Double, end: Double, pitch: Int)],
-                     stem: String? = nil) async throws -> [String: PitchCurve] {
-        struct Note: Encodable { let key: String; let start: Double; let end: Double; let pitch: Int }
+                     others: [String: [Int]] = [:], stem: String? = nil) async throws -> [String: PitchCurve] {
+        struct Note: Encodable { let key: String; let start: Double; let end: Double; let pitch: Int; let others: [Int]? }
         struct Body: Encodable { let notes: [Note]; let stem: String? }
         struct Answer: Decodable { let curves: [String: PitchCurve] }
-        let answer: Answer = try await send("POST", "songs/\(id)/pitch",
-                                            body: Body(notes: notes.map { Note(key: $0.key, start: $0.start, end: $0.end, pitch: $0.pitch) },
-                                                       stem: stem))
+        let list = notes.map { Note(key: $0.key, start: $0.start, end: $0.end, pitch: $0.pitch, others: others[$0.key]) }
+        let answer: Answer = try await send("POST", "songs/\(id)/pitch", body: Body(notes: list, stem: stem))
         return answer.curves
     }
 

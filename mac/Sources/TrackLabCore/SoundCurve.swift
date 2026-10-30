@@ -395,9 +395,9 @@ extension SoundNote {
         return values.count >= 3 ? SoundNote.percentile(values, 0.5) : nil
     }
 
-    /// nil sem altura clara ou numa nota de acorde (a curva mistura as cordas).
+    /// nil sem altura clara. Numa nota de acorde o motor mede entre as outras notas dele (sem trinado).
     public func report(for note: ScoreNote, start: Double, end: Double) -> SoundReport? {
-        guard !chord, let fit else { return nil }
+        guard let fit else { return nil }
         let written = note.bend.map(\.value).max() ?? 0
         // Com bend, o meio da nota já subiu: a altura é a de partida.
         let held = fit.quarterTones > 0 ? fit.low : (middle(start: start, end: end) ?? fit.low)

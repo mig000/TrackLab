@@ -291,11 +291,12 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         for note in notes:
             try:
                 key, start, end, height = str(note["key"]), float(note["start"]), float(note["end"]), float(note["pitch"])
+                others = [float(o) for o in note.get("others") or []]
             except (KeyError, TypeError, ValueError):
                 raise HTTPException(400, "Cada nota precisa de key, start, end e pitch.") from None
             if not (0 <= start < end <= start + 8) or not 20 <= height <= 110:
                 continue
-            curves[key] = pitch_media.note_curve(x, start, end, height)
+            curves[key] = pitch_media.note_curve(x, start, end, height, others=others)
         return {"curves": curves}
 
     @app.get("/api/songs/{song_id}/peaks")

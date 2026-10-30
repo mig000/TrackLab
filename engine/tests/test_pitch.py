@@ -43,6 +43,15 @@ def test_another_string_ringing_softer_still_gives_the_note():
     assert np.isfinite(v).mean() > 0.9 and np.nanmedian(np.abs(v - 55)) < 0.15
 
 
+def test_a_chord_note_is_searched_between_its_neighbours():
+    """Ré 3 e Fá 3 no mesmo volume (um double stop): sem as vizinhas, as duas medidas caem entre as notas; com elas,
+    cada uma acha a sua."""
+    x = tone(lambda t: 50.0) + tone(lambda t: 53.0)
+    for note, other in ((50, 53), (53, 50)):
+        v = values(pitch.note_curve(x, 0.1, 0.9, note, others=[other]))
+        assert np.isfinite(v).mean() > 0.6 and np.nanmedian(np.abs(v - note)) < 0.15, note
+
+
 def test_silence_has_no_curve_and_lonely_points_go():
     x = np.zeros(RATE)
     assert all(v is None for v in pitch.note_curve(x, 0.1, 0.9, 60)["values"])
