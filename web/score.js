@@ -39,6 +39,7 @@
   const loopBox = document.getElementById("loop");
   const pageCursor = document.getElementById("page-cursor");
   const noteGhost = document.getElementById("note-ghost");
+  const pageLoop = document.getElementById("page-loop");
   const message = document.getElementById("message");
 
   // Diferença entre o relógio extrapolado e um aviso do app abaixo da qual o aviso é ignorado.
@@ -88,6 +89,8 @@
     durDrag: null,
     // A nota pega na TAB para mudar de tempo (path, intervalo, de onde saiu, para onde vai).
     noteDrag: null,
+    // O loop sendo marcado no modo página (a batida de onde saiu e a de agora).
+    pageDrag: null,
     // O modo página: a partitura em sistemas, de cima para baixo; as batidas da pista principal (tique e a batida do
     // alphaTab) para o cursor.
     page: false,
@@ -410,6 +413,7 @@
     state.pageTicks = beats.map((b) => b.absolutePlaybackStart);
     state.pageSystem = null;
     drawSelection();
+    drawLoop();
     drawPage(true);
     post({
       type: "rendered",
@@ -467,6 +471,92 @@
     }
   }
 
+  // O loop no modo página (tiques [a, b), ou nil): as batidas da pista principal dentro dele, juntas por sistema, num
+  // sombreado de cada sistema da altura dele. `preview`: o trecho sendo arrastado (borda tracejada).
+  function drawPageLoop(range, preview = false) {
+    pageLoop.innerHTML = "";
+    pageLoop.classList.toggle("preview", preview);
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!range || !lookup || !state.pageBeats.length) return;
+    const [a, b] = range;
+    const parts = new Map();
+    state.pageBeats.forEach((beat, i) => {
+      const tick = state.pageTicks[i];
+      if (tick < a - 1e-6 || tick >= b - 1e-6) return;
+      const bounds = lookup.findBeat(beat);
+      if (!bounds) return;
+      const system = bounds.barBounds.masterBarBounds.staffSystemBounds;
+      const box = bounds.realBounds;
+      const part = parts.get(system) || { left: Infinity, right: -Infinity, system };
+      part.left = Math.min(part.left, box.x);
+      part.right = Math.max(part.right, box.x + box.w);
+      parts.set(system, part);
+    });
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    const page = sheet.getBoundingClientRect();
+    for (const part of parts.values()) {
+      const area = part.system.visualBounds;
+      const div = document.createElement("div");
+      div.className = "loop-part";
+      div.style.left = surface.left - page.left + part.left + "px";
+      div.style.width = part.right - part.left + "px";
+      div.style.top = surface.top - page.top + area.y + "px";
+      div.style.height = area.h + "px";
+      pageLoop.appendChild(div);
+    }
+  }
+
+  // Em páginas, arrastar de uma batida a outra marca o loop (o app prende nas batidas do mapa); um clique só leva a
+  // música até a batida.
+  function beatUnder(event) {
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!lookup) return null;
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    return lookup.getBeatAtPos(event.clientX - surface.left, event.clientY - surface.top);
+  }
+
+  sheet.addEventListener("pointerdown", (event) => {
+    if (!state.page || state.editing || event.button !== 0 || !state.points.length) return;
+    const beat = beatUnder(event);
+    if (!beat) return;
+    state.pageDrag = { first: beat, last: beat, x: event.clientX, y: event.clientY, moved: false };
+    try {
+      sheet.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura, o arrasto vale enquanto o ponteiro fica sobre a página.
+    }
+  });
+
+  function pageDragRange(drag) {
+    const ends = [drag.first, drag.last].map((b) => [b.absolutePlaybackStart, b.absolutePlaybackStart + b.playbackDuration]);
+    return [Math.min(ends[0][0], ends[1][0]), Math.max(ends[0][1], ends[1][1])];
+  }
+
+  sheet.addEventListener("pointermove", (event) => {
+    const drag = state.pageDrag;
+    if (!drag) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    drag.last = beatUnder(event) || drag.last;
+    drawPageLoop(pageDragRange(drag), true);
+  });
+
+  function endPageDrag() {
+    const drag = state.pageDrag;
+    if (!drag) return;
+    state.pageDrag = null;
+    if (!drag.moved) return;
+    state.suppressClick = true;
+    const [a, b] = pageDragRange(drag);
+    post({ type: "loop", start: core.tickToSeconds(state.points, a), end: core.tickToSeconds(state.points, b) });
+    drawLoop();
+  }
+
+  sheet.addEventListener("pointerup", endPageDrag);
+  sheet.addEventListener("pointercancel", endPageDrag);
+
   // Quanto a camada na tela está esticada: com o zoom mudando, o desenho antigo na escala nova até o novo chegar.
   function zoomStretch() {
     return state.renderedSpan > 0 && state.span > 0 ? state.renderedSpan / state.span : 1;
@@ -517,7 +607,14 @@
   }
 
   function drawLoop() {
-    if (!state.loop || state.page) {
+    if (state.page) {
+      loopBox.hidden = true;
+      drawPageLoop(state.loop && state.points.length
+        ? [core.secondsToTick(state.points, state.loop[0]), core.secondsToTick(state.points, state.loop[1])] : null);
+      return;
+    }
+    pageLoop.innerHTML = "";
+    if (!state.loop) {
       loopBox.hidden = true;
       return;
     }

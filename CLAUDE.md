@@ -230,7 +230,9 @@ página; a largura vem do masterBar, então todas seguem a Fita); na Lente cada 
 são medidas. "Página" (⌥⌘P, `scorePage` guardado) desenha a TAB em páginas (`LayoutMode.Page`): sem as larguras da
 Fita, um cursor próprio que anda contínuo de nota a nota no tempo, como o da faixa (`pageBeats`, `beatIndexAt`, o
 `onNotesX` de cada batida e a caixa do sistema pelo `boundsLookup`; pulando de nota em nota parecia uma batida
-atrasado), a página rola até o sistema novo assim que o cursor entra nele e o clique leva a música até a batida; o loop e o ⇧-arrasto ficam na faixa. Visualizar ›
+atrasado), a página rola até o sistema novo assim que o cursor entra nele e o clique leva a música até a batida; o ⇧-arrasto fica na faixa. O loop aparece sombreado em
+cada sistema por onde passa (as batidas da pista principal dentro dele, `drawPageLoop`), e arrastar de uma batida a
+outra na página marca o loop (`loop` para o app, que prende nas batidas como na Fita). Visualizar ›
 Aparência: do sistema, clara (papel: a Lente com a paleta de tinta `paperStops`, as marcas escuras, o âmbar mais
 escuro e o fundo da Fita creme) ou escura. Fontes › Multitracks › "Procurar a TAB" abre a busca do Songsterr com o
 nome da multitrack; a música importada vem sem o Demucs e com as faixas dela (`importMultitrack(path:)`), a não ser

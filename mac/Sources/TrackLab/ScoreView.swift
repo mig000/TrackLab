@@ -26,6 +26,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var onError: ((String) -> Void)?
     /// Um aviso da edição para a barra (por que a nota não andou no tempo, por exemplo).
     var onNotice: ((String) -> Void)?
+    /// Um loop marcado na página (no modo página, arrastando de uma batida a outra), em segundos.
+    var onLoop: ((Double, Double) -> Void)?
     /// A edição da TAB: a nota escolhida (ou nil) e se há o que desfazer e refazer; o Guitar Pro editado para gravar;
     /// as notas novas (para o espectro).
     var onSelection: ((_ note: TabSelection?, _ canUndo: Bool, _ canRedo: Bool) -> Void)?
@@ -273,6 +275,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { onShiftEnd?(seconds) }
             case "seek":
                 if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { engine?.seek(to: seconds) }
+            case "loop":
+                if let start = (body["start"] as? NSNumber)?.doubleValue, let end = (body["end"] as? NSNumber)?.doubleValue {
+                    onLoop?(start, end)
+                }
             case "notice":
                 if let text = body["text"] as? String { onNotice?(text) }
             case "error":

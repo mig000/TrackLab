@@ -209,3 +209,22 @@ body.page #sheet {
   font: 600 11px -apple-system, system-ui, sans-serif;
   color: var(--cursor);
 }
+
+/* O loop no modo página: um sombreado por sistema, sobre as batidas do trecho. */
+#page-loop {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+#page-loop .loop-part {
+  position: absolute;
+  background: var(--loop);
+  border-left: 1px solid var(--loop-edge);
+  border-right: 1px solid var(--loop-edge);
+}
+
+#page-loop.preview .loop-part {
+  border-style: dashed;
+}

@@ -190,6 +190,12 @@ final class SongModel {
         }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
         bridge.onNotice = { [weak self] text in self?.tabMessage = text }
+        // O loop arrastado no modo página: preso nas batidas, como o arrastado na Fita.
+        bridge.onLoop = { [weak self] start, end in
+            guard let self, let range = LoopRegion.snapped(start, end, grid: grid, duration: engine.duration) else { return }
+            setLoop(range)
+            if !engine.isPlaying { engine.seek(to: range.lowerBound) }
+        }
         bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
         bridge.onSelection = { [weak self] note, undo, redo in
             self?.tabSelection = note
