@@ -284,12 +284,17 @@ final class StemEngine {
         changed()
     }
 
+    /// Depois de cada seek, de onde a música saiu e para onde foi (a tela decide se fica ou anda junto).
+    @ObservationIgnored var onSeek: ((_ from: Double, _ to: Double) -> Void)?
+
     func seek(to seconds: Double) {
+        let from = currentTime
         let wasPlaying = isPlaying
         pause()
         anchorTime = min(max(0, seconds), duration)
         seekCount += 1
         if wasPlaying { startPlayers() } else { changed() }
+        onSeek?(from, anchorTime)
     }
 
     func skip(_ seconds: Double) { seek(to: currentTime + seconds) }

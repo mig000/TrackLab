@@ -279,11 +279,23 @@ private func grid(bars: Int = 3) -> TempoGrid {
 }
 
 @Test func loopQueCabeNaTelaParaAJanela() {
-    #expect(LoopView.windowStart(now: 11, loop: 10...14, span: 10, playheadAt: 0.4) == 6)
-    #expect(LoopView.windowStart(now: 12, loop: 10...18, span: 10, playheadAt: 0.4) == 9)
-    #expect(LoopView.windowStart(now: 12, loop: 10...20, span: 10, playheadAt: 0.4) == nil)
-    #expect(LoopView.windowStart(now: 9, loop: 10...14, span: 10, playheadAt: 0.4) == nil)
-    #expect(LoopView.windowStart(now: 9, loop: nil, span: 10, playheadAt: 0.4) == nil)
+    // Fora do loop, antes dele: o pino é onde a tela vai estar quando a música entrar nele tocando.
+    let ahead = LoopView.pin(now: 8, loop: 10...14, span: 10, at: 0.4)
+    #expect(ahead == 6)
+    #expect(LoopView.start(now: 9.5, loop: 10...14, span: 10, at: 0.4, pin: ahead) == 5.5)
+    #expect(LoopView.start(now: 10, loop: 10...14, span: 10, at: 0.4, pin: ahead) == 6)
+    #expect(LoopView.start(now: 13, loop: 10...14, span: 10, at: 0.4, pin: ahead) == 6)
+    // A agulha à direita do loop e a rolagem trazendo-a para dentro dele: o pino é a tela como está, sem salto.
+    let rolled = LoopView.pin(now: 13.5, loop: 10...14, span: 10, at: 0.6)
+    #expect(rolled == 7.5)
+    #expect(LoopView.start(now: 13.5, loop: 10...14, span: 10, at: 0.6, pin: rolled) == 13.5 - 6)
+    // Dentro, com o começo do loop fora da tela: nenhum pino (a tela corre com a agulha).
+    #expect(LoopView.pin(now: 13.5, loop: 10...14, span: 10, at: 0.2) == nil)
+    // Fora, se dali o loop não cabe, maior que a tela, ou sem loop: nenhum.
+    #expect(LoopView.pin(now: 8, loop: 10...14, span: 10, at: 0.7) == nil)
+    #expect(LoopView.pin(now: 12, loop: 10...20, span: 10, at: 0.4) == nil)
+    #expect(LoopView.pin(now: 12, loop: nil, span: 10, at: 0.4) == nil)
+    #expect(LoopView.start(now: 12, loop: nil, span: 10, at: 0.4, pin: 3) == 8)
 }
 
 @Test func tabSintetizadaNoManifesto() throws {

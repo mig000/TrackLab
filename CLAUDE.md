@@ -103,8 +103,8 @@ alphaTab de `vendor/` tem quatro ajustes marcados `TrackLab:` (notas espaçadas 
 ocupa largura; sem a linha "rendered by alphaTab"; a velocidade do trinado no Guitar Pro 7). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
 sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. A página dá a volta
 no loop sozinha, como o `PlaybackPlan` (antes passava do fim do loop até o próximo aviso do relógio, que vem a cada
-segundo), e um loop que cabe na tela (`windowStart`, a mesma conta do `LoopView` da Fita) para a pauta e solta o cursor:
-até 60 % da largura o loop começa nos 40 %, maior fica centrado. As contas puras
+segundo), e com a música num loop que cabe na tela (`windowStart`) a pauta para no pino que o app manda (`view(at, pin)`, a mesma janela da Fita). Fora dele, a pauta rola com o cursor na
+fração que o app manda (`state.cursorAt`, sem piso em zero: antes da música ela desce junto com a Fita). As contas puras
 ficam em `score-core.js`; `node web/tests/check-score.cjs` as confere e desenha os GPs de
 `tests/fixtures` (feitos pelo conversor do motor) no alphaTab do node: os tiques batem com os do mapa, e barras e notas
 caem no tempo.
@@ -137,7 +137,16 @@ valor no `didSet` chamava o `didSet` de novo até estourar a pilha); o metrônom
 no transporte, "Tom" abre o popover com os semitons, os cents e o Lá 440 (desconta a afinação medida da gravação); o loop é agendado no
 player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), sem seek a cada volta. `SongModel`
 abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
-original e a da guitarra sob a agulha a 40 %; clique = seek, arrasto = loop preso nas batidas; o relógio é lido
+original e a da guitarra sob a agulha (a 40 % até um clique: `SongModel.playheadAt`); clique na TAB, na Onda ou na
+Lente = o cabeçote vai até ali e a agulha fica no lugar do clique (a tela não salta; a TAB recebe a mesma fração por
+`ScoreBridge.setCursor`; dentro de um loop parado só a agulha anda); clicar, arrastar e soltar em qualquer painel, também
+na edição (fora de uma nota), = loop preso nas batidas, sem tracejado. A janela (`LoopView`, guardada no `SongModel` e
+mandada à TAB) tem duas medidas: a fração da agulha e o pino, onde a tela para enquanto a música está num loop que cabe.
+Elas só mudam num evento (todo seek passa por `StemEngine.onSeek`, mais o loop novo e o zoom) e são escolhidas para a
+tela ficar onde estava: um clique ou um loop marcado mantêm a tela; a rolagem e as teclas levam a tela junto, com a
+agulha no mesmo lugar (rolar trazendo a agulha para dentro do loop não salta). Dentro do loop o pino é a tela como
+está, se o loop inteiro está nela (senão a tela corre e volta com a agulha a cada volta); fora, é onde a tela vai estar
+quando a música entrar nele tocando; o relógio é lido
 direto na TimelineView (dentro de um GeometryReader a Fita não se redesenhava tocando). A tela da música é em camadas: a TAB, a
 Onda e a Lente (a Fita em dois modos, `FitaView(lens:strip:)`), cada camada à vista ou não pelos botões do transporte
 (⌥⌘1, ⌥⌘2; `waveVisible` e `lensVisible` guardados), com divisores de arrastar (`ResizeHandle`: a altura da TAB e a da

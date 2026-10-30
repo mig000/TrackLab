@@ -13,7 +13,6 @@
   // Onde o cursor fica na largura da janela enquanto toca: o que vem pela frente aparece mais.
   const CURSOR_AT = 0.4;
   // Um loop que ocupa até esta fração da largura cabe na tela: a pauta para e só o cursor anda.
-  const LOOP_FITS = 0.95;
 
   // Último índice com valor <= x numa lista ordenada por `key`; -1 antes do primeiro.
   function floorIndex(list, x, key) {
@@ -187,19 +186,17 @@
   // Com um loop que cabe na tela e o cursor dentro dele, a janela fica parada e só o cursor anda: o segundo do começo
   // da janela, ou null (a janela segue o cursor a 40 %). Um loop até 60 % da largura começa nos 40 %, onde o cursor
   // estava ao entrar nele (nada salta); maior, fica centrado. A Fita usa a mesma conta (LoopView no app).
-  function windowStart(seconds, loop, span) {
-    if (!loop) {
+  function windowStart(seconds, loop, pin) {
+    if (pin === null || pin === undefined || !loop || seconds < loop[0] - 1e-3 || seconds > loop[1] + 1e-3) {
       return null;
     }
-    const length = loop[1] - loop[0];
-    if (length <= 0 || length > span * LOOP_FITS || seconds < loop[0] - 1e-3 || seconds > loop[1] + 1e-3) {
-      return null;
-    }
-    return length <= span * (1 - CURSOR_AT) ? loop[0] - span * CURSOR_AT : loop[0] - (span - length) / 2;
+    return pin;
   }
 
-  function scrollFor(x, width) {
-    return Math.max(0, x - width * CURSOR_AT);
+  // Quanto a pauta rola para o ponto `x` ficar sob o cursor, que fica a `at` da largura (0,4 até um clique pôr o
+  // cabeçote noutro lugar). Sem piso em zero: antes da música a pauta desce para a direita junto com a Fita.
+  function scrollFor(x, width, at = CURSOR_AT) {
+    return x - width * at;
   }
 
   // O que cada pauta mostra (com o perfil Default do alphaTab): TAB nas de cordas; partitura na bateria e no que não

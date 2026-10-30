@@ -26,8 +26,10 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var onError: ((String) -> Void)?
     /// Um aviso da edição para a barra (por que a nota não andou no tempo, por exemplo).
     var onNotice: ((String) -> Void)?
-    /// Um loop marcado na página (no modo página, arrastando de uma batida a outra), em segundos.
+    /// Um loop marcado na página (arrastando de uma batida a outra, na faixa ou no modo página), em segundos.
     var onLoop: ((Double, Double) -> Void)?
+    /// Um clique na faixa: os segundos e a fração da largura onde o cabeçote deve ficar.
+    var onSeek: ((Double, Double) -> Void)?
     /// A edição da TAB: a nota escolhida (ou nil) e se há o que desfazer e refazer; o Guitar Pro editado para gravar;
     /// as notas novas (para o espectro).
     var onSelection: ((_ note: TabSelection?, _ canUndo: Bool, _ canRedo: Bool) -> Void)?
@@ -173,6 +175,17 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.edit(op, value)", ["op": op, "value": value ?? NSNull()])
     }
 
+    /// A janela da Fita (`LoopView`): onde fica o cursor na largura e onde a pauta para sobre o loop.
+    func setView(at: Double, pin: Double?) {
+        guard at != cursorAt || pin != loopPin else { return }
+        cursorAt = at
+        loopPin = pin
+        call("window.tracklab.view(at, pin)", ["at": at, "pin": pin ?? NSNull()])
+    }
+
+    private var cursorAt = 0.4
+    private var loopPin: Double?
+
     /// No Ajuste a página aceita ⇧ + arrastar.
     func setAdjusting(_ value: Bool) {
         guard value != adjusting else { return }
@@ -206,6 +219,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         call("window.tracklab.theme(name)", ["name": theme])
         call("window.tracklab.span(seconds)", ["seconds": span])
         call("window.tracklab.adjusting(value)", ["value": adjusting])
+        call("window.tracklab.view(at, pin)", ["at": cursorAt, "pin": loopPin ?? NSNull()])
         if let pending { call("window.tracklab.load(payload)", ["payload": pending]) }
         sendLoop()
         pushClock()
@@ -274,7 +288,13 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             case "shiftEnd":
                 if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { onShiftEnd?(seconds) }
             case "seek":
-                if let seconds = (body["seconds"] as? NSNumber)?.doubleValue { engine?.seek(to: seconds) }
+                // Um clique na faixa: o cabeçote vai para onde o mouse estava (`at`, fração da largura).
+                guard let seconds = (body["seconds"] as? NSNumber)?.doubleValue else { break }
+                if let at = (body["at"] as? NSNumber)?.doubleValue, let onSeek {
+                    onSeek(seconds, at)
+                } else {
+                    engine?.seek(to: seconds)
+                }
             case "loop":
                 if let start = (body["start"] as? NSNumber)?.doubleValue, let end = (body["end"] as? NSNumber)?.doubleValue {
                     onLoop?(start, end)

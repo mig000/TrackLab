@@ -139,20 +139,31 @@ public struct PlaybackPlan: Equatable, Sendable {
     }
 }
 
-/// A janela da Fita (e da TAB, em `score-core.js`, com a mesma conta) quando há loop: um loop que cabe na tela, com o
-/// cursor dentro dele, para a janela e só a agulha anda. Até 60 % da largura, o loop começa nos 40 % (onde a agulha
-/// estava ao entrar nele: nada salta); maior, fica centrado. Fora disso a janela segue a agulha a 40 %.
+/// A janela da Fita e da TAB: a agulha numa fração da largura (`at`) e a tela correndo com ela; com a música dentro
+/// de um loop que cabe, a tela parada no pino (`pin`) e só a agulha anda. As duas medidas só mudam num evento (um seek,
+/// a rolagem, um loop novo, o zoom) e são escolhidas para a tela ficar onde estava: ela nunca salta sem a música
+/// saltar. A TAB recebe as mesmas e faz a mesma conta (`score-core.js`).
 public enum LoopView {
     public static let fits = 0.95
 
-    /// O segundo do começo da janela parada, ou nil (a janela segue a agulha).
-    public static func windowStart(now: Double, loop: ClosedRange<Double>?, span: Double, playheadAt: Double) -> Double? {
-        guard let loop else { return nil }
+    /// O segundo do começo da tela com a música em `now`.
+    public static func start(now: Double, loop: ClosedRange<Double>?, span: Double, at: Double, pin: Double?) -> Double {
+        if let pin, let loop, now >= loop.lowerBound - 1e-3, now <= loop.upperBound + 1e-3 { return pin }
+        return now - span * at
+    }
+
+    /// O pino depois de um evento, com a música em `now` e a agulha em `at`. Dentro do loop: a tela como está, se o loop
+    /// inteiro está nela (senão nenhum: a tela corre com a agulha e volta junto com ela). Fora: onde a tela vai estar
+    /// quando a música entrar no loop tocando (o começo dele sob a agulha), se dali ele cabe.
+    public static func pin(now: Double, loop: ClosedRange<Double>?, span: Double, at: Double) -> Double? {
+        guard let loop, span > 0 else { return nil }
         let length = loop.upperBound - loop.lowerBound
-        guard length > 0, length <= span * fits, now >= loop.lowerBound - 1e-3, now <= loop.upperBound + 1e-3 else {
-            return nil
+        guard length > 0, length <= span * fits else { return nil }
+        if now >= loop.lowerBound - 1e-3, now <= loop.upperBound + 1e-3 {
+            let view = now - span * at
+            return loop.lowerBound >= view - 1e-3 && loop.upperBound <= view + span + 1e-3 ? view : nil
         }
-        return length <= span * (1 - playheadAt) ? loop.lowerBound - span * playheadAt : loop.lowerBound - (span - length) / 2
+        return length <= span * (1 - at) ? loop.lowerBound - span * at : nil
     }
 }
 

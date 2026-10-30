@@ -17,7 +17,8 @@
 //
 // Do app para a página: load({gp, track, points, others, page}), track(n), others([n…]), page(sim), tempo(points),
 // clock(s, playing, rate, delay),
-// span(segundos), adjusting(sim), loop(a, b) / loop(null), theme("light" | "dark"), zoom(escala).
+// span(segundos), adjusting(sim), loop(a, b) / loop(null), view(fração do cursor, pino do loop ou null),
+// theme("light" | "dark"), zoom(escala).
 // Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks, sections},
 // rendered {bars, ms},
 // seek {seconds}, shift {seconds} (quanto a onda andou no arrasto com ⇧), shiftEnd {seconds} (o total, ao soltar),
@@ -83,6 +84,12 @@
     track: 0,
     // A segunda pista, desenhada embaixo da primeira (null: nenhuma).
     others: [],
+    // Onde o cursor fica na largura (0,4; um clique na pauta, na Onda ou na Lente põe o cabeçote sob o mouse).
+    cursorAt: core.CURSOR_AT,
+    // Onde a pauta para enquanto a música está no loop (o app escolhe, como na Fita), ou null.
+    pin: null,
+    // O loop sendo marcado na faixa (de onde saiu, em pixels da tela).
+    loopDrag: null,
     // As barras de duração na edição e a grade delas (tiques: 240 é semicolcheia, 320 tercina de colcheia…).
     durations: false,
     grid: 240,
@@ -518,7 +525,9 @@
   }
 
   sheet.addEventListener("pointerdown", (event) => {
-    if (!state.page || state.editing || event.button !== 0 || !state.points.length) return;
+    if (!state.page || event.button !== 0 || !state.points.length) return;
+    // Na edição, uma nota sob o mouse é para escolher; fora dela o arrasto marca o loop também.
+    if (state.editing && noteAt(event)) return;
     const beat = beatUnder(event);
     if (!beat) return;
     state.pageDrag = { first: beat, last: beat, x: event.clientX, y: event.clientY, moved: false };
@@ -571,8 +580,8 @@
     return drawn * zoomStretch();
   }
 
-  // O cursor fica nos 40 % e a pauta corre sob ele, na velocidade da Fita; com um loop que cabe na tela, a pauta fica
-  // parada e só o cursor anda (core.windowStart). A pauta anda por `transform` (frações de pixel, na GPU; `scrollLeft`
+  // O cursor fica na fração da largura que o app manda (`cursorAt`, como a agulha da Fita) e a pauta corre sob ele;
+  // com a música num loop que tem pino, a pauta fica parada nele e só o cursor anda (core.windowStart). A pauta anda por `transform` (frações de pixel, na GPU; `scrollLeft`
   // arredonda e alterna passos de 1 e 2 px) e o cursor fica fora dela. `now`: a hora do quadro
   // (requestAnimationFrame), para os passos saírem iguais.
   function draw(force, now = performance.now()) {
@@ -589,9 +598,9 @@
     const playing = state.clock && state.clock.playing;
     const width = viewport.clientWidth;
     const outside = x < state.scroll || x > state.scroll + width;
-    const fixed = core.windowStart(seconds, state.loop, state.span);
+    const fixed = core.windowStart(seconds, state.loop, state.pin);
     if (playing || force || outside || fixed !== null) {
-      const target = fixed === null ? core.scrollFor(x, width) : Math.max(0, xAtSeconds(fixed));
+      const target = fixed === null ? core.scrollFor(x, width, state.cursorAt) : xAtSeconds(fixed);
       if (force || Math.abs(target - state.scroll) >= 0.01) {
         const stretch = zoomStretch();
         sheet.style.transform = `translate3d(${-target}px, 0, 0)` + (stretch !== 1 ? ` scaleX(${stretch})` : "");
@@ -642,27 +651,79 @@
       state.suppressClick = false;
       return;
     }
-    if (state.editing) {
-      pick(event);
-      return;
-    }
+    // Na edição o clique também escolhe a nota; em qualquer caso o cabeçote vai até ali.
+    if (state.editing) pick(event);
     if (state.page) {
       // Em páginas: a música vai até a batida clicada.
-      const api = state.api;
-      const lookup = api && api.renderer.boundsLookup;
-      if (!lookup || !state.points.length) return;
-      const surface = api.canvasElement.element.getBoundingClientRect();
-      const beat = lookup.getBeatAtPos(event.clientX - surface.left, event.clientY - surface.top);
+      const beat = state.points.length ? beatUnder(event) : null;
       if (beat) post({ type: "seek", seconds: Math.max(0, core.tickToSeconds(state.points, beat.absolutePlaybackStart)) });
       return;
     }
-    if (!state.anchors.length || !state.points.length) {
-      return;
-    }
-    const page = sheet.getBoundingClientRect();
-    const tick = core.tickAtX(state.anchors, (event.clientX - page.left) / zoomStretch());
-    post({ type: "seek", seconds: Math.max(0, core.tickToSeconds(state.points, tick)) });
+    seekAtClick(event);
   });
+
+  // O tempo sob um ponto da tela (na faixa: pelas âncoras das batidas desenhadas).
+  function secondsAtClient(clientX) {
+    if (!state.anchors.length || !state.points.length) return null;
+    const page = sheet.getBoundingClientRect();
+    const tick = core.tickAtX(state.anchors, (clientX - page.left) / zoomStretch());
+    return core.tickToSeconds(state.points, tick);
+  }
+
+  // O cabeçote vai para onde o mouse clicou: a música até ali e o cursor naquela fração da largura (a pauta não
+  // salta; tocando, ela segue com o cursor nesse lugar). O app faz o mesmo com a Fita.
+  function seekAtClick(event) {
+    const seconds = secondsAtClient(event.clientX);
+    if (seconds === null) return;
+    const box = viewport.getBoundingClientRect();
+    const at = Math.min(0.95, Math.max(0.05, (event.clientX - box.left) / Math.max(1, box.width)));
+    post({ type: "seek", seconds: Math.max(0, seconds), at });
+  }
+
+  // Na faixa, clicar e arrastar fora de uma nota (também na edição) marca o loop: a prévia acompanha o mouse e, ao
+  // soltar, o app prende nas batidas como na Fita.
+  sheet.addEventListener("pointerdown", (event) => {
+    if (state.page || event.button !== 0 || event.shiftKey || !state.anchors.length) return;
+    if (event.target.closest && event.target.closest(".duration")) return;
+    if (state.editing && noteAt(event)) return;
+    state.loopDrag = { from: event.clientX, moved: false };
+    try {
+      sheet.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura, o arrasto vale enquanto o ponteiro fica sobre a pauta.
+    }
+  });
+
+  sheet.addEventListener("pointermove", (event) => {
+    const drag = state.loopDrag;
+    if (!drag) return;
+    if (!drag.moved && Math.abs(event.clientX - drag.from) < 5) return;
+    drag.moved = true;
+    const a = secondsAtClient(Math.min(drag.from, event.clientX));
+    const b = secondsAtClient(Math.max(drag.from, event.clientX));
+    if (a === null || b === null) return;
+    const x0 = xAtSeconds(a) / zoomStretch();
+    const x1 = xAtSeconds(b) / zoomStretch();
+    loopBox.hidden = false;
+    loopBox.classList.add("preview");
+    loopBox.style.left = x0 + "px";
+    loopBox.style.width = Math.max(1, x1 - x0) + "px";
+    drag.range = [a, b];
+  });
+
+  function endLoopDrag() {
+    const drag = state.loopDrag;
+    if (!drag) return;
+    state.loopDrag = null;
+    loopBox.classList.remove("preview");
+    if (!drag.moved || !drag.range) return;
+    state.suppressClick = true;
+    post({ type: "loop", start: Math.max(0, drag.range[0]), end: drag.range[1] });
+    drawLoop();
+  }
+
+  sheet.addEventListener("pointerup", endLoopDrag);
+  sheet.addEventListener("pointercancel", endLoopDrag);
 
   // ⇧ + arrastar, no Ajuste: nada se mexe na pauta; o app desliza a onda da Fita com o mouse.
   sheet.addEventListener("pointerdown", (event) => {
@@ -1236,6 +1297,12 @@
     },
     adjusting(value) {
       state.adjusting = Boolean(value);
+    },
+    // A janela da Fita: onde o cursor fica na largura (fração) e onde a pauta para sobre o loop (segundos, ou null).
+    view(at, pin) {
+      if (Number.isFinite(at)) state.cursorAt = Math.min(1, Math.max(0, at));
+      state.pin = Number.isFinite(pin) ? pin : null;
+      draw(true);
     },
     editing(value) {
       state.editing = Boolean(value);

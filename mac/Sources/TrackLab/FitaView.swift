@@ -28,7 +28,6 @@ struct FitaView: View {
     /// A cor das linhas e marcas por cima do espectro: branca no escuro, preta no papel.
     private var ink: Color { paper ? .black : .white }
 
-    static let playheadAt = 0.4
     static let spans: ClosedRange<Double> = 3...40
 
     static func clampSpan(_ value: Double) -> Double {
@@ -55,9 +54,9 @@ struct FitaView: View {
 
     private func tape(size: CGSize, now: Double) -> some View {
         let width = size.width
-        // Um loop que cabe na tela para a Fita e só a agulha anda (a TAB faz a mesma conta).
-        let start = LoopView.windowStart(now: now, loop: model.engine.loop, span: span, playheadAt: Self.playheadAt)
-            ?? now - span * Self.playheadAt
+        // Um loop que cabe na tela para a Fita e só a agulha anda; fora dele, a agulha fica onde o último clique a
+        // deixou (`playheadAt`, 0,4 de início). A TAB faz a mesma conta.
+        let start = model.viewStart(now: now)
         // No espectro, a imagem vai numa camada da GPU por baixo (só a transformação muda a cada quadro) e o Canvas,
         // transparente, desenha por cima a grade, as notas e o teclado; `drawingGroup` rasteriza o Canvas no Metal.
         let pitches = lens ? pitchWindow(gridStart: start) : nil
@@ -86,6 +85,11 @@ struct FitaView: View {
 
     private func time(at x: Double, width: Double, start: Double) -> Double {
         start + x / max(width, 1) * span
+    }
+
+    /// O cabeçote vai para o clique: a música até ali e a agulha naquele ponto da largura (a Fita fica parada).
+    private func seek(at x: Double, width: Double, start: Double) {
+        model.seek(to: time(at: x, width: width, start: start), at: x / max(width, 1))
     }
 
     private func dragGesture(size: CGSize, start: Double) -> some Gesture {
@@ -142,6 +146,7 @@ struct FitaView: View {
                     } else if grabbed.semitones == 0 {
                         if hypot(value.translation.width, value.translation.height) <= 3 {
                             model.selectNote(grabbed.note, track: grabbed.track)
+                            seek(at: value.location.x, width: width, start: start)
                         }
                     } else {
                         model.dragPitch(grabbed.note, track: grabbed.track, semitones: grabbed.semitones,
@@ -150,18 +155,22 @@ struct FitaView: View {
                     return
                 }
                 if let held {
-                    // Um clique numa batida não leva a música até ela: a Fita andaria e o duplo clique erraria.
-                    if abs(value.translation.width) > 3 { model.moveBeat(tick: held.point.tick, to: held.to) }
+                    // Um clique numa batida também leva o cabeçote até ali: a Fita não anda (a agulha vai para o
+                    // lugar do clique), e o duplo clique acerta a mesma batida.
+                    if abs(value.translation.width) > 3 {
+                        model.moveBeat(tick: held.point.tick, to: held.to)
+                    } else {
+                        seek(at: value.location.x, width: width, start: start)
+                    }
                     return
                 }
                 if abs(value.translation.width) <= 3 {
-                    model.engine.seek(to: max(0, time(at: value.location.x, width: width, start: start)))
+                    seek(at: value.location.x, width: width, start: start)
                     return
                 }
                 guard let drag else { return }
                 if let range = LoopRegion.snapped(drag.from, drag.to, grid: model.grid, duration: model.engine.duration) {
-                    model.setLoop(range)
-                    if !model.engine.isPlaying { model.engine.seek(to: range.lowerBound) }
+                    model.setLoop(range, seekToStart: true)
                 }
             }
     }

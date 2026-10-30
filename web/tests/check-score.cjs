@@ -89,7 +89,8 @@ test("relógio extrapolado e avisos pequenos ignorados", () => {
 
 test("o cursor fica a 40 % da largura", () => {
   assert.equal(core.scrollFor(1000, 500), 800);
-  assert.equal(core.scrollFor(100, 500), 0);
+  assert.equal(core.scrollFor(100, 500), -100);
+  assert.equal(core.scrollFor(1000, 500, 0.7), 650);
 });
 
 const fixtures = path.join(__dirname, "fixtures");
@@ -107,16 +108,13 @@ test("o relógio dá a volta no fim do loop, como o motor de áudio", () => {
   assert.equal(core.nextClock(clock, { seconds: 11.01, playing: true, rate: 1 }, 3000, 0.04, loop), clock);
 });
 
-test("um loop que cabe na tela para a pauta e solta o cursor", () => {
-  // Até 60 % da largura: o loop começa nos 40 %, onde o cursor estava ao entrar nele.
-  assert.equal(core.windowStart(11, [10, 14], 10), 6);
-  assert.equal(core.windowStart(14, [10, 14], 10), 6);
-  // Maior: centrado.
-  assert.equal(core.windowStart(12, [10, 18], 10), 9);
-  // Maior que a tela, sem loop, ou com o cursor fora dele: a janela segue o cursor.
-  assert.equal(core.windowStart(12, [10, 20], 10), null);
-  assert.equal(core.windowStart(12, null, 10), null);
-  assert.equal(core.windowStart(9, [10, 14], 10), null);
+test("com a música no loop, a pauta para no pino que o app escolheu", () => {
+  assert.equal(core.windowStart(11, [10, 14], 6), 6);
+  assert.equal(core.windowStart(14, [10, 14], 7.5), 7.5);
+  // Sem pino, sem loop, ou com o cursor fora dele: a janela segue o cursor.
+  assert.equal(core.windowStart(12, [10, 14], null), null);
+  assert.equal(core.windowStart(12, null, 6), null);
+  assert.equal(core.windowStart(9, [10, 14], 6), null);
 });
 
 const files = given.length ? given : fs.readdirSync(fixtures).filter((f) => f.endsWith(".gp")).map((f) => path.join(fixtures, f));

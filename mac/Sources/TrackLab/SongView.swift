@@ -53,7 +53,10 @@ struct SongView: View {
             .background(GeometryReader { proxy in
                 Color.clear.onChange(of: proxy.size.height, initial: true) { tabMeasured = proxy.size.height }
             })
-            .onChange(of: span, initial: true) { model.bridge.setSpan(span) }
+            .onChange(of: span, initial: true) {
+                model.span = span
+                model.bridge.setSpan(span)
+            }
             if lanes {
                 ResizeHandle(help: "Arraste para mudar a altura da TAB; duplo clique volta à altura da pauta") { delta, start in
                     tabHeight = min(max(80, (start ?? tabMeasured) + delta), 900)

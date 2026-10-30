@@ -224,7 +224,3 @@ body.page #sheet {
   border-left: 1px solid var(--loop-edge);
   border-right: 1px solid var(--loop-edge);
 }
-
-#page-loop.preview .loop-part {
-  border-style: dashed;
-}

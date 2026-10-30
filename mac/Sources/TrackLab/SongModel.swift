@@ -93,6 +93,49 @@ final class SongModel {
     /// As camadas da tela embaixo da TAB, cada uma à vista ou não (guardado entre as músicas e as aberturas): a Onda e
     /// a Lente (o espectro com as notas, que mede as curvas).
     /// A TAB em páginas (ler a música de cima para baixo, com o cursor na batida) ou na faixa da Fita (guardado).
+    /// A janela da Fita e da TAB (`LoopView`): onde a agulha fica na largura (0,4 de início) e, com um loop que cabe,
+    /// onde a tela para enquanto a música está nele. Só mudam num evento, escolhidas para a tela ficar onde estava.
+    private(set) var playheadAt = 0.4
+    private(set) var loopPin: Double?
+    /// A tela que o próximo seek deve manter (um clique, um loop marcado nela); sem ela, a tela anda junto com o seek.
+    @ObservationIgnored private var keepView: Double?
+
+    /// Os segundos na largura da Fita e da TAB (o zoom); no zoom a agulha fica onde está.
+    @ObservationIgnored var span = 10.0 {
+        didSet {
+            guard span != oldValue, span > 0 else { return }
+            let now = engine.currentTime
+            let view = LoopView.start(now: now, loop: engine.loop, span: oldValue, at: playheadAt, pin: loopPin)
+            place(at: (now - view) / oldValue, now: now)
+        }
+    }
+
+    /// O começo da tela (Fita e TAB) com a música em `now`.
+    func viewStart(now: Double) -> Double {
+        LoopView.start(now: now, loop: engine.loop, span: span, at: playheadAt, pin: loopPin)
+    }
+
+    private func place(at: Double, now: Double) {
+        playheadAt = min(1, max(0, at))
+        loopPin = LoopView.pin(now: now, loop: engine.loop, span: span, at: playheadAt)
+        bridge.setView(at: playheadAt, pin: loopPin)
+    }
+
+    /// Leva a música até `seconds` com a agulha em `at` da largura (o lugar do clique): a tela fica onde está.
+    func seek(to seconds: Double, at fraction: Double) {
+        keepView = seconds - span * fraction
+        engine.seek(to: max(0, seconds))
+    }
+
+    /// Depois de todo seek: a tela fica (um clique, um loop marcado nela) ou anda junto com a música, a agulha no mesmo
+    /// lugar (a rolagem, as teclas). Um seek para fora da tela (um trecho, uma nota longe) põe a agulha no lugar dela.
+    private func seeked(from: Double, to: Double) {
+        let view = keepView ?? viewStart(now: from) + (to - from)
+        keepView = nil
+        let at = (to - view) / span
+        place(at: at >= 0 && at <= 1 ? at : playheadAt, now: to)
+    }
+
     var scorePage = UserDefaults.standard.bool(forKey: "scorePage") {
         didSet {
             UserDefaults.standard.set(scorePage, forKey: "scorePage")
@@ -174,6 +217,7 @@ final class SongModel {
     init(id: String) {
         self.id = id
         bridge = ScoreBridge(engine: engine)
+        engine.onSeek = { [weak self] from, to in self?.seeked(from: from, to: to) }
         bridge.onLoaded = { [weak self] tracks, ticks, markers, notes in
             guard let self else { return }
             scoreTracks = tracks
@@ -190,11 +234,11 @@ final class SongModel {
         }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
         bridge.onNotice = { [weak self] text in self?.tabMessage = text }
-        // O loop arrastado no modo página: preso nas batidas, como o arrastado na Fita.
+        bridge.onSeek = { [weak self] seconds, at in self?.seek(to: seconds, at: at) }
+        // O loop arrastado na pauta: preso nas batidas, como o arrastado na Fita.
         bridge.onLoop = { [weak self] start, end in
             guard let self, let range = LoopRegion.snapped(start, end, grid: grid, duration: engine.duration) else { return }
-            setLoop(range)
-            if !engine.isPlaying { engine.seek(to: range.lowerBound) }
+            setLoop(range, seekToStart: true)
         }
         bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
         bridge.onSelection = { [weak self] note, undo, redo in
@@ -556,9 +600,18 @@ final class SongModel {
 
     // MARK: - Loop
 
-    func setLoop(_ range: ClosedRange<Double>?) {
+    /// A tela não salta: um loop marcado nela fica onde está (parada, a música vai ao começo dele, `seekToStart`); ao
+    /// soltar o loop, a agulha fica onde estava e a tela volta a andar dali.
+    func setLoop(_ range: ClosedRange<Double>?, seekToStart: Bool = false) {
+        let now = engine.currentTime
+        let view = viewStart(now: now)
         engine.loop = range
+        place(at: (now - view) / span, now: now)
         bridge.setLoop(range)
+        if seekToStart, let range, !engine.isPlaying {
+            keepView = view
+            engine.seek(to: range.lowerBound)
+        }
     }
 
     /// L: o compasso que toca vira o loop; de novo, solta.
@@ -665,8 +718,7 @@ final class SongModel {
         guard !grid.isEmpty else { return }
         activeSectionID = section.id
         let range = grid.seconds(at: section.from)...grid.seconds(at: section.to)
-        setLoop(range)
-        if !engine.isPlaying { engine.seek(to: range.lowerBound) }
+        setLoop(range, seekToStart: true)
         engine.rate = Float(section.startRate) / 100
         trainer.reset()
         streak = 0
