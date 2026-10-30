@@ -11,7 +11,7 @@
 // o app leva a batida do cursor até o som que ficou sob a linha.
 //
 // Edição (como a do TabLab, sobre o próprio Guitar Pro, score-edit.js): com `editing(true)`, um clique escolhe a nota
-// (sem levar a música até ela) e o app manda `edit(op, valor)`: technique, fret, string, transpose, delete, nav, undo,
+// (sem levar a música até ela) e o app manda `edit(op, valor)`: technique, fret, string, transpose, fit, select, delete, nav, undo,
 // redo, clear. A página responde `selection {…}` (ou null) e, 1,5 s depois da última mudança, `save {gp}` (o Guitar
 // Pro 7 em base64) e `notes` (as notas novas, para o espectro).
 //
@@ -592,6 +592,14 @@
       postSelection();
       return;
     }
+    if (op === "select") {
+      // A nota que a Fita apontou (pista, tique, corda).
+      const found = value ? edit.findNote(state.score, value.track, value.tick, value.string) : null;
+      state.selected = found ? edit.pathOf(found) : null;
+      drawSelection();
+      postSelection();
+      return;
+    }
     const note = selectedNote();
     if (!note) {
       return;
@@ -624,6 +632,9 @@
         return;
       case "transpose":
         change(() => edit.transpose(note, value));
+        return;
+      case "fit":
+        change(() => edit.fit(alphaTab, note, value));
         return;
       case "delete": {
         const next = edit.neighbor(note, 1) || edit.neighbor(note, -1);

@@ -145,14 +145,25 @@ são um por vez, como os do relógio. A Fita mostra a onda ou o espectro da guit
 por linha, interpolados), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
 18 semitons, deslizando tocando: `PitchWindow`), as linhas de compasso e batida por cima e as notas da pista em âmbar e
 da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o vibrato ondula; `ScoreNote.shape`),
-com a casa e, pontilhada dentro, a altura que o som tem (as curvas chegam do motor aos poucos, pelas notas que aparecem).
+como na Lente (`SoundNote`, em TrackLabCore/SoundCurve.swift, porta o `fitCurve` e o `shapeAt` do `lens-core.js`): a
+faixa segue o som (o vibrato e o bend copiados da curva quando ela os tem; senão, a escrita), com o traço do ataque e os
+pontos laranja da altura que soa (as curvas chegam do motor aos poucos, pelas notas que aparecem; a chave leva a altura,
+então uma nota editada é medida de novo). Nota de acorde (outra nota da pista na mesma batida) fica na forma escrita e
+nunca vira trinado: a curva pula entre as cordas. Editável como na Lente: um clique numa faixa liga a edição e escolhe
+a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao soltar, mede o som de novo em volta da
+altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
+bend e o vibrato do som (`fit` na página). O Guitar Pro 7 guarda o bend como origem, meio de um valor só e destino, e
+reduz um Bend aos dois da ponta: o encaixe manda `(sai, 0) → (chega, q)` ou, se volta, quatro pontos
+(`CurveFit.guitarPro`). O trinado ainda não se escreve (a nota fica na casa mais perto). Mover a nota no tempo, que a
+Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a
 transformação) e o Canvas por cima, transparente e com `drawingGroup`, junta faixas, pontos, grade e teclado em poucos
 caminhos. `TempoGrid` guarda tiques, batidas e compassos (o `seconds(at:)` por nota montava a lista do mapa a cada
 pergunta). O relógio do transporte é uma NSView (`ClockLabel`): um Text que muda a cada segundo fazia a janela refazer as
-restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); ⌥⌘M
-(Visualizar) esconde o mixer e a Fita ganha a altura. Editar TAB (⌘E,
+restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); o botão
+Mixer na ponta do transporte (ou ⌥⌘M, Visualizar) esconde o mixer e a Fita ganha a altura; a escolha fica guardada
+(`showMixer`). Com ele fechado, o transporte mostra o que ouvir (Original ou um atalho de mixagem, `CompactMix`) e o X. Editar TAB (⌘E,
 `TabEditBar`): a paleta de articulações embaixo da partitura e as teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,

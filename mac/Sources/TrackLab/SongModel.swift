@@ -92,8 +92,9 @@ final class SongModel {
     private(set) var spectrumMessage: String?
     /// Z: a janela de alturas do espectro em volta da nota que toca (de 2 semitons abaixo a 6 acima, para ver o bend).
     var pitchZoom = false
-    /// As curvas de altura do som, por nota (`curveKey`); chegam aos poucos, pedidas pelas notas que aparecem.
-    @ObservationIgnored private(set) var pitchCurves: [String: PitchCurve] = [:]
+    /// As curvas de altura do som, por nota (`curveKey`), já com o encaixe (`SoundNote`: altura, bend, vibrato); chegam
+    /// aos poucos, pedidas pelas notas que aparecem.
+    @ObservationIgnored private(set) var soundNotes: [String: SoundNote] = [:]
     @ObservationIgnored private var curvesAsked: Set<String> = []
     /// Muda quando chega uma curva: a Fita desenha de novo.
     private(set) var pitchCurvesVersion = 0
@@ -273,9 +274,11 @@ final class SongModel {
 
     // MARK: - Espectro
 
-    /// A chave da curva de uma nota: a pista, o tique, a corda e o segundo (o mapa novo pede de novo).
+    /// A chave da curva de uma nota: a pista, o tique, a corda, a altura, a duração e o segundo (o mapa novo ou a
+    /// nota editada pedem de novo: a busca é em volta da altura escrita).
     func curveKey(_ note: ScoreNote, track: Int) -> String {
-        "\(track):\(Int(note.tick)):\(note.string):\(Int((grid.seconds(at: note.tick) * 100).rounded()))"
+        "\(track):\(Int(note.tick)):\(note.string):\(note.pitch):\(Int(note.duration)):"
+            + "\(Int((grid.seconds(at: note.tick) * 100).rounded()))"
     }
 
     /// Pede ao motor as curvas das notas que aparecem e ainda não têm (de fora do desenho: a Fita chama no quadro).
@@ -287,11 +290,22 @@ final class SongModel {
              end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
         }
         list.forEach { curvesAsked.insert($0.key) }
+        // As notas de acorde (outra nota da pista na mesma batida): a faixa fica na escrita, sem trinado.
+        let ticks = Set(missing.prefix(120).map(\.tick))
+        var count: [Double: Int] = [:]
+        if scoreNotes.indices.contains(track) {
+            for note in scoreNotes[track] where ticks.contains(note.tick) { count[note.tick, default: 0] += 1 }
+        }
+        let chords = Set(missing.prefix(120).filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             Task {
                 guard let curves = try? await Backend.shared.pitchCurves(self.id, notes: list) else { return }
-                self.pitchCurves.merge(curves) { _, new in new }
+                for item in list {
+                    guard let curve = curves[item.key] else { continue }
+                    self.soundNotes[item.key] = SoundNote(curve: curve, start: item.start, end: item.end,
+                                                          pitch: Double(item.pitch), chord: chords.contains(item.key))
+                }
                 self.pitchCurvesVersion += 1
             }
         }
@@ -641,6 +655,96 @@ final class SongModel {
         }
         // Desliga a de agora; a seguinte (se houver) liga no lugar.
         if current + 1 < keys.count { toggleTechnique(keys[current + 1]) } else { toggleTechnique(keys[current]) }
+    }
+
+    // MARK: - Notas no espectro (a Lente do TabLab)
+
+    /// Um clique numa faixa do espectro: liga a edição e escolhe a nota na TAB.
+    func selectNote(_ note: ScoreNote, track: Int) {
+        if !editingTab { editingTab = true }
+        tabMessage = nil
+        bridge.edit("select", ["track": track, "tick": note.tick, "string": note.string])
+    }
+
+    /// A nota escolhida, na lista da pista (com a curva, se já chegou).
+    private func selectedScoreNote() -> (note: ScoreNote, track: Int)? {
+        guard let selection = tabSelection, scoreNotes.indices.contains(selection.track) else { return nil }
+        return scoreNotes[selection.track].first { selection.matches($0, track: selection.track) }
+            .map { ($0, selection.track) }
+    }
+
+    /// F: encaixa a nota escolhida no som (a altura medida, o bend que ele faz e o vibrato), como o Encaixar da Lente.
+    func fitToSound() {
+        guard editingTab, let (note, track) = selectedScoreNote() else { return }
+        guard let sound = soundNotes[curveKey(note, track: track)] else {
+            tabMessage = "A curva do som desta nota ainda não chegou."
+            return
+        }
+        apply(sound.fit, to: note, center: Double(note.pitch))
+    }
+
+    /// Arrastar a faixa para cima ou para baixo: a nota anda de semitom em semitom e, ao soltar perto do som, encaixa
+    /// nele (medido de novo em volta da altura nova); com ⌥, só a altura.
+    func dragPitch(_ note: ScoreNote, track: Int, semitones: Int, onlyPitch: Bool) {
+        guard semitones != 0 else { return }
+        selectNote(note, track: track)
+        let pitch = note.pitch + semitones
+        if onlyPitch {
+            bridge.edit("transpose", semitones)
+            return
+        }
+        let start = grid.seconds(at: note.tick)
+        let end = grid.seconds(at: note.tick + note.duration)
+        Task {
+            let key = "drag"
+            let curves = try? await Backend.shared.pitchCurves(id, notes: [(key, start, end, pitch)])
+            let chord = scoreNotes.indices.contains(track)
+                && scoreNotes[track].contains { $0.tick == note.tick && $0.string != note.string }
+            let fit = curves?[key].map {
+                SoundNote(curve: $0, start: start, end: end, pitch: Double(pitch), chord: chord)
+            }?.fit
+            if let fit, abs(Double(fit.base) - Double(pitch)) <= 1 {
+                apply(fit, to: note, center: Double(pitch))
+            } else {
+                bridge.edit("transpose", semitones)
+            }
+        }
+    }
+
+    private func apply(_ fit: CurveFit?, to note: ScoreNote, center: Double) {
+        guard let fit, abs(Double(fit.base) - center) <= 1 else {
+            tabMessage = "O som não tem uma altura clara nesta nota."
+            return
+        }
+        if let trill = fit.trill {
+            // O trinado ainda não se escreve: a nota fica na casa das duas mais perto da escrita.
+            let pitch = abs(center - Double(trill.high)) <= abs(center - Double(trill.low)) ? trill.high : trill.low
+            bridge.edit("fit", ["pitch": pitch, "bend": NSNull(), "vibrato": false])
+            tabMessage = "Soa como trinado \(Self.pitchName(trill.low))⇄\(Self.pitchName(trill.high)) (o trinado ainda não se escreve)."
+            return
+        }
+        // Só o que muda, como a Lente: a altura, o bend (pelo tamanho) e o vibrato.
+        let before = Int(note.bend.map(\.value).max() ?? 0)
+        var parts: [String] = []
+        if fit.base != note.pitch { parts.append(Self.pitchName(fit.base)) }
+        if fit.quarterTones != before { parts.append(fit.quarterTones > 0 ? "bend \(Self.bendName(fit.quarterTones))" : "sem bend") }
+        if fit.vibrato != (note.vibrato > 0) { parts.append(fit.vibrato ? "vibrato" : "sem vibrato") }
+        guard !parts.isEmpty else {
+            tabMessage = "Já está como soa."
+            return
+        }
+        let bend: Any = fit.guitarPro.map { $0.map { [$0.offset, $0.value] } } ?? NSNull()
+        bridge.edit("fit", ["pitch": fit.base, "bend": bend, "vibrato": fit.vibrato])
+        tabMessage = "Encaixou no som: " + parts.joined(separator: ", ") + " · ⌘Z desfaz"
+    }
+
+    static func pitchName(_ midi: Int) -> String {
+        let names = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"]
+        return names[((midi % 12) + 12) % 12] + String(midi / 12 - 1)
+    }
+
+    static func bendName(_ quarterTones: Int) -> String {
+        [1: "¼", 2: "½", 3: "¾", 4: "1 tom", 6: "1½ tom", 8: "2 tons"][quarterTones] ?? "\(Double(quarterTones) / 4) tom"
     }
 
     private func saveScore(_ data: Data) {

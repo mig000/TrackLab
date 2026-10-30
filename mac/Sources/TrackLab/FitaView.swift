@@ -15,6 +15,8 @@ struct FitaView: View {
     @Local private var origin: Double?
     /// No Ajuste: a batida que está sendo arrastada e para onde vai.
     @Local private var held: (point: TempoPoint, to: Double)?
+    /// No espectro: a nota pega na faixa e quantos semitons ela já andou.
+    @Local private var grabbed: (note: ScoreNote, track: Int, semitones: Int)?
 
     static let playheadAt = 0.4
     static let spans: ClosedRange<Double> = 3...40
@@ -32,14 +34,15 @@ struct FitaView: View {
         GeometryReader { geometry in
             TimelineView(.animation(paused: !model.engine.isPlaying)) { context in
                 let host = CACurrentMediaTime() + context.date.timeIntervalSinceNow
-                tape(width: geometry.size.width, now: model.engine.songTime(atHost: host))
+                tape(size: geometry.size, now: model.engine.songTime(atHost: host))
             }
         }
         .background(Color(nsColor: .underPageBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
-    private func tape(width: Double, now: Double) -> some View {
+    private func tape(size: CGSize, now: Double) -> some View {
+        let width = size.width
         // Um loop que cabe na tela para a Fita e só a agulha anda (a TAB faz a mesma conta).
         let start = LoopView.windowStart(now: now, loop: model.engine.loop, span: span, playheadAt: Self.playheadAt)
             ?? now - span * Self.playheadAt
@@ -58,7 +61,7 @@ struct FitaView: View {
             .drawingGroup()
         }
         .contentShape(Rectangle())
-        .gesture(dragGesture(width: width, start: start))
+        .gesture(dragGesture(size: size, start: start))
         .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
             guard model.adjusting,
                   let point = model.grid.beat(near: time(at: value.location.x, width: width, start: start),
@@ -71,15 +74,25 @@ struct FitaView: View {
         start + x / max(width, 1) * span
     }
 
-    private func dragGesture(width: Double, start: Double) -> some Gesture {
-        DragGesture(minimumDistance: 0)
+    private func dragGesture(size: CGSize, start: Double) -> some Gesture {
+        let width = size.width
+        return DragGesture(minimumDistance: 0)
             .onChanged { value in
                 if origin == nil {
                     let at = time(at: value.startLocation.x, width: width, start: start)
                     origin = at
                     if model.adjusting, let point = model.grid.beat(near: at, within: Self.grab / max(width, 1) * span) {
                         held = (point, point.seconds)
+                    } else if !model.adjusting, let hit = noteAt(value.startLocation, size: size, start: start) {
+                        grabbed = (hit.note, hit.track, 0)
                     }
+                }
+                if let grabbed {
+                    // Para cima ou para baixo, de semitom em semitom (a faixa acompanha).
+                    let window = model.pitchWindow.range
+                    let semitone = (size.height - Self.waveStrip) / (window.upperBound - window.lowerBound)
+                    self.grabbed?.semitones = Int((-value.translation.height / max(1, semitone)).rounded())
+                    return
                 }
                 if let held {
                     // Pelo deslocamento do mouse, não pela posição: tocando, a Fita anda por baixo.
@@ -94,9 +107,22 @@ struct FitaView: View {
                     drag = nil
                     origin = nil
                     held = nil
+                    grabbed = nil
                 }
                 // Um clique na Fita devolve as teclas ao transporte (tira o foco da busca, por exemplo).
                 if let window = NSApp.keyWindow, window.firstResponder is NSText { window.makeFirstResponder(nil) }
+                if let grabbed {
+                    // Clique numa faixa: escolhe a nota (e liga a edição); arrastada, muda a altura e encaixa no som.
+                    if grabbed.semitones == 0 {
+                        if hypot(value.translation.width, value.translation.height) <= 3 {
+                            model.selectNote(grabbed.note, track: grabbed.track)
+                        }
+                    } else {
+                        model.dragPitch(grabbed.note, track: grabbed.track, semitones: grabbed.semitones,
+                                        onlyPitch: NSEvent.modifierFlags.contains(.option))
+                    }
+                    return
+                }
                 if let held {
                     // Um clique numa batida não leva a música até ela: a Fita andaria e o duplo clique erraria.
                     if abs(value.translation.width) > 3 { model.moveBeat(tick: held.point.tick, to: held.to) }
@@ -208,11 +234,13 @@ struct FitaView: View {
     }
 
     /// O espectro do trecho visível, como a Lente do TabLab: em cima, uma faixa estreita com a onda; embaixo, o que vai
-    /// sobre a imagem (ela fica na camada da GPU, `SpectrumLayerView`). A janela de alturas acompanha as notas do trecho (das duas
-    /// pistas, com folga, ao menos uma oitava e meia) e desliza tocando; com Z, fica em volta da nota que toca. Por
-    /// cima: as linhas dos compassos e das batidas; as notas (a pista em âmbar, a segunda em azul) como faixas que
-    /// seguem a escrita (o bend sobe, o vibrato ondula), com a casa; dentro de cada faixa, pontilhada, a altura que o
-    /// som tem de verdade (o motor mede); e o teclado à esquerda.
+    /// sobre a imagem (ela fica na camada da GPU, `SpectrumLayerView`). A janela de alturas acompanha as notas do trecho
+    /// (das duas pistas, com folga, ao menos uma oitava e meia) e desliza tocando; com Z, fica em volta da nota que toca.
+    /// Por cima: as linhas dos compassos e das batidas; as notas (a pista em âmbar, a segunda em azul) como faixas que
+    /// seguem o som (`SoundNote.offset`: o vibrato e o bend da curva; sem ela, a escrita), com o traço do ataque e os
+    /// pontos laranja da altura que soa; a nota escolhida brilha (de perto, a curva dela é uma linha). Um clique numa
+    /// faixa escolhe a nota na TAB; arrastar para cima ou para baixo muda a altura e, ao soltar, encaixa no som (⌥: só
+    /// a altura). E o teclado à esquerda.
     private func drawSpectrum(in context: inout GraphicsContext, size: CGSize, start: Double, gridStart: Double,
                               pitches: ClosedRange<Double>?) {
         let width = size.width
@@ -258,59 +286,106 @@ struct FitaView: View {
         }
         context.fill(barLines, with: .color(.white.opacity(0.3)))
 
-        // As notas: faixas que seguem a escrita (a largura da Lente: 72 % do semitom), a casa, e a curva do som. Cada
-        // pista num caminho só para as faixas e outro para os pontos (centenas de pontos a cada quadro, um por um,
-        // custavam caro).
+        // As notas como na Lente: faixas que seguem o som (o vibrato e o bend copiados da curva quando ela os tem; senão
+        // a escrita), com o traço do ataque na ponta e, por cima, os pontos laranja da altura que soa. Cada pista num
+        // caminho só para as faixas e outro para os pontos (centenas de pontos a cada quadro, um por um, custavam caro).
         let semitone = height / (highPitch - lowPitch)
-        let half = max(3, min(8, semitone * 0.36))
-        func bands(_ notes: [ScoreNote], track: Int, color: Color) {
+        let thick = Self.bandWidth(semitone: semitone)
+        let selection = model.tabSelection
+        func bands(_ notes: [ScoreNote], track: Int, rgb: (Double, Double, Double)) {
+            let color = Color(red: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255)
             var visible: [ScoreNote] = []
             var shapes = Path()
+            var attacks = Path()
             var dots = Path()
-            var labels: [(fret: Int, at: CGPoint)] = []
+            var chosen: (shape: Path, line: Path?)?
             for note in notes {
                 let s0 = model.grid.seconds(at: note.tick)
                 guard s0 < gridStart + span else { continue }
                 let s1 = model.grid.seconds(at: note.tick + note.duration)
                 guard s1 > gridStart else { continue }
                 visible.append(note)
+                let sound = model.soundNotes[model.curveKey(note, track: track)]
+                let isChosen = selection?.matches(note, track: track) == true
+                let lift = grabbed.map { $0.track == track && $0.note == note ? Double($0.semitones) : 0 } ?? 0
                 let x0 = gx(s0)
-                let x1 = max(gx(s1) - 1, x0 + 3)
-                let steps = max(2, Int(((x1 - x0) / 3).rounded(.up)))
+                let x1 = max(gx(s1), x0 + 3)
+                let teeth = sound?.fit?.trill != nil
+                let steps = max(2, Int(((x1 - x0) / (teeth ? 1 : 3)).rounded(.up)))
                 let centers = (0...steps).map { i -> CGPoint in
-                    let f = Double(i) / Double(steps)
-                    let offset = note.shape(fraction: f, elapsed: f * (s1 - s0))
-                    return CGPoint(x: x0 + (x1 - x0) * f, y: y(Double(note.pitch) + offset))
+                    let x = x0 + (x1 - x0) * Double(i) / Double(steps)
+                    let offset = Self.offset(note, sound: sound, at: gridStart + x / width * span, start: s0, end: s1)
+                    return CGPoint(x: x, y: y(Double(note.pitch) + lift + offset))
                 }
-                shapes.move(to: CGPoint(x: centers[0].x, y: centers[0].y - half))
-                for point in centers.dropFirst() { shapes.addLine(to: CGPoint(x: point.x, y: point.y - half)) }
-                for point in centers.reversed() { shapes.addLine(to: CGPoint(x: point.x, y: point.y + half)) }
-                shapes.closeSubpath()
-                // A altura do som, pontilhada dentro da faixa.
-                if let curve = model.pitchCurves[model.curveKey(note, track: track)] {
-                    for (k, value) in curve.values.enumerated() {
-                        guard let value else { continue }
-                        let t = curve.from + Double(k) * curve.hop
-                        dots.addEllipse(in: CGRect(x: gx(t) - 1.1, y: y(value) - 1.1, width: 2.2, height: 2.2))
+                var band = Path()
+                band.move(to: CGPoint(x: centers[0].x, y: centers[0].y - thick / 2))
+                for point in centers.dropFirst() { band.addLine(to: CGPoint(x: point.x, y: point.y - thick / 2)) }
+                for point in centers.reversed() { band.addLine(to: CGPoint(x: point.x, y: point.y + thick / 2)) }
+                band.closeSubpath()
+                if lift != 0 {
+                    // Onde estava: o contorno tracejado, apagado; o rótulo com a altura nova.
+                    context.stroke(band.offsetBy(dx: 0, dy: lift * semitone), with: .color(color.opacity(0.4)),
+                                   style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    context.draw(Text(SongModel.pitchName(note.pitch + Int(lift))).font(.caption.weight(.semibold))
+                        .foregroundStyle(color), at: CGPoint(x: x1 + 6, y: centers[0].y), anchor: .leading)
+                }
+                // O ataque: um traço mais forte na ponta.
+                attacks.addRect(CGRect(x: x0.rounded() - 1, y: Double(centers[0].y) - thick / 2 - 2, width: 2.5, height: thick + 4))
+                // De perto, a curva da nota escolhida é uma linha (dá para ver onde o bend chega); senão, pontos a
+                // cada 3,5 px.
+                var line: Path?
+                if let sound {
+                    let curve = sound.curve
+                    if isChosen, semitone >= 20 {
+                        var path = Path()
+                        var open = false
+                        for (k, value) in curve.values.enumerated() {
+                            guard let value else {
+                                open = false
+                                continue
+                            }
+                            let point = CGPoint(x: gx(curve.from + Double(k) * curve.hop), y: y(value))
+                            if open { path.addLine(to: point) } else { path.move(to: point) }
+                            open = true
+                        }
+                        line = path
+                    } else {
+                        let r = isChosen ? 1.6 : 1.3
+                        var lastX = -Double.infinity
+                        for (k, value) in curve.values.enumerated() {
+                            guard let value else { continue }
+                            let x = gx(curve.from + Double(k) * curve.hop)
+                            guard x - lastX >= 3.5 else { continue }
+                            lastX = x
+                            let dot = CGRect(x: x - r, y: y(value) - r, width: 2 * r, height: 2 * r)
+                            if isChosen { line = (line ?? Path()); line?.addEllipse(in: dot) } else { dots.addEllipse(in: dot) }
+                        }
                     }
                 }
-                if x1 - x0 > 16, half * 2 >= 9 { labels.append((note.fret, CGPoint(x: x0 + 3, y: centers[0].y - half - 1))) }
+                if isChosen || lift != 0 { chosen = (band, line) } else { shapes.addPath(band) }
             }
-            context.fill(shapes, with: .color(color.opacity(0.22)))
-            context.stroke(shapes, with: .color(color), lineWidth: 1.2)
-            context.fill(dots, with: .color(.white.opacity(0.9)))
-            // Uma casa resolvida serve para todas as notas com ela.
-            var resolved: [Int: GraphicsContext.ResolvedText] = [:]
-            let font = Font.system(size: min(11, half * 2 - 1)).weight(.semibold).monospacedDigit()
-            for label in labels {
-                let text = resolved[label.fret] ?? context.resolve(Text("\(label.fret)").font(font).foregroundStyle(color))
-                resolved[label.fret] = text
-                context.draw(text, at: label.at, anchor: .bottomLeading)
+            context.fill(shapes, with: .color(color.opacity(0.14)))
+            context.stroke(shapes, with: .color(color.opacity(0.85)), style: StrokeStyle(lineWidth: 1.3, lineJoin: .round))
+            if let chosen {
+                var glow = context
+                glow.addFilter(.shadow(color: color.opacity(0.55), radius: 5))
+                glow.fill(chosen.shape, with: .color(color.opacity(0.3)))
+                glow.stroke(chosen.shape, with: .color(color), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+            }
+            context.fill(attacks, with: .color(color))
+            let orange = Color(red: 1, green: 138 / 255, blue: 61 / 255)
+            context.fill(dots, with: .color(orange.opacity(0.55)))
+            if let line = chosen?.line {
+                if semitone >= 20 {
+                    context.stroke(line, with: .color(orange.opacity(0.95)), lineWidth: 1.8)
+                } else {
+                    context.fill(line, with: .color(orange.opacity(0.95)))
+                }
             }
             if !visible.isEmpty { model.askCurves(visible, track: track) }
         }
-        if let index = model.scoreSecond { bands(second, track: index, color: .cyan) }
-        bands(main, track: model.scoreTrack, color: .orange)
+        if let index = model.scoreSecond { bands(second, track: index, rgb: (91, 155, 255)) }
+        bands(main, track: model.scoreTrack, rgb: (245, 181, 68))
 
         // O teclado à esquerda (o da Lente): as teclas brancas e pretas de cada semitom, os Dós e os Mis com nome.
         let gutter = Self.keyboardWidth
@@ -357,6 +432,41 @@ struct FitaView: View {
 
     /// A faixa da onda em cima do espectro.
     static let waveStrip = 30.0
+
+    /// A largura da faixa de uma nota (a da Lente: 72 % do semitom, de 5 a 14 px).
+    static func bandWidth(semitone: Double) -> Double { max(5, min(14, semitone * 0.72)) }
+
+    /// Quantos semitons acima da escrita a faixa passa em `t`: pelo som, se a curva chegou; senão pela escrita.
+    static func offset(_ note: ScoreNote, sound: SoundNote?, at t: Double, start: Double, end: Double) -> Double {
+        if let sound { return sound.offset(note, at: t, start: start, end: end) }
+        let length = max(1e-3, end - start)
+        return note.shape(fraction: (t - start) / length, elapsed: t - start)
+    }
+
+    /// A nota sob o ponteiro no espectro (a pista principal antes da segunda): a faixa dela passa a até 3 px.
+    private func noteAt(_ point: CGPoint, size: CGSize, start: Double) -> (note: ScoreNote, track: Int)? {
+        guard model.fitaMode == .spectrum, model.spectrum != nil, point.y > Self.waveStrip,
+              point.x > Self.keyboardWidth else { return nil }
+        let height = size.height - Self.waveStrip
+        let window = model.pitchWindow.range
+        let semitone = height / (window.upperBound - window.lowerBound)
+        let reach = Self.bandWidth(semitone: semitone) / 2 + 3
+        let t = start + point.x / max(size.width, 1) * span
+        let slack = 2 / max(Double(size.width), 1) * span
+        let tracks = [model.scoreTrack] + (model.scoreSecond.map { [$0] } ?? [])
+        for track in tracks where model.scoreNotes.indices.contains(track) {
+            for note in model.scoreNotes[track] {
+                let s0 = model.grid.seconds(at: note.tick)
+                let s1 = model.grid.seconds(at: note.tick + note.duration)
+                guard t >= s0 - slack, t <= s1 + slack else { continue }
+                let sound = model.soundNotes[model.curveKey(note, track: track)]
+                let pitch = Double(note.pitch) + Self.offset(note, sound: sound, at: min(max(t, s0), s1), start: s0, end: s1)
+                let y = Self.waveStrip + height - (pitch - window.lowerBound) * semitone
+                if abs(point.y - y) <= reach { return (note, track) }
+            }
+        }
+        return nil
+    }
 
     /// Z: a janela em volta da nota que toca (ou da mais perto): 2 semitons abaixo e 6 acima, para caber o bend.
     static func zoomTarget(_ notes: [ScoreNote], grid: TempoGrid, at seconds: Double,

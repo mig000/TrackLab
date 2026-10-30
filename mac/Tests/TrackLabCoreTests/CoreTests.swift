@@ -323,3 +323,42 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(note?.fret == 7 && note?.techniques == ["vibrato", "bend-full"] && note?.pitchName == "Ré 4")
     #expect(TabSelection(page: ["track": NSNumber(value: 1)]) == nil)
 }
+
+/// Uma curva do som a cada 8 ms de `start` a `end` pela função.
+private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double) -> PitchCurve {
+    let count = Int(((end - start) / 0.008).rounded()) + 1
+    return PitchCurve(from: start, hop: 0.008, values: (0..<count).map { f(start + Double($0) * 0.008) })
+}
+
+@Test func encaixeNoSomComoALente() throws {
+    // Vibrato de 6 Hz que só sobe (0,3 semitom) sobre o Dó 4: vibrato, sem bend.
+    let wavy = SoundNote(curve: soundCurve(1, 2) { 60 + 0.15 * (1 - cos(2 * .pi * 6 * ($0 - 1))) }, start: 1, end: 2, pitch: 60)
+    let vibrato = try #require(wavy.fit)
+    #expect(vibrato.base == 60 && vibrato.vibrato && vibrato.quarterTones == 0 && vibrato.trill == nil)
+    // A faixa copia o som: no topo da oscilação, ~0,3 acima da casa (a nota escrita sem vibrato fica reta).
+    let written = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, vibrato: 1)
+    #expect(abs(wavy.offset(written, at: 1 + 1 / 12.0 + 0.5, start: 1, end: 2) - 0.3) < 0.05)
+
+    // Parado no Dó 4 e, depois de 0,25 s, subindo um tom: bend de 1 tom (4 quartos), pontos do Guitar Pro.
+    let bend = try #require(SoundNote(curve: soundCurve(1, 2) { $0 < 1.25 ? 60 : min(62, 60 + ($0 - 1.25) * 20) },
+                                      start: 1, end: 2, pitch: 60).fit)
+    #expect(bend.base == 60 && bend.quarterTones == 4 && !bend.vibrato)
+    let points = try #require(bend.points)
+    #expect(points.first == .init(offset: 0, value: 0) && points.last?.value == 4 && points.count <= 4)
+    // No Guitar Pro 7: sai (o ponto 0 parado some) e chega; a altura fica.
+    let gp = try #require(bend.guitarPro)
+    #expect(gp.count == 2 && gp[0].value == 0 && gp[0].offset > 3 && gp[1].value == 4)
+    let back = try #require(SoundNote(curve: soundCurve(1, 2) { t in
+        t < 1.25 ? 60 : t < 1.6 ? min(62, 60 + (t - 1.25) * 20) : max(60, 62 - (t - 1.6) * 20)
+    }, start: 1, end: 2, pitch: 60).fit?.guitarPro)
+    #expect(back.map(\.value) == [0, 4, 4, 0] && zip(back, back.dropFirst()).allSatisfy { $0.offset < $1.offset })
+
+    // Ligados rápidos entre Dó e Ré a cada 80 ms: trinado, nem bend nem vibrato.
+    let trill = try #require(SoundNote(curve: soundCurve(1, 2) { Int(($0 - 1) / 0.08) % 2 == 0 ? 60 : 62 },
+                                       start: 1, end: 2, pitch: 60).fit)
+    #expect(trill.trill?.low == 60 && trill.trill?.high == 62 && trill.quarterTones == 0 && !trill.vibrato)
+
+    // Sem som claro: nada a dizer.
+    #expect(SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: nil, count: 120)),
+                      start: 1, end: 2, pitch: 60).fit == nil)
+}

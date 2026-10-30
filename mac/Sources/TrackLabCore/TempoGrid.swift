@@ -157,6 +157,11 @@ public struct ScoreNote: Hashable, Sendable {
     public struct BendPoint: Hashable, Sendable {
         public let offset: Double
         public let value: Double
+
+        public init(offset: Double, value: Double) {
+            self.offset = offset
+            self.value = value
+        }
     }
 
     public let tick: Double
@@ -191,28 +196,28 @@ public struct ScoreNote: Hashable, Sendable {
     }
 
     /// Quantos semitons acima da altura a nota está num instante, pela escrita (como `shapeAt` da Lente do
-    /// TabLab, sem a curva do som): o bend pelos pontos, com a subida suavizada; o vibrato, uma onda de 5,5 Hz
-    /// (0,22 semitom; o largo, o dobro). `fraction`: de 0 a 1 ao longo da nota; `elapsed`: segundos desde o começo.
+    /// TabLab, sem a curva do som; com ela, `SoundNote.offset`): o bend mais o vibrato. `fraction`: de 0 a 1 ao longo
+    /// da nota; `elapsed`: segundos desde o começo.
     public func shape(fraction: Double, elapsed: Double) -> Double {
-        var offset = 0.0
-        if let first = bend.first {
-            let at = Swift.max(0, Swift.min(60, fraction * 60))
-            if at <= first.offset {
-                offset = first.value / 2
-            } else {
-                offset = (bend.last?.value ?? 0) / 2
-                for (a, b) in zip(bend, bend.dropFirst()) where at <= b.offset {
-                    let u = b.offset > a.offset ? (at - a.offset) / (b.offset - a.offset) : 1
-                    let eased = u * u * (3 - 2 * u)
-                    offset = (a.value + (b.value - a.value) * eased) / 2
-                    break
-                }
-            }
+        bendOffset(fraction: fraction) + vibratoOffset(elapsed: elapsed)
+    }
+
+    /// O bend escrito pelos pontos (quartos de tom, deslocamento 0–60), com a subida suavizada; sem bend, 0.
+    public func bendOffset(fraction: Double) -> Double {
+        guard let first = bend.first else { return 0 }
+        let at = Swift.max(0, Swift.min(60, fraction * 60))
+        if at <= first.offset { return first.value / 2 }
+        for (a, b) in zip(bend, bend.dropFirst()) where at <= b.offset {
+            let u = b.offset > a.offset ? (at - a.offset) / (b.offset - a.offset) : 1
+            let eased = u * u * (3 - 2 * u)
+            return (a.value + (b.value - a.value) * eased) / 2
         }
-        if vibrato > 0 {
-            offset += Double(vibrato) * 0.22 * (1 - cos(2 * Double.pi * 5.5 * elapsed))
-        }
-        return offset
+        return (bend.last?.value ?? 0) / 2
+    }
+
+    /// O vibrato escrito: uma onda de 5,5 Hz que só sobe (0,22 semitom; o largo, o dobro).
+    public func vibratoOffset(elapsed: Double) -> Double {
+        vibrato > 0 ? Double(vibrato) * 0.22 * (1 - cos(2 * Double.pi * 5.5 * elapsed)) : 0
     }
 }
 
@@ -262,14 +267,23 @@ public struct TabSelection: Hashable, Sendable {
     public let string: Int
     public let fret: Int
     public let pitch: Int
+    /// O tique em que a nota começa (para achar a faixa dela na Fita).
+    public let tick: Double?
     public let techniques: [String]
 
-    public init(track: Int, string: Int, fret: Int, pitch: Int, techniques: [String]) {
+    public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String]) {
         self.track = track
         self.string = string
         self.fret = fret
         self.pitch = pitch
+        self.tick = tick
         self.techniques = techniques
+    }
+
+    /// Se é esta nota da pista (a mesma batida e a mesma corda).
+    public func matches(_ note: ScoreNote, track: Int) -> Bool {
+        guard let tick else { return false }
+        return self.track == track && string == note.string && abs(tick - note.tick) < 1
     }
 
     public init?(page: [String: Any]) {
@@ -278,7 +292,7 @@ public struct TabSelection: Hashable, Sendable {
             return nil
         }
         self.init(track: track, string: string, fret: fret, pitch: pitch,
-                  techniques: page["techniques"] as? [String] ?? [])
+                  tick: (page["tick"] as? NSNumber)?.doubleValue, techniques: page["techniques"] as? [String] ?? [])
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

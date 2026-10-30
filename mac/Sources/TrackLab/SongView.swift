@@ -319,6 +319,7 @@ struct AdjustBar: View {
 struct TransportBar: View {
     let model: SongModel
     @Binding var span: Double
+    @AppStorage("showMixer") private var showMixer = true
 
     var body: some View {
         let engine = model.engine
@@ -417,6 +418,15 @@ struct TransportBar: View {
                 Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
             }
             .help("Zoom da TAB e da Fita juntas (\(Int(span.rounded())) s na largura); pinça no trackpad também")
+            // Com o mixer fechado, o que mais se troca tocando fica aqui: o que ouvir e o X.
+            if !showMixer {
+                CompactMix(model: model)
+            }
+            // Só o ícone: com o nome, a barra passava da largura de uma janela de 1300 pontos e empurrava a tela.
+            Toggle(isOn: $showMixer) { Image(systemName: "slider.vertical.3") }
+                .toggleStyle(.button)
+                .accessibilityLabel("Mixer")
+                .help(showMixer ? "Esconde o mixer: a Fita ganha a altura (⌥⌘M)" : "Mostra o mixer (⌥⌘M)")
         }
         .buttonStyle(.borderless)
         .controlSize(.regular)
@@ -430,6 +440,49 @@ struct TransportBar: View {
         guard let total else { return format(seconds) }
         let bar = model.grid.bar(at: seconds).map { "  ·  compasso \($0)" } ?? ""
         return "\(format(seconds)) / \(format(total))\(bar)"
+    }
+}
+
+/// O mixer fechado, no transporte: o original ou um atalho de mixagem das faixas, num menu, e o X (áudio ↔ TAB), que
+/// mora na linha TAB do mixer e sem isto sumiria com ele.
+private struct CompactMix: View {
+    let model: SongModel
+
+    var body: some View {
+        let engine = model.engine
+        if !engine.stemIDs.isEmpty {
+            Picker("Ouvir", selection: Binding(get: { selection }, set: choose)) {
+                Text("Original").tag("original")
+                Divider()
+                ForEach(MixPreset.allCases) { preset in Text(preset.label).tag(preset.rawValue) }
+                if engine.useStems, model.preset == nil {
+                    Text("Mixagem própria").tag("custom")
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+            .help("O que soa: o original ou as faixas separadas (o resto da mixagem fica no mixer)")
+        }
+        if !engine.synthIDs.isEmpty {
+            Button { model.swapAudioAndTab() } label: { Image(systemName: "arrow.left.arrow.right") }
+                .keyboardShortcut("x", modifiers: [])
+                .help("X: troca o áudio pela TAB sintetizada, ou a TAB pelo áudio")
+        }
+    }
+
+    private var selection: String {
+        guard model.engine.useStems else { return "original" }
+        return model.preset?.rawValue ?? "custom"
+    }
+
+    private func choose(_ tag: String) {
+        if tag == "original" {
+            model.engine.useStems = false
+        } else if let preset = MixPreset(rawValue: tag) {
+            model.engine.useStems = true
+            model.apply(preset)
+        }
     }
 }
 

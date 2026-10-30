@@ -302,6 +302,48 @@
     return setFret(note, note.fret + semitones);
   }
 
+  // Encaixa a nota no som (o "Encaixar" da Lente do TabLab): a altura medida na mesma corda, o bend que o som faz
+  // (pontos do Guitar Pro, até quatro: um bend que volta é Bend e volta, senão Bend) e o vibrato, se o som tem.
+  // `wanted`: { pitch, bend: [[deslocamento, quartos de tom], …] ou null, vibrato }. Devolve se mudou algo.
+  function fit(at, note, wanted) {
+    const m = at.model;
+    const semitones = Math.round(wanted.pitch) - note.realValue;
+    if (semitones !== 0 && !transpose(note, semitones)) {
+      return false;
+    }
+    let changed = semitones !== 0;
+    const bend = Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
+    const before = JSON.stringify((note.bendPoints || []).map((p) => [p.offset, p.value]));
+    if (before !== JSON.stringify(bend)) {
+      clearGroup(at, note, "bend");
+      if (bend.length >= 2) {
+        for (const [offset, value] of bend) note.addBendPoint(new m.BendPoint(offset, value));
+        const last = bend[bend.length - 1][1];
+        note.bendType = last === 0 && bend.length > 2 ? m.BendType.BendRelease : m.BendType.Bend;
+        note.isDead = false;
+      }
+      changed = true;
+    }
+    const vibrato = wanted.vibrato ? note.vibrato || m.VibratoType.Slight : m.VibratoType.None;
+    if (vibrato !== note.vibrato) {
+      note.vibrato = vibrato;
+      changed = true;
+    }
+    return changed;
+  }
+
+  // A nota de uma pista pelo tique em que começa e pela corda (1 é a mais aguda): a que a Fita aponta.
+  function findNote(score, track, tick, string) {
+    const part = score.tracks[track];
+    if (!part) return null;
+    for (const staff of part.staves) {
+      if (!staff.tuning || !staff.tuning.length) continue;
+      const note = notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - tick) < 1 && tabString(n) === string);
+      if (note) return note;
+    }
+    return null;
+  }
+
   // Apaga a nota; a batida sem notas vira pausa.
   function remove(note) {
     const notes = note.beat.notes;
@@ -375,7 +417,7 @@
   // O que o app mostra da nota escolhida: a pista, a corda (1 é a mais aguda), a casa, a altura e as articulações.
   function describe(at, note) {
     return { track: note.beat.voice.bar.staff.track.index, string: tabString(note), fret: note.fret,
-      pitch: note.realValue, techniques: techniquesOf(at, note) };
+      pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note) };
   }
 
   return {
@@ -384,6 +426,8 @@
     MAX_FRET,
     describe,
     exportGp,
+    findNote,
+    fit,
     moveString,
     neighbor,
     notesOf,

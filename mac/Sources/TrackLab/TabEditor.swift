@@ -9,7 +9,7 @@ import TrackLabCore
 ///     ⌥↑ ⌥↓         meio tom                                  ← →   nota anterior / seguinte
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
-///     A acento   R let ring   P palhetada
+///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
 struct TabEditBar: View {
     let model: SongModel
 
@@ -100,7 +100,10 @@ struct TabEditBar: View {
             if let message = model.tabMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Button("Concluir") { model.editingTab = false }
+            Button("Encaixar no som") { model.fitToSound() }
+                .disabled(selection == nil)
+                .help("F: a altura, o bend e o vibrato que o som da nota tem (pela curva do espectro)")
+                        Button("Concluir") { model.editingTab = false }
         }
         .background(TabEditKeys(model: model))
     }
@@ -190,6 +193,7 @@ private struct TabEditKeys: NSViewRepresentable {
             case "a": model.cycleTechnique(["accent", "heavy-accent"])
             case "r": model.toggleTechnique("let-ring")
             case "p": model.cycleTechnique(["pick-down", "pick-up"])
+            case "f": model.fitToSound()
             default: return false
             }
             return true
