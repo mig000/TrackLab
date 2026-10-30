@@ -182,12 +182,14 @@ final class SongModel {
             grid = TempoGrid(points: grid.points, barTicks: ticks)
             self.markers = markers
             scoreNotes = notes
+            bridge.setDurations(showDurations, grid: gridTicks)
         }
         bridge.onRendered = { [weak self] _, height in
             self?.scoreMessage = nil
             if let height, height > 0 { self?.scoreHeight = height }
         }
         bridge.onError = { [weak self] text in self?.scoreMessage = text }
+        bridge.onNotice = { [weak self] text in self?.tabMessage = text }
         bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
         bridge.onSelection = { [weak self] note, undo, redo in
             self?.tabSelection = note
@@ -989,6 +991,42 @@ final class SongModel {
         apply(sound.fit, to: note, center: Double(note.pitch))
     }
 
+    /// Arrastar a faixa para os lados (ou ⌥← ⌥→ na edição): a batida da nota anda `steps` semicolcheias no tempo; a
+    /// anterior encurta ou cresce e o que sobra vira pausa (`edit.shift` na página).
+    func shiftNote(_ note: ScoreNote, track: Int, steps: Int) {
+        guard steps != 0 else { return }
+        selectNote(note, track: track)
+        bridge.edit("nudge", steps)
+        let name = Self.grids.first { $0.ticks == gridTicks }?.name ?? "passo"
+        tabMessage = "A nota andou \(abs(steps)) × \(name) " + (steps > 0 ? "para depois" : "para antes") + " · ⌘Z desfaz"
+    }
+
+    /// As grades do tempo das notas (tiques a 960 por semínima) e o nome de cada uma.
+    static let grids: [(ticks: Int, name: String)] = [(480, "1/8"), (240, "1/16"), (120, "1/32"), (320, "tercina de 1/8"),
+                                                       (160, "tercina de 1/16")]
+
+    /// A grade do arrasto das barras, do ⌥← ⌥→ e do arrasto lateral da Lente (guardada).
+    var gridTicks = UserDefaults.standard.object(forKey: "gridTicks") as? Int ?? 240 {
+        didSet {
+            UserDefaults.standard.set(gridTicks, forKey: "gridTicks")
+            bridge.setDurations(showDurations, grid: gridTicks)
+        }
+    }
+
+    /// As barras de duração embaixo das notas da TAB na edição (D; guardado).
+    var showDurations = UserDefaults.standard.bool(forKey: "showDurations") {
+        didSet {
+            UserDefaults.standard.set(showDurations, forKey: "showDurations")
+            bridge.setDurations(showDurations, grid: gridTicks)
+        }
+    }
+
+    /// ⌥← ⌥→ na edição: a nota escolhida um passo da grade mais cedo ou mais tarde.
+    func shiftSelected(_ steps: Int) {
+        guard let (note, track) = selectedScoreNote() else { return }
+        shiftNote(note, track: track, steps: steps)
+    }
+
     /// Arrastar a faixa para cima ou para baixo: a nota anda de semitom em semitom e, ao soltar perto do som, encaixa
     /// nele (medido de novo em volta da altura nova); com ⌥, só a altura.
     func dragPitch(_ note: ScoreNote, track: Int, semitones: Int, onlyPitch: Bool) {
@@ -1030,8 +1068,13 @@ final class SongModel {
                 tabMessage = "Já está como soa."
                 return
             }
-            bridge.edit("fit", ["pitch": trill.low, "bend": NSNull(), "vibrato": false, "trill": trill.high])
-            tabMessage = "Encaixou no som: \(name) · ⌘Z desfaz"
+            // A velocidade: as trocas medidas contra a semínima ali (o Guitar Pro guarda a figura de cada troca).
+            let beat = grid.seconds(at: note.tick + TempoGrid.ticksPerQuarter) - grid.seconds(at: note.tick)
+            let speed = trill.speed(beatSeconds: beat)
+            bridge.edit("fit", ["pitch": trill.low, "bend": NSNull(), "vibrato": false, "trill": trill.high,
+                                "trillSpeed": speed])
+            let figure = [8: "colcheias", 16: "semicolcheias", 32: "fusas", 64: "semifusas"][speed] ?? ""
+            tabMessage = "Encaixou no som: \(name) em \(figure) · ⌘Z desfaz"
             return
         }
         // Só o que muda, como a Lente: a altura, o bend (pelo tamanho) e o vibrato.

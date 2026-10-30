@@ -38,6 +38,7 @@
   const cursor = document.getElementById("cursor");
   const loopBox = document.getElementById("loop");
   const pageCursor = document.getElementById("page-cursor");
+  const noteGhost = document.getElementById("note-ghost");
   const message = document.getElementById("message");
 
   // Diferença entre o relógio extrapolado e um aviso do app abaixo da qual o aviso é ignorado.
@@ -47,6 +48,14 @@
   const RELAYOUT_MS = 200;
   // Um compasso nunca fica mais estreito que isto (px), por mais curto que seja.
   const MIN_BAR_WIDTH = 24;
+  // Por que uma nota não mudou de tempo (edit.retime).
+  const RETIME_REASONS = {
+    overlap: "Passaria por cima da nota anterior.",
+    short: "A nota (ou a de antes) ficaria curta demais.",
+    grace: "Um compasso com apojatura não é refeito assim.",
+    figure: "A duração não cabe em figuras (nem com tercinas): use outra grade.",
+    missing: "Não achei a nota na voz 1.",
+  };
 
   const THEMES = {
     light: {
@@ -73,6 +82,12 @@
     track: 0,
     // A segunda pista, desenhada embaixo da primeira (null: nenhuma).
     others: [],
+    // As barras de duração na edição e a grade delas (tiques: 240 é semicolcheia, 320 tercina de colcheia…).
+    durations: false,
+    grid: 240,
+    durDrag: null,
+    // A nota pega na TAB para mudar de tempo (path, intervalo, de onde saiu, para onde vai).
+    noteDrag: null,
     // O modo página: a partitura em sistemas, de cima para baixo; as batidas da pista principal (tique e a batida do
     // alphaTab) para o cursor.
     page: false,
@@ -366,6 +381,7 @@
     sheet.style.height = Math.ceil(tabElement.scrollHeight) + "px";
     drawLoop();
     drawSelection();
+    drawDurations();
     draw(true);
     post({
       type: "rendered",
@@ -616,6 +632,8 @@
   // O destaque da nota escolhida, em coordenadas de #sheet (as do desenho; o zoom vem do transform da #sheet).
   function drawSelection() {
     const note = state.editing ? selectedNote() : null;
+    // A barra de duração da nota escolhida acende.
+    for (const bar of durationLayer.children) bar.classList.toggle("chosen", Boolean(note) && bar.beat === note.beat);
     const bounds = note && state.api && state.api.renderer.boundsLookup && state.api.renderer.boundsLookup.findBeat(note.beat);
     const head = bounds && bounds.notes ? bounds.notes.find((b) => b.note === note) : null;
     if (!head) {
@@ -750,6 +768,14 @@
       case "fit":
         change(() => edit.fit(alphaTab, note, value));
         return;
+      case "nudge":
+        // Um passo da grade (⌥← ⌥→, o arrasto lateral da Lente), mantendo a duração.
+        retimeSelected(note, (span) => [span.start + Math.round(value) * state.grid, span.end + Math.round(value) * state.grid]);
+        return;
+      case "retime":
+        // Começo e fim novos em tiques (a barra de duração arrastada).
+        retimeSelected(note, () => [value.start, value.end]);
+        return;
       case "delete": {
         const next = edit.neighbor(note, 1) || edit.neighbor(note, -1);
         const nextPath = next ? edit.pathOf(next) : null;
@@ -779,6 +805,232 @@
     viewport.scrollTop = 0;
     if (!value) sheet.style.transform = "";
   }
+
+  // A nota escolhida (a batida dela) com começo e fim novos: os compassos afetados são refeitos (edit.retime); a escolha
+  // volta à nota pelo tique novo e pela corda; quando não dá, o app diz por quê.
+  function retimeSelected(note, target) {
+    const span = edit.span(note);
+    if (!span) return;
+    const [start, end] = target(span);
+    const where = { track: note.beat.voice.bar.staff.track.index, string: edit.tabString(note), tick: start };
+    let reason = null;
+    change(() => {
+      const result = edit.retime(alphaTab, note, start, end);
+      if (result !== true) reason = result;
+      return result === true;
+    });
+    if (reason) {
+      post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para mudar o tempo da nota." });
+      return;
+    }
+    const found = edit.findNote(state.score, where.track, where.tick, where.string);
+    state.selected = found ? edit.pathOf(found) : state.selected;
+    drawSelection();
+    postSelection();
+  }
+
+  // MARK: as barras de duração (na edição, com "Durações" ligado)
+  //
+  // Embaixo de cada nota da pista principal, uma barra do tamanho do som dela (com as ligaduras) na escala da Fita.
+  // Arrastar o meio move a nota no tempo; as pontas mudam o começo (o fim fica) ou o fim. Tudo cai na grade
+  // (`state.grid` tiques, contados do começo do compasso); com ⌥, na grade fina (1/32). A prévia mostra a figura.
+  const durationLayer = document.createElement("div");
+  durationLayer.id = "durations";
+  sheet.appendChild(durationLayer);
+
+  function drawDurations() {
+    durationLayer.innerHTML = "";
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!state.durations || !state.editing || state.page || !lookup || !state.score || !state.points.length) return;
+    const staff = state.score.tracks[shownTracks()[0]].staves.find((s) => s.tuning && s.tuning.length);
+    if (!staff) return;
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    const page = sheet.getBoundingClientRect();
+    const stretch = zoomStretch();
+    for (const ev of edit.timeline(staff)) {
+      const bounds = lookup.findBeat(ev.beat);
+      if (!bounds || !bounds.notes || !bounds.notes.length) continue;
+      const bottom = Math.max(...bounds.notes.map((n) => n.noteHeadBounds.y + n.noteHeadBounds.h));
+      const a = xAtSeconds(core.tickToSeconds(state.points, ev.start));
+      const b = xAtSeconds(core.tickToSeconds(state.points, ev.end));
+      if (a === null || b === null) continue;
+      const bar = document.createElement("div");
+      bar.className = "duration" + (selectedNote() && selectedNote().beat === ev.beat ? " chosen" : "");
+      bar.style.left = a / stretch + "px";
+      bar.style.width = Math.max(4, (b - a) / stretch - 1) + "px";
+      bar.style.top = surface.top - page.top + bottom + 2 + "px";
+      bar.dataset.start = ev.start;
+      bar.dataset.end = ev.end;
+      bar.beat = ev.beat;
+      durationLayer.appendChild(bar);
+    }
+  }
+
+  // Um tique na grade, contada do começo do compasso em que ele cai.
+  function snap(tick, grid) {
+    const masters = state.score.masterBars;
+    let master = masters[0];
+    for (const m of masters) if (m.start <= tick) master = m;
+    return master.start + Math.round((tick - master.start) / grid) * grid;
+  }
+
+  durationLayer.addEventListener("pointerdown", (event) => {
+    const bar = event.target.closest(".duration");
+    if (!bar) return;
+    event.stopPropagation();
+    event.preventDefault();
+    const box = bar.getBoundingClientRect();
+    const edge = Math.min(8, box.width / 3);
+    const mode = event.clientX - box.left <= edge ? "start" : box.right - event.clientX <= edge ? "end" : "move";
+    const note = bar.beat.notes[0];
+    state.selected = edit.pathOf(note);
+    drawSelection();
+    postSelection();
+    state.durDrag = { bar, mode, from: event.clientX, start: Number(bar.dataset.start), end: Number(bar.dataset.end),
+      left: parseFloat(bar.style.left), width: parseFloat(bar.style.width), target: null };
+    try {
+      durationLayer.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura, o arrasto vale enquanto o ponteiro fica sobre a pauta.
+    }
+    bar.classList.add("dragging");
+  });
+
+  durationLayer.addEventListener("pointermove", (event) => {
+    const drag = state.durDrag;
+    if (!drag) return;
+    const grid = event.altKey ? 120 : state.grid;
+    // Pixels na tela → segundos → tiques pelo mapa, a partir do ponto arrastado.
+    const pxPerSecond = (state.layoutWidth / state.renderedSpan) * zoomStretch();
+    const seconds = (event.clientX - drag.from) / pxPerSecond;
+    const moveTick = (tick) => snap(core.secondsToTick(state.points, core.tickToSeconds(state.points, tick) + seconds), grid);
+    let start = drag.start;
+    let end = drag.end;
+    if (drag.mode === "move") {
+      start = moveTick(drag.start);
+      end = start + (drag.end - drag.start);
+    } else if (drag.mode === "start") {
+      start = Math.min(moveTick(drag.start), drag.end - grid);
+    } else {
+      end = Math.max(moveTick(drag.end), drag.start + grid);
+    }
+    drag.target = { start, end };
+    const stretch = zoomStretch();
+    const a = xAtSeconds(core.tickToSeconds(state.points, start));
+    const b = xAtSeconds(core.tickToSeconds(state.points, end));
+    if (a !== null && b !== null) {
+      drag.bar.style.left = a / stretch + "px";
+      drag.bar.style.width = Math.max(4, (b - a) / stretch - 1) + "px";
+    }
+    drag.bar.dataset.label = edit.figureName(end - start);
+  });
+
+  function endDurationDrag() {
+    const drag = state.durDrag;
+    if (!drag) return;
+    state.durDrag = null;
+    state.suppressClick = true;
+    drag.bar.classList.remove("dragging");
+    const note = selectedNote();
+    if (note && drag.target && (drag.target.start !== drag.start || drag.target.end !== drag.end)) {
+      retimeSelected(note, () => [drag.target.start, drag.target.end]);
+    } else {
+      drawDurations();
+    }
+  }
+
+  durationLayer.addEventListener("pointerup", endDurationDrag);
+  durationLayer.addEventListener("pointercancel", endDurationDrag);
+
+  // MARK: pegar a nota e soltar onde ela deve ir (na edição, na faixa)
+  //
+  // Arrastar o número de uma nota para os lados move a nota (a batida dela, com o acorde) no tempo, mantendo a duração.
+  // Um contorno tracejado mostra onde ela cai, já na grade, com o compasso e o tempo; ao soltar, os compassos são
+  // refeitos (edit.retime). Com ⌥, a grade fina (1/32).
+  const FRACTIONS = { 120: "1/32", 160: "⅙", 240: "1/16", 320: "⅓", 360: "3/32", 480: "1/8", 600: "5/32", 640: "⅔",
+    720: "3/16", 800: "⅚", 840: "7/32" };
+
+  // "c. 24 · tempo 3 + 1/16": onde um tique cai no compasso (tempos de semínima).
+  function placeName(tick) {
+    const masters = state.score.masterBars;
+    let master = masters[0];
+    for (const m of masters) if (m.start <= tick) master = m;
+    const inside = tick - master.start;
+    const beat = Math.floor(inside / 960) + 1;
+    const rest = Math.round(inside % 960);
+    const part = rest ? " + " + (FRACTIONS[rest] || `${Math.round(rest / 30)}/32`) : "";
+    return `c. ${master.index + 1} · tempo ${beat}${part}`;
+  }
+
+  function noteAt(event) {
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!lookup) return null;
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    const x = (event.clientX - surface.left) / zoomStretch();
+    const y = event.clientY - surface.top;
+    const beat = lookup.getBeatAtPos(x, y);
+    return beat ? lookup.getNoteAtPos(beat, x, y) : null;
+  }
+
+  sheet.addEventListener("pointerdown", (event) => {
+    if (!state.editing || state.page || event.shiftKey || event.button !== 0) return;
+    if (event.target.closest(".duration")) return;
+    const note = noteAt(event);
+    if (!note) return;
+    const span = edit.span(note);
+    if (!span) return;
+    state.noteDrag = { path: edit.pathOf(note), span, from: event.clientX, moved: false, target: span.start };
+    try {
+      sheet.setPointerCapture(event.pointerId);
+    } catch {
+      // Sem captura, o arrasto vale enquanto o ponteiro fica sobre a pauta.
+    }
+  });
+
+  sheet.addEventListener("pointermove", (event) => {
+    const drag = state.noteDrag;
+    if (!drag) return;
+    if (!drag.moved && Math.abs(event.clientX - drag.from) < 4) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      // A nota arrastada fica escolhida (o contorno dela é o ponto de partida do tracejado).
+      state.selected = drag.path;
+      drawSelection();
+      postSelection();
+    }
+    const grid = event.altKey ? 120 : state.grid;
+    const pxPerSecond = (state.layoutWidth / state.renderedSpan) * zoomStretch();
+    const seconds = core.tickToSeconds(state.points, drag.span.start) + (event.clientX - drag.from) / pxPerSecond;
+    drag.target = Math.max(0, snap(core.secondsToTick(state.points, seconds), grid));
+    const a = xAtSeconds(core.tickToSeconds(state.points, drag.span.start));
+    const b = xAtSeconds(core.tickToSeconds(state.points, drag.target));
+    if (a === null || b === null || selectionBox.hidden) return;
+    const stretch = zoomStretch();
+    noteGhost.hidden = false;
+    noteGhost.style.left = parseFloat(selectionBox.style.left) + (b - a) / stretch + "px";
+    noteGhost.style.top = selectionBox.style.top;
+    noteGhost.style.width = selectionBox.style.width;
+    noteGhost.style.height = selectionBox.style.height;
+    noteGhost.dataset.label = placeName(drag.target);
+  });
+
+  function endNoteDrag() {
+    const drag = state.noteDrag;
+    if (!drag) return;
+    state.noteDrag = null;
+    noteGhost.hidden = true;
+    if (!drag.moved) return;
+    state.suppressClick = true;
+    const note = edit.resolve(state.score, drag.path);
+    if (note && drag.target !== drag.span.start) {
+      retimeSelected(note, (span) => [drag.target, drag.target + (span.end - span.start)]);
+    }
+  }
+
+  sheet.addEventListener("pointerup", endNoteDrag);
+  sheet.addEventListener("pointercancel", endNoteDrag);
 
   window.tracklab = {
     load(payload) {
@@ -895,7 +1147,15 @@
         state.selected = null;
       }
       drawSelection();
+      drawDurations();
       postSelection();
+    },
+    durations(value) {
+      state.durations = Boolean(value);
+      drawDurations();
+    },
+    grid(ticks) {
+      if (Number.isFinite(ticks) && ticks > 0) state.grid = ticks;
     },
     edit(op, value) {
       try {

@@ -118,15 +118,78 @@ test("o encaixe no som da Fita: altura, bend que volta e vibrato, e a nota achad
   assert.ok(!edit.fit(alphaTab, edit.resolve(score, where), { pitch, bend: [[12, 0], [30, 4], [44, 4], [50, 0]], vibrato: true }));
   assert.ok(edit.fit(alphaTab, edit.resolve(score, where), { pitch, bend: null, vibrato: false }));
   assert.deepEqual(edit.techniquesOf(alphaTab, edit.resolve(score, where)).filter((k) => k.includes("bend") || k.includes("vibrato")), []);
-  // O trinado: a outra nota um tom acima sobrevive ao Guitar Pro; o mesmo de novo não muda; sem `trill`, sai.
+  // O trinado: a outra nota um tom acima, em fusas, sobrevive ao Guitar Pro (a velocidade numa XProperty da nota, como
+  // o Guitar Pro 8 grava); o mesmo de novo não muda; sem `trill`, sai.
   let trilled = load();
   const base = first(trilled);
-  assert.ok(edit.fit(alphaTab, base, { pitch: base.realValue, bend: null, vibrato: false, trill: base.realValue + 2 }));
+  assert.ok(edit.fit(alphaTab, base, { pitch: base.realValue, bend: null, vibrato: false, trill: base.realValue + 2, trillSpeed: 32 }));
   trilled = reread(edit.refinish(alphaTab, trilled));
   const back = edit.resolve(trilled, where);
-  assert.ok(back.isTrill && back.trillFret === back.fret + 2);
-  assert.ok(!edit.fit(alphaTab, back, { pitch: back.realValue, bend: null, vibrato: false, trill: back.realValue + 2 }));
+  assert.ok(back.isTrill && back.trillFret === back.fret + 2 && back.trillSpeed === alphaTab.model.Duration.ThirtySecond);
+  assert.ok(!edit.fit(alphaTab, back, { pitch: back.realValue, bend: null, vibrato: false, trill: back.realValue + 2, trillSpeed: 32 }));
   assert.ok(edit.fit(alphaTab, back, { pitch: back.realValue, bend: null, vibrato: false }) && !back.isTrill);
+});
+
+// A soma das figuras de cada compasso da voz 1 bate com a fórmula de compasso (nada sobra nem falta).
+function barsAreWhole(score) {
+  for (const bar of score.tracks[0].staves[0].bars) {
+    const sum = bar.voices[0].beats.reduce((total, b) => total + b.playbackDuration, 0);
+    assert.equal(Math.round(sum), bar.masterBar.calculateDuration(), `compasso ${bar.index + 1}`);
+  }
+}
+const at = (score, tick) => edit.notesOf(score.tracks[0].staves[0]).find((n) => Math.abs(n.beat.absolutePlaybackStart - tick) < 1);
+
+test("adiantar uma nota: a anterior encurta, o espaço vira pausa, o compasso fecha", () => {
+  let score = load();
+  const note = at(score, 960);
+  assert.equal(edit.nudge(alphaTab, note, -1, 240), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const moved = at(score, 720);
+  assert.ok(moved, "a nota começa uma semicolcheia antes");
+  assert.equal(moved.beat.playbackDuration, 960, "a duração fica");
+  assert.equal(at(score, 0).beat.playbackDuration, 720, "a anterior encurtou");
+  // A primeira do compasso também anda para depois: uma pausa entra antes dela.
+  let again = load();
+  assert.equal(edit.nudge(alphaTab, at(again, 0), 1, 240), true);
+  again = reread(edit.refinish(alphaTab, again));
+  barsAreWhole(again);
+  assert.ok(at(again, 240) && again.tracks[0].staves[0].bars[0].voices[0].beats[0].isRest);
+});
+
+test("atravessar a barra de compasso: a nota vira duas ligadas", () => {
+  let score = load();
+  // Abre espaço: a primeira nota do compasso 2 começa uma colcheia depois.
+  const second = at(score, 3840);
+  const where = edit.span(second);
+  assert.equal(edit.retime(alphaTab, second, where.start + 480, where.end), true);
+  score = edit.refinish(alphaTab, score);
+  // A última do compasso 1 passa da barra até lá.
+  const last = at(score, 2880);
+  assert.equal(edit.retime(alphaTab, last, 2880, 3840 + 480), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const head = at(score, 2880);
+  const tied = score.tracks[0].staves[0].bars[1].voices[0].beats[0].notes[0];
+  assert.ok(tied && tied.isTieDestination && tied.fret === head.fret, "a continuação no compasso 2 é ligada");
+  assert.deepEqual(edit.span(head), { start: 2880, end: 4320 });
+});
+
+test("tercinas quando a grade pede", () => {
+  let score = load();
+  const note = at(score, 0);
+  assert.equal(edit.retime(alphaTab, note, 0, 320), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const beat = at(score, 0).beat;
+  assert.equal(beat.tupletNumerator, 3);
+  assert.equal(edit.figureName(320), "tercina de colcheias");
+});
+
+test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
+  const score = load();
+  assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");
+  assert.equal(edit.retime(alphaTab, at(score, 960), 960, 970), "short");
 });
 
 console.log(`${passed} verificações passaram`);

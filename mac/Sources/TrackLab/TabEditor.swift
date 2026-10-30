@@ -7,6 +7,7 @@ import TrackLabCore
 ///
 ///     0–9           casa (dois dígitos em 0,6 s: 10–24)      ↑ ↓   outra corda, mesma altura
 ///     ⌥↑ ⌥↓         meio tom                                  ← →   nota anterior / seguinte
+///     ⌥← ⌥→         a nota um passo da grade mais cedo / mais tarde   D   as barras de duração
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
@@ -76,16 +77,17 @@ struct TabEditBar: View {
                      ?? "Clique numa nota da TAB")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 150, alignment: .leading)
-                // O que o som fez nela (com o espectro, que mede as curvas).
-                if let sound = model.soundSummary {
-                    Text(sound)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color(red: 1, green: 138 / 255, blue: 61 / 255))
-                        .lineLimit(1)
-                        .fixedSize()
-                }
+                // O que o som fez nela (com o espectro, que mede as curvas). A linha fica sempre lá, vazia sem nota, e
+                // a coluna tem largura fixa: escolher uma nota não mexe na altura nem na largura da barra.
+                let sound = model.soundSummary
+                Text(sound ?? " ")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color(red: 1, green: 138 / 255, blue: 61 / 255))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(sound ?? "")
             }
+            .frame(width: 250, alignment: .leading)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(Self.groups, id: \.name) { group in
@@ -117,6 +119,35 @@ struct TabEditBar: View {
                     .foregroundStyle(.secondary)
                 Button { model.nextSuspect(1) } label: { Image(systemName: "chevron.right") }
                     .help("Tab: a nota suspeita seguinte (o som discorda da escrita: altura, bend, trinado)")
+            }
+            .fixedSize()
+            // O tempo das notas: as barras de duração embaixo delas (D) e a grade do arrasto e do ⌥← ⌥→.
+            HStack(spacing: 4) {
+                Toggle(isOn: Binding(get: { model.showDurations }, set: { model.showDurations = $0 })) {
+                    Label("Durações", systemImage: "ruler")
+                }
+                .toggleStyle(.button)
+                .help("D: uma barra embaixo de cada nota, do tamanho do som; arraste o meio para mover no tempo, as pontas "
+                      + "para mudar o começo ou o fim (passa da barra de compasso com ligadura). Com ⌥, na grade de 1/32.")
+                Picker("Grade", selection: Binding(get: { model.gridTicks }, set: { model.gridTicks = $0 })) {
+                    ForEach(SongModel.grids, id: \.ticks) { grid in Text(grid.name).tag(grid.ticks) }
+                }
+                .labelsHidden()
+                .fixedSize()
+                .help("Onde as notas podem cair ao mudar de tempo: arrastar o número da nota na TAB, as barras de duração, ⌥← ⌥→ "
+                      + "e o arrasto lateral na Lente param nas posições desta grade, contadas do começo do compasso "
+                      + "(1/16: a cada semicolcheia; tercina de 1/8: a cada terço de tempo). Com ⌥, 1/32.")
+            }
+            .fixedSize()
+            HStack(spacing: 2) {
+                Button { model.tabEdit("undo") } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(!model.canUndoTab)
+                    .help("Desfazer a última mudança na TAB (⌘Z)")
+                    .accessibilityLabel("Desfazer")
+                Button { model.tabEdit("redo") } label: { Image(systemName: "arrow.uturn.forward") }
+                    .disabled(!model.canRedoTab)
+                    .help("Refazer (⇧⌘Z)")
+                    .accessibilityLabel("Refazer")
             }
             .fixedSize()
             Button("Encaixar no som") { model.fitToSound() }
@@ -185,8 +216,8 @@ struct TabEditKeys: NSViewRepresentable {
             switch event.keyCode {
             case 126: model.tabEdit(option ? "transpose" : "string", 1); return true      // ↑
             case 125: model.tabEdit(option ? "transpose" : "string", -1); return true     // ↓
-            case 123: model.tabEdit("nav", -1); return true                               // ←
-            case 124: model.tabEdit("nav", 1); return true                                // →
+            case 123: if option { model.shiftSelected(-1) } else { model.tabEdit("nav", -1) }; return true  // ←, ⌥←
+            case 124: if option { model.shiftSelected(1) } else { model.tabEdit("nav", 1) }; return true    // →, ⌥→
             case 51, 117: model.tabEdit("delete"); return true                            // ⌫, Delete
             case 53:                                                                      // Esc
                 if model.tabSelection == nil { model.editingTab = false } else { model.tabEdit("clear") }
@@ -218,6 +249,7 @@ struct TabEditKeys: NSViewRepresentable {
             case "r": model.toggleTechnique("let-ring")
             case "p": model.cycleTechnique(["pick-down", "pick-up"])
             case "f": model.fitToSound()
+            case "d": model.showDurations.toggle()
             default: return false
             }
             return true

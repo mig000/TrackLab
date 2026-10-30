@@ -10,6 +10,14 @@ public struct CurveFit: Hashable, Sendable {
         public let high: Int
         /// Segundos entre os saltos (a mediana).
         public let gap: Double
+
+        /// A figura de cada troca no Guitar Pro (8, 16, 32 ou 64: colcheia a semifusa), com a semínima de
+        /// `beatSeconds`: a mais perto de quantas trocas cabem na semínima.
+        public func speed(beatSeconds: Double) -> Int {
+            guard gap > 0, beatSeconds > 0 else { return 16 }
+            let value = 4 * beatSeconds / gap
+            return [8, 16, 32, 64].min { abs(log2(Double($0) / value)) < abs(log2(Double($1) / value)) } ?? 16
+        }
     }
 
     public let base: Int

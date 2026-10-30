@@ -20,7 +20,7 @@ struct FitaView: View {
     /// No Ajuste: a batida que está sendo arrastada e para onde vai.
     @Local private var held: (point: TempoPoint, to: Double)?
     /// No espectro: a nota pega na faixa e quantos semitons ela já andou.
-    @Local private var grabbed: (note: ScoreNote, track: Int, semitones: Int)?
+    @Local private var grabbed: (note: ScoreNote, track: Int, semitones: Int, steps: Int)?
     @Environment(\.colorScheme) private var scheme
 
     /// A aparência clara (papel): a Lente em tinta, as marcas por cima escuras.
@@ -98,14 +98,24 @@ struct FitaView: View {
                     if model.adjusting, let point = model.grid.beat(near: at, within: Self.grab / max(width, 1) * span) {
                         held = (point, point.seconds)
                     } else if !model.adjusting, let hit = noteAt(value.startLocation, size: size, start: start) {
-                        grabbed = (hit.note, hit.track, 0)
+                        grabbed = (hit.note, hit.track, 0, 0)
                     }
                 }
                 if let grabbed {
-                    // Para cima ou para baixo, de semitom em semitom (a faixa acompanha).
+                    // Para cima ou para baixo, de semitom em semitom; para os lados, de semicolcheia em semicolcheia
+                    // (o eixo em que o mouse andou mais). A faixa acompanha.
                     let window = model.pitchWindow.range
                     let semitone = (size.height - stripHeight) / (window.upperBound - window.lowerBound)
-                    self.grabbed?.semitones = Int((-value.translation.height / max(1, semitone)).rounded())
+                    if abs(value.translation.width) > abs(value.translation.height) {
+                        let step = model.grid.seconds(at: grabbed.note.tick + Double(model.gridTicks))
+                            - model.grid.seconds(at: grabbed.note.tick)
+                        let seconds = value.translation.width / max(width, 1) * span
+                        self.grabbed?.steps = Int((seconds / max(0.01, step)).rounded())
+                        self.grabbed?.semitones = 0
+                    } else {
+                        self.grabbed?.semitones = Int((-value.translation.height / max(1, semitone)).rounded())
+                        self.grabbed?.steps = 0
+                    }
                     return
                 }
                 if let held {
@@ -127,7 +137,9 @@ struct FitaView: View {
                 if let window = NSApp.keyWindow, window.firstResponder is NSText { window.makeFirstResponder(nil) }
                 if let grabbed {
                     // Clique numa faixa: escolhe a nota (e liga a edição); arrastada, muda a altura e encaixa no som.
-                    if grabbed.semitones == 0 {
+                    if grabbed.steps != 0 {
+                        model.shiftNote(grabbed.note, track: grabbed.track, steps: grabbed.steps)
+                    } else if grabbed.semitones == 0 {
                         if hypot(value.translation.width, value.translation.height) <= 3 {
                             model.selectNote(grabbed.note, track: grabbed.track)
                         }
@@ -344,6 +356,17 @@ struct FitaView: View {
                                    style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     context.draw(Text(SongModel.pitchName(note.pitch + Int(lift))).font(.caption.weight(.semibold))
                         .foregroundStyle(color), at: CGPoint(x: x1 + 6, y: centers[0].y), anchor: .leading)
+                }
+                // Arrastada para os lados: para onde vai, tracejada, e quantas semicolcheias.
+                let slide = grabbed.map { $0.track == track && $0.note == note ? $0.steps : 0 } ?? 0
+                if slide != 0 {
+                    let step = model.grid.seconds(at: note.tick + Double(model.gridTicks)) - s0
+                    let dx = Double(slide) * step / span * width
+                    context.stroke(band.offsetBy(dx: dx, dy: 0), with: .color(color),
+                                   style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                    context.draw(Text("\(slide > 0 ? "+" : "−")\(abs(slide)) × \(SongModel.grids.first { $0.ticks == model.gridTicks }?.name ?? "")")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(color), at: CGPoint(x: x1 + dx + 6, y: centers[0].y), anchor: .leading)
                 }
                 // Suspeita (o som discorda da escrita): contorno vermelho e um ponto sobre o ataque.
                 if let sound, !sound.disagreements(with: note).isEmpty {

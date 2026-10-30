@@ -147,3 +147,65 @@ body.page #sheet {
   z-index: 3;
   will-change: transform;
 }
+
+/* As barras de duração (na edição, com "Durações" ligado): o som de cada nota embaixo dela, na escala da Fita. O meio
+   move, as pontas mudam o começo ou o fim. */
+#durations {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.duration {
+  position: absolute;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--duration, rgba(214, 140, 20, 0.55));
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.duration::before,
+.duration::after {
+  content: "";
+}
+
+.duration.chosen {
+  background: var(--cursor);
+  box-shadow: 0 0 0 1px var(--cursor);
+}
+
+.duration.dragging {
+  cursor: grabbing;
+  background: var(--cursor);
+}
+
+.duration.dragging::after {
+  content: attr(data-label);
+  position: absolute;
+  top: 7px;
+  left: 0;
+  white-space: nowrap;
+  font: 600 11px -apple-system, system-ui, sans-serif;
+  color: var(--cursor);
+}
+
+/* A nota sendo arrastada na TAB: onde ela vai cair (tracejado) e em que compasso e tempo. */
+#note-ghost {
+  position: absolute;
+  border: 2px dashed var(--cursor);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+#note-ghost::after {
+  content: attr(data-label);
+  position: absolute;
+  top: -18px;
+  left: 0;
+  white-space: nowrap;
+  font: 600 11px -apple-system, system-ui, sans-serif;
+  color: var(--cursor);
+}

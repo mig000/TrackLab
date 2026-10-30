@@ -21029,7 +21029,23 @@
 		_parseNote(node) {
 			const note = new Note();
 			const noteId = node.getAttribute("id");
+			// TrackLab: a velocidade do trinado vem numa XProperty da nota (688062467: a duração de cada troca, a 240
+			// por semínima; 30 é fusa), que o alphaTab ignorava (o trinado voltava sempre em semicolcheias).
+			let trillTicks = 0;
+			const trillSpeedOf = (ticks) => {
+				const value = 960 / ticks;
+				return [Duration.Eighth, Duration.Sixteenth, Duration.ThirtySecond, Duration.SixtyFourth]
+					.reduce((best, d) => Math.abs(Math.log2(d / value)) < Math.abs(Math.log2(best / value)) ? d : best);
+			};
 			for (const c of node.childElements()) switch (c.localName) {
+				case "XProperties":
+					for (const x of c.childElements()) {
+						if (x.localName === "XProperty" && x.getAttribute("id") === "688062467") {
+							trillTicks = GpifParser._parseIntSafe(x.findChildElement("Int")?.innerText, 0);
+							if (trillTicks > 0) note.trillSpeed = trillSpeedOf(trillTicks);
+						}
+					}
+					break;
 				case "Properties":
 					this._parseNoteProperties(c, note, noteId);
 					break;
@@ -21041,7 +21057,7 @@
 					break;
 				case "Trill":
 					note.trillValue = GpifParser._parseIntSafe(c.innerText, -1);
-					note.trillSpeed = Duration.Sixteenth;
+					note.trillSpeed = trillTicks > 0 ? trillSpeedOf(trillTicks) : Duration.Sixteenth;
 					break;
 				case "Accent":
 					const accentFlags = GpifParser._parseIntSafe(c.innerText, 0);
@@ -66553,7 +66569,11 @@
 			this._writeNoteProperties(noteNode, note);
 			if (note.isGhost) noteNode.addElement("AntiAccent").innerText = "normal";
 			if (note.isLetRing) noteNode.addElement("LetRing");
-			if (note.isTrill) noteNode.addElement("Trill").innerText = note.trillValue.toString();
+			if (note.isTrill) {
+				noteNode.addElement("Trill").innerText = note.trillValue.toString();
+				// TrackLab: a velocidade do trinado, como o Guitar Pro guarda (a duração de cada troca, a 240 por semínima).
+				this._writeSimpleXPropertyNode(noteNode.addElement("XProperties"), "688062467", "Int", String(Math.round(960 / note.trillSpeed)));
+			}
 			let accentFlags = 0;
 			if (note.isStaccato) accentFlags |= 1;
 			switch (note.accentuated) {

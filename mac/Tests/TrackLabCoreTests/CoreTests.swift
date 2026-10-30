@@ -484,3 +484,10 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
                         library: "Rock Band/Deep Purple - Highway Star")
     #expect(mogg.label == "Multitrack .mogg" && loose.label == "Multitrack")
 }
+
+@Test func velocidadeDoTrinado() {
+    // Semínima de 0,5 s (120 bpm): trocas a cada 62,5 ms são fusas; a cada 125 ms, semicolcheias.
+    #expect(CurveFit.Trill(low: 60, high: 62, gap: 0.0625).speed(beatSeconds: 0.5) == 32)
+    #expect(CurveFit.Trill(low: 60, high: 62, gap: 0.125).speed(beatSeconds: 0.5) == 16)
+    #expect(CurveFit.Trill(low: 60, high: 62, gap: 0.04).speed(beatSeconds: 0.5) == 64)
+}
