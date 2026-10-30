@@ -296,9 +296,12 @@ public struct TabSelection: Hashable, Sendable {
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.
-    public var pitchName: String {
+    public var pitchName: String { Self.name(pitch) }
+
+    /// O nome de uma altura MIDI ("Sol 3"): o da paleta e o das mensagens do espectro.
+    public static func name(_ midi: Int) -> String {
         let names = ["Dó", "Dó♯", "Ré", "Mi♭", "Mi", "Fá", "Fá♯", "Sol", "Lá♭", "Lá", "Si♭", "Si"]
-        return "\(names[((pitch % 12) + 12) % 12]) \(pitch / 12 - 1)"
+        return "\(names[((midi % 12) + 12) % 12]) \(midi / 12 - 1)"
     }
 }
 

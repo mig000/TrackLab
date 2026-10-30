@@ -30,10 +30,14 @@ _cache: dict[str, np.ndarray] = {}
 
 
 def samples(path: Path) -> np.ndarray:
-    """O áudio mono a 22 050 Hz, guardado na memória (um arquivo por vez: as notas da tela pedem aos poucos)."""
+    """O áudio mono a 22 050 Hz, guardado na memória: os três últimos arquivos (a pista e a segunda pista da tela
+    podem estar em faixas diferentes, a guitarra e o baixo, e pedem alternadas)."""
     key = str(path)
-    if key not in _cache:
-        _cache.clear()
+    if key in _cache:
+        _cache[key] = _cache.pop(key)
+    else:
+        while len(_cache) >= 3:
+            _cache.pop(next(iter(_cache)))
         _cache[key] = align.decode(path, RATE, channels=1)[:, 0].astype(np.float64)
     return _cache[key]
 

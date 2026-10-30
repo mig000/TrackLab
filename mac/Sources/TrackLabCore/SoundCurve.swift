@@ -360,3 +360,42 @@ public enum RecordingTuning {
         return SoundNote.percentile(deviations, 0.5)
     }
 }
+
+/// O que o som fez numa nota, para a linha da nota escolhida: a altura (o semitom e os cents, no meio da nota), o bend
+/// que soou (e quanto do escrito ele alcança), a largura do vibrato e o trinado.
+public struct SoundReport: Hashable, Sendable {
+    public let pitch: Int
+    public let cents: Int
+    /// O bend que soa, em quartos de tom (0: o som não dobra).
+    public let bend: Int
+    /// Quanto do bend escrito o som alcança, em %; nil sem bend escrito.
+    public let reached: Int?
+    /// A meia oscilação do vibrato, em cents; nil sem vibrato.
+    public let vibrato: Int?
+    public let trill: CurveFit.Trill?
+}
+
+extension SoundNote {
+    /// A mediana do meio da nota (sem o primeiro e o último quarto): a altura em que ela fica.
+    public func middle(start: Double, end: Double) -> Double? {
+        let length = end - start
+        var values: [Double] = []
+        for (k, value) in curve.values.enumerated() {
+            let t = curve.from + Double(k) * curve.hop
+            if let value, t >= start + 0.25 * length, t <= end - 0.25 * length { values.append(value) }
+        }
+        return values.count >= 3 ? SoundNote.percentile(values, 0.5) : nil
+    }
+
+    /// nil sem altura clara ou numa nota de acorde (a curva mistura as cordas).
+    public func report(for note: ScoreNote, start: Double, end: Double) -> SoundReport? {
+        guard !chord, let fit else { return nil }
+        let written = note.bend.map(\.value).max() ?? 0
+        // Com bend, o meio da nota já subiu: a altura é a de partida.
+        let held = fit.quarterTones > 0 ? fit.low : (middle(start: start, end: end) ?? fit.low)
+        return SoundReport(pitch: fit.base, cents: Int(((held - Double(fit.base)) * 100).rounded()),
+                           bend: fit.quarterTones,
+                           reached: written > 0 ? Int((max(0, fit.rise) / (written / 2) * 100).rounded()) : nil,
+                           vibrato: fit.vibrato ? Int((fit.depth * 100).rounded()) : nil, trill: fit.trill)
+    }
+}

@@ -68,7 +68,7 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
   `peaks/spectrum-<faixa>-v<VERSION>.u8` (a v1 pegava a raia de baixo e a nota subia até um semitom na imagem) (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos.
 - Altura do som (`media/pitch.py`, `POST songs/{id}/pitch` com as notas da tela): a curva a cada 8 ms em cada nota,
-  na guitarra da separação ativa, pela receita da Lente do TabLab (`trackPitch`: correlação normalizada em volta da
+  na faixa da separação ativa onde a pista soa (`stem`; a guitarra se não vier), pela receita da Lente do TabLab (`trackPitch`: correlação normalizada em volta da
   altura escrita, de −2 a +4 semitons; `trackHarmonics` quando outra corda soa junto; mediana de 5). Conferido contra o
   `lens-core.js` original no mesmo sinal (mesmo resultado); 30 notas reais em 0,24 s.
 - Partitura editada (`PUT songs/{id}/score`, o Guitar Pro 7 no corpo): `score/edited.gp`, as anteriores em
@@ -166,7 +166,13 @@ edição (`TabEditKeys`) fica na tela da música. Sunshine (lead): 56 de 1.657 n
 Afinação da gravação (`RecordingTuning`): a mediana do desvio do meio das notas paradas (sem bend escrito, fora de
 acorde, a menos de 0,6 semitom), com ao menos 20 notas, refeita quando a pista termina de ser medida. O app guarda as
 curvas como vieram e desconta a afinação delas (pontos, faixas, F, arrastar, suspeitas) e desce o espectro o mesmo
-tanto; a Fita mostra "gravação +17 cents" no canto a partir de 5 cents. Medido em 30/10: Sunshine +17, White Room +5. Mover a nota no tempo, que a
+tanto; a Fita mostra "gravação +17 cents" no canto a partir de 5 cents. Medido em 30/10: Sunshine +17, White Room +5.
+Cada pista é medida na faixa onde soa (`Stem.pitchSource`, pelo nome da pista: voz, baixo, teclado, a Base se a
+separação a tem, senão a guitarra; a bateria não é medida): `POST songs/{id}/pitch` leva `stem`, o motor guarda as três
+últimas faixas decodificadas, a chave da curva leva a separação ativa e o espectro segue a faixa da pista escolhida (os
+dois últimos ficam guardados). Na barra de edição, embaixo da nota escolhida, o que o som fez (`SoundReport`): "Soou
+Dó♯ 3 +8 cents · bend ¼, não escrito", o bend em % do escrito ou "não dobrou", a largura do vibrato, o trinado. As
+mensagens do espectro usam os nomes da paleta ("Sol 3", `TabSelection.name`). Mover a nota no tempo, que a
 Lente fazia em segundos, aqui seria mudar o ritmo do Guitar Pro: ficou de fora.
 Em cima do espectro, uma faixa estreita com a onda. Desenho na GPU (medido no iMac: de 4 para 60 quadros/s no espectro):
 a imagem fica em ladrilhos de CALayer enviados à placa uma vez (`SpectrumLayerView`; a cada quadro só muda a

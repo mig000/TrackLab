@@ -77,6 +77,14 @@ struct TabEditBar: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(minWidth: 150, alignment: .leading)
+                // O que o som fez nela (com o espectro, que mede as curvas).
+                if let sound = model.soundSummary {
+                    Text(sound)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color(red: 1, green: 138 / 255, blue: 61 / 255))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {

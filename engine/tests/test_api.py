@@ -53,6 +53,12 @@ def test_import_then_read_everything_back(client):
     guitar = client.get(f"/api/songs/{song_id}/peaks", params={"stem": "guitar"}).json()
     assert max(guitar["max"]) == pytest.approx(max(wave["max"]) * 0.5, abs=1e-3)
     assert client.get(f"/api/songs/{song_id}/peaks", params={"stem": "nada"}).status_code == 404
+    # A altura do som na faixa pedida (o baixo para a pista do baixo); uma faixa que não existe é recusada.
+    note = {"key": "n", "start": 0.5, "end": 1.0, "pitch": 45}
+    for stem in (None, "guitar", "bass"):
+        body = {"notes": [note]} | ({"stem": stem} if stem else {})
+        assert set(client.post(f"/api/songs/{song_id}/pitch", json=body).json()["curves"]) == {"n"}
+    assert client.post(f"/api/songs/{song_id}/pitch", json={"notes": [note], "stem": "nada"}).status_code == 404
     for bad in ("manifest.json", "../../x", "score/nada.gp"):
         assert client.get(f"/api/songs/{song_id}/files/{bad}").status_code in (400, 404)
     events = client.get(f"/api/jobs/{job['id']}/events").text

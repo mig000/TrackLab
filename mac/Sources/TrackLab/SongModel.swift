@@ -31,6 +31,7 @@ final class SongModel {
             if scoreSecond == scoreTrack { scoreSecond = nil }
             bridge.showTrack(scoreTrack)
             measureLater()
+            Task { await loadSpectrum() }
         }
     }
     /// Uma segunda pista embaixo da principal (a base, o baixo, a bateria…), nos mesmos compassos.
@@ -90,7 +91,7 @@ final class SongModel {
 
     var fitaMode = FitaMode.wave {
         didSet {
-            if fitaMode == .spectrum, spectrum == nil { Task { await loadSpectrum() } }
+            if fitaMode == .spectrum { Task { await loadSpectrum() } }
             measureLater()
         }
     }
@@ -162,6 +163,7 @@ final class SongModel {
         bridge.onLoaded = { [weak self] tracks, ticks, markers, notes in
             guard let self else { return }
             scoreTracks = tracks
+            Task { await self.loadSpectrum() }
             grid = TempoGrid(points: grid.points, barTicks: ticks)
             self.markers = markers
             scoreNotes = notes
@@ -293,12 +295,24 @@ final class SongModel {
     /// A chave da curva de uma nota: a pista, o tique, a corda, a altura, a duração e o segundo (o mapa novo ou a
     /// nota editada pedem de novo: a busca é em volta da altura escrita).
     func curveKey(_ note: ScoreNote, track: Int) -> String {
-        "\(track):\(Int(note.tick)):\(note.string):\(note.pitch):\(Int(note.duration)):"
+        "\(detail?.activeStems ?? ""):\(track):\(Int(note.tick)):\(note.string):\(note.pitch):\(Int(note.duration)):"
             + "\(Int((grid.seconds(at: note.tick) * 100).rounded()))"
+    }
+
+    /// A faixa da separação ativa onde a pista soa (`Stem.pitchSource`: o baixo no baixo, a base na Base…), para a
+    /// altura das notas e o espectro; nil sem separação (o motor usa o original). `measured` diz se a pista tem altura
+    /// (a bateria não).
+    func pitchStem(track: Int) -> (stem: String?, measured: Bool) {
+        let name = scoreTracks.first { $0.index == track }?.name ?? ""
+        let available = Set(detail?.active?.files.keys.map { $0 } ?? [])
+        guard let wanted = Stem.pitchSource(forTrack: name, available: available) else { return (nil, false) }
+        if available.contains(wanted.rawValue) { return (wanted.rawValue, true) }
+        return (available.contains(Stem.guitar.rawValue) ? Stem.guitar.rawValue : nil, true)
     }
 
     /// Pede ao motor as curvas das notas que aparecem e ainda não têm (de fora do desenho: a Fita chama no quadro).
     func askCurves(_ notes: [ScoreNote], track: Int) {
+        guard pitchStem(track: track).measured else { return }
         let batch = Array(notes.filter { !curvesAsked.contains(curveKey($0, track: track)) }.prefix(120))
         guard !batch.isEmpty else { return }
         batch.forEach { curvesAsked.insert(curveKey($0, track: track)) }
@@ -320,7 +334,8 @@ final class SongModel {
             for note in scoreNotes[track] where ticks.contains(note.tick) { count[note.tick, default: 0] += 1 }
         }
         let chords = Set(batch.filter { (count[$0.tick] ?? 0) > 1 }.map { curveKey($0, track: track) })
-        guard let curves = try? await Backend.shared.pitchCurves(id, notes: list) else { return }
+        guard let curves = try? await Backend.shared.pitchCurves(id, notes: list, stem: pitchStem(track: track).stem)
+        else { return }
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
@@ -376,7 +391,8 @@ final class SongModel {
             guard let self, !Task.isCancelled else { return }
             measuring = true
             defer { measuring = false }
-            for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? []) where scoreNotes.indices.contains(track) {
+            for track in [scoreTrack] + (scoreSecond.map { [$0] } ?? [])
+            where scoreNotes.indices.contains(track) && pitchStem(track: track).measured {
                 while !Task.isCancelled {
                     let batch = Array(scoreNotes[track].filter { !self.curvesAsked.contains(self.curveKey($0, track: track)) }
                         .prefix(120))
@@ -393,22 +409,40 @@ final class SongModel {
     /// Medindo as curvas da pista inteira (as suspeitas ainda podem aumentar).
     private(set) var measuring = false
 
+    /// O espectro da faixa onde a pista escolhida soa (a da guitarra para a bateria), feito uma vez por faixa: trocar
+    /// de pista ou de separação troca a imagem; as duas últimas ficam guardadas.
     func loadSpectrum() async {
-        guard let detail else { return }
+        guard let detail, fitaMode == .spectrum else { return }
+        let stem = pitchStem(track: scoreTrack).stem
+            ?? (detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil)
+        let key = "\(detail.activeStems ?? "")/\(stem ?? "original")"
+        guard key != spectrumKey else { return }
+        spectrumKey = key
+        if let kept = spectra[key] {
+            spectrumImage = kept.image
+            spectrum = kept.spectrum
+            return
+        }
         spectrumMessage = "Calculando o espectro…"
         do {
-            let stem = detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil
             guard let found = try await Backend.shared.spectrum(id, stem: stem) else {
                 spectrumMessage = "Esta música não tem áudio para o espectro."
                 return
             }
-            spectrumImage = await SpectrumPalette.image(found)
+            let image = await SpectrumPalette.image(found)
+            guard spectrumKey == key else { return }
+            if spectra.count >= 2 { spectra.removeAll() }
+            if let image { spectra[key] = (found, image) }
+            spectrumImage = image
             spectrum = found
             spectrumMessage = nil
         } catch {
             spectrumMessage = error.localizedDescription
         }
     }
+
+    @ObservationIgnored private var spectrumKey: String?
+    @ObservationIgnored private var spectra: [String: (spectrum: Spectrum, image: CGImage)] = [:]
 
     // MARK: - Mixer
 
@@ -814,6 +848,32 @@ final class SongModel {
         .joined(separator: ", ")
     }
 
+    /// O que o som fez na nota escolhida, em palavras (a linha embaixo da escolha na barra de edição): "soou D4 +12
+    /// cents · bend 1 tom, 90 % do escrito · vibrato de 25 cents". Com a afinação da gravação já descontada.
+    var soundSummary: String? {
+        guard let (note, track) = selectedScoreNote() else { return nil }
+        guard pitchStem(track: track).measured else { return nil }
+        // Sem o espectro as curvas não são medidas: nada a dizer.
+        guard let sound = soundNotes[curveKey(note, track: track)] else { return fitaMode == .spectrum ? "Medindo o som…" : nil }
+        if sound.chord { return "Nota de acorde: o som mistura as cordas." }
+        let start = grid.seconds(at: note.tick)
+        guard let report = sound.report(for: note, start: start, end: grid.seconds(at: note.tick + note.duration)) else {
+            return "O som não tem uma altura clara."
+        }
+        if let trill = report.trill { return "Trinado \(Self.pitchName(trill.low))⇄\(Self.pitchName(trill.high))" }
+        var parts = ["Soou \(Self.pitchName(report.pitch))"
+                     + (abs(report.cents) >= 5 ? " \(report.cents > 0 ? "+" : "−")\(abs(report.cents)) cents" : "")]
+        let written = Int(note.bend.map(\.value).max() ?? 0)
+        if report.bend > 0 {
+            parts.append("bend \(Self.bendName(report.bend))"
+                         + (report.reached.map { ", \($0) % do escrito" } ?? ", não escrito"))
+        } else if written > 0 {
+            parts.append("não dobrou (escrito: \(Self.bendName(written)))")
+        }
+        if let vibrato = report.vibrato { parts.append("vibrato de \(vibrato) cents") }
+        return parts.joined(separator: " · ")
+    }
+
     /// F: encaixa a nota escolhida no som (a altura medida, o bend que ele faz e o vibrato), como o Encaixar da Lente.
     func fitToSound() {
         guard editingTab, let (note, track) = selectedScoreNote() else { return }
@@ -838,7 +898,8 @@ final class SongModel {
         let end = grid.seconds(at: note.tick + note.duration)
         Task {
             let key = "drag"
-            let curves = try? await Backend.shared.pitchCurves(id, notes: [(key, start, end, pitch)])
+            let curves = try? await Backend.shared.pitchCurves(id, notes: [(key, start, end, pitch)],
+                                                              stem: pitchStem(track: track).stem)
             let chord = scoreNotes.indices.contains(track)
                 && scoreNotes[track].contains { $0.tick == note.tick && $0.string != note.string }
             let fit = curves?[key].map {
@@ -880,8 +941,7 @@ final class SongModel {
     }
 
     static func pitchName(_ midi: Int) -> String {
-        let names = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"]
-        return names[((midi % 12) + 12) % 12] + String(midi / 12 - 1)
+        TabSelection.name(midi)
     }
 
     static func bendName(_ quarterTones: Int) -> String {
@@ -979,6 +1039,8 @@ final class SongModel {
             if wasPlaying { engine.play() }
             compareKey = previous
             await loadGuitarPeaks(fresh)
+            await loadSpectrum()
+            measureLater()
         } catch {
             notice = error.localizedDescription
         }
@@ -1051,6 +1113,8 @@ final class SongModel {
                 if previous?.activeStems != fresh.activeStems {
                     try loadAudio(fresh, keepMix: false)
                     await loadGuitarPeaks(fresh)
+                    await loadSpectrum()
+                    measureLater()
                 } else if let added = fresh.stemKeys.first(where: { previous?.stems[$0] == nil }) {
                     compareKey = added
                     notice = "\(fresh.stems[added]?.label ?? request.label) pronta: compare com A/B (B)."

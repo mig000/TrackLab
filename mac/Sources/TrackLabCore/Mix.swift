@@ -155,3 +155,19 @@ public enum LoopView {
         return length <= span * (1 - playheadAt) ? loop.lowerBound - span * playheadAt : loop.lowerBound - (span - length) / 2
     }
 }
+
+extension Stem {
+    /// A faixa em que uma pista da partitura soa, pelo nome (o Songsterr junta músico, instrumento e papel: "Jack
+    /// Bruce | Gibson EB-3 | Bass"): a voz, o baixo, o teclado, a base ou a guitarra; nil para a bateria, que não tem
+    /// altura. A base só se a separação tem a faixa (`available`); senão, a guitarra, que tem as duas.
+    public static func pitchSource(forTrack name: String, available: Set<String>) -> Stem? {
+        let text = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).lowercased()
+        func has(_ words: String...) -> Bool { words.contains { text.contains($0) } }
+        if has("drum", "bateria", "percuss") { return nil }
+        if has("vocal", "voz", "voice", "vox") { return .vocals }
+        if has("bass", "baixo") { return .bass }
+        if has("piano", "keys", "keyboard", "teclado", "organ", "orgao", "synth") { return .piano }
+        if has("rhythm", "ritmo", "base"), available.contains(Stem.rhythm.rawValue) { return .rhythm }
+        return .guitar
+    }
+}

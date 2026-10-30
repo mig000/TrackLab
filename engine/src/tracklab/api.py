@@ -270,13 +270,17 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
     @app.post("/api/songs/{song_id}/pitch")
     def song_pitch(song_id: str, body: dict = Body(...)) -> dict:
         """A curva de altura do som em cada nota pedida (`notes`: [{key, start, end, pitch}], até 200, cada uma até
-        8 s), na guitarra da separação ativa (ou no original): `{curves: {key: {from, hop, values}}}`."""
+        8 s), na faixa `stem` da separação ativa (a guitarra se não vier; o baixo para a pista do baixo, a base para a
+        guitarra base…), ou no original sem separação: `{curves: {key: {from, hop, values}}}`."""
         from .media import pitch as pitch_media
 
         found = song(song_id)
         manifest = found.manifest
-        guitar = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {}).get("guitar")
-        relative = guitar or (manifest.get("audio") or {}).get("file")
+        files = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {})
+        stem = body.get("stem")
+        if stem is not None and stem not in files:
+            raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
+        relative = files.get(stem or "guitar") or (manifest.get("audio") or {}).get("file")
         if not relative:
             raise HTTPException(404, "Esta música não tem áudio.")
         notes = body.get("notes")

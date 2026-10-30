@@ -409,3 +409,32 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     let curve = samples[0].curve.shifted(by: -tuning)
     #expect(abs((curve.values.last ?? 0)! - 50) < 0.01)
 }
+
+@Test func faixaDeCadaPista() {
+    let six: Set<String> = ["guitar", "bass", "drums", "vocals", "piano", "other"]
+    #expect(Stem.pitchSource(forTrack: "Jack Bruce | Gibson EB-3 | Bass", available: six) == .bass)
+    #expect(Stem.pitchSource(forTrack: "Jack Bruce & Eric Clapton | Lead & Backing Vocals", available: six) == .vocals)
+    #expect(Stem.pitchSource(forTrack: "Ginger Baker | Ludwig Super Classic | Drums", available: six) == nil)
+    #expect(Stem.pitchSource(forTrack: "Eric Clapton | Lead Guitar", available: six) == .guitar)
+    // A base só com a faixa dela na separação (multitrack, MVSEP solo e base); senão, a guitarra.
+    #expect(Stem.pitchSource(forTrack: "Eric Clapton | Rhythm Guitar I", available: six) == .guitar)
+    #expect(Stem.pitchSource(forTrack: "Eric Clapton | Rhythm Guitar I", available: six.union(["rhythm"])) == .rhythm)
+    #expect(Stem.pitchSource(forTrack: "Órgão Hammond", available: six) == .piano)
+}
+
+@Test func oQueOSomFezNaNota() throws {
+    let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
+    // Parada 12 cents acima: Dó 4 +12, sem bend nem vibrato.
+    let held = try #require(SoundNote(curve: soundCurve(1, 2) { _ in 60.12 }, start: 1, end: 2, pitch: 60)
+        .report(for: plain, start: 1, end: 2))
+    #expect(held.pitch == 60 && held.cents == 12 && held.bend == 0 && held.reached == nil && held.vibrato == nil)
+    // Bend de um tom escrito; o som sobe 1,8 semitom: 90 % do escrito.
+    let bent = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1,
+                         bend: [.init(offset: 0, value: 0), .init(offset: 30, value: 4)])
+    let short = try #require(SoundNote(curve: soundCurve(1, 2) { $0 < 1.25 ? 60 : min(61.8, 60 + ($0 - 1.25) * 20) },
+                                       start: 1, end: 2, pitch: 60).report(for: bent, start: 1, end: 2))
+    #expect(short.bend == 4 && short.reached == 90 && short.cents == 0)
+    // Nota de acorde: nada a dizer.
+    #expect(SoundNote(curve: soundCurve(1, 2) { _ in 60 }, start: 1, end: 2, pitch: 60, chord: true)
+        .report(for: plain, start: 1, end: 2) == nil)
+}
