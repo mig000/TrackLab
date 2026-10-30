@@ -510,6 +510,48 @@
     return true;
   }
 
+  // A nota (com as ligadas e o acorde) passa a durar `ticks`, começando no mesmo lugar: mais curta, sobra pausa; mais
+  // longa, não passa do começo da seguinte ("next"). Devolve true ou o motivo, como o retime.
+  function setLength(at, note, ticks) {
+    const events = timeline(note.beat.voice.bar.staff);
+    const index = events.findIndex((e) => e.beat === note.beat || e.tail.includes(note.beat));
+    if (index < 0) return "missing";
+    const ev = events[index];
+    const next = events[index + 1];
+    const end = ev.start + Math.round(ticks);
+    if (next && end > next.start) return "next";
+    return retime(at, note, ev.start, end);
+  }
+
+  // A nota vira pausa: a batida dela sai (com o acorde e as ligadas) e o espaço fica em pausas.
+  function toRest(at, note) {
+    const staff = note.beat.voice.bar.staff;
+    const events = timeline(staff);
+    const index = events.findIndex((e) => e.beat === note.beat || e.tail.includes(note.beat));
+    if (index < 0) return "missing";
+    const ev = events[index];
+    const first = barAt(staff, ev.start);
+    const last = barAt(staff, ev.end - 1);
+    for (let b = first; b <= last; b++) {
+      if (staff.bars[b].voices[0].beats.some((x) => x.graceType !== at.model.GraceType.None)) return "grace";
+    }
+    events.splice(index, 1);
+    for (let b = first; b <= last; b++) {
+      if (!rebuildBar(at, staff.bars[b], events)) return "figure";
+    }
+    return true;
+  }
+
+  // A figura de uma duração: a base (semibreve 3840 … fusa 120), com ponto ou em tercina; null se não é uma figura só.
+  function rhythmOf(length) {
+    const ticks = Math.round(length);
+    const plain = PLAIN.find((f) => f[0] === ticks);
+    if (plain) return { base: plain[2] ? ticks / 1.5 : ticks, dots: plain[2], triplet: false };
+    const triplet = TRIPLETS.find((f) => f[0] === ticks);
+    if (triplet) return { base: ticks * 1.5, dots: 0, triplet: true };
+    return null;
+  }
+
   // Um passo de `grid` tiques (negativo: antes), mantendo a duração.
   function nudge(at, note, steps, grid) {
     const events = timeline(note.beat.voice.bar.staff);
@@ -620,9 +662,13 @@
       strings.push(alpha === note.string ? note.fret
         : fret < 0 || fret > MAX_FRET || stringBusy(note.beat, alpha, note) ? null : fret);
     }
+    const sounding = span(note);
+    const length = sounding ? sounding.end - sounding.start : note.beat.playbackDuration;
+    const rhythm = rhythmOf(length);
     return { track: staff.track.index, string: tabString(note), fret: note.fret,
       pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note),
-      figure: figureName(note.beat.playbackDuration), strings };
+      figure: figureName(length), length, base: rhythm ? rhythm.base : null, dots: rhythm ? rhythm.dots : 0,
+      triplet: rhythm ? rhythm.triplet : false, strings };
   }
 
   return {
@@ -638,7 +684,10 @@
     notesOf,
     nudge,
     retime,
+    rhythmOf,
+    setLength,
     span,
+    toRest,
     timeline,
     figureName,
     pathOf,

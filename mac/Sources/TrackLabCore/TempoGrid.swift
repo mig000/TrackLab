@@ -280,9 +280,16 @@ public struct TabSelection: Hashable, Sendable {
     /// Para cada corda da TAB (a 1, a mais aguda, primeiro), a casa em que a mesma altura cai nela; nil fora do braço
     /// ou com a corda ocupada por outra nota da batida.
     public let strings: [Int?]
+    /// A duração que soa (tiques, com as ligadas) e a figura dela: a base (semibreve 3840 … fusa 120), com ponto ou em
+    /// tercina; sem base, não é uma figura só (notas ligadas).
+    public let length: Double?
+    public let base: Int?
+    public let dotted: Bool
+    public let triplet: Bool
 
     public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String],
-                place: String? = nil, figure: String? = nil, strings: [Int?] = []) {
+                place: String? = nil, figure: String? = nil, strings: [Int?] = [], length: Double? = nil,
+                base: Int? = nil, dotted: Bool = false, triplet: Bool = false) {
         self.track = track
         self.string = string
         self.fret = fret
@@ -292,6 +299,15 @@ public struct TabSelection: Hashable, Sendable {
         self.place = place
         self.figure = figure
         self.strings = strings
+        self.length = length
+        self.base = base
+        self.dotted = dotted
+        self.triplet = triplet
+    }
+
+    /// A duração em tiques de uma figura: a base, com ponto (1,5×) ou em tercina (⅔).
+    public static func ticks(base: Int, dotted: Bool, triplet: Bool) -> Int {
+        Int((Double(base) * (dotted ? 1.5 : 1) * (triplet ? 2.0 / 3 : 1)).rounded())
     }
 
     /// Se é esta nota da pista (a mesma batida e a mesma corda).
@@ -308,7 +324,9 @@ public struct TabSelection: Hashable, Sendable {
         self.init(track: track, string: string, fret: fret, pitch: pitch,
                   tick: (page["tick"] as? NSNumber)?.doubleValue, techniques: page["techniques"] as? [String] ?? [],
                   place: page["place"] as? String, figure: page["figure"] as? String,
-                  strings: (page["strings"] as? [Any])?.map { ($0 as? NSNumber)?.intValue } ?? [])
+                  strings: (page["strings"] as? [Any])?.map { ($0 as? NSNumber)?.intValue } ?? [],
+                  length: (page["length"] as? NSNumber)?.doubleValue, base: int("base"),
+                  dotted: (int("dots") ?? 0) > 0, triplet: page["triplet"] as? Bool ?? false)
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

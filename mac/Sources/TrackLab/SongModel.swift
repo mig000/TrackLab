@@ -1079,6 +1079,35 @@ final class SongModel {
         }
     }
 
+    /// As figuras da coluna de edição, da semibreve à fusa (tiques a 960 por semínima).
+    static let figures: [(ticks: Int, label: String, name: String)] = [
+        (3840, "1", "semibreve"), (1920, "½", "mínima"), (960, "¼", "semínima"), (480, "⅛", "colcheia"),
+        (240, "1/16", "semicolcheia"), (120, "1/32", "fusa"),
+    ]
+
+    /// A figura da nota escolhida: a base nova, ou ligar e desligar o ponto ou a tercina (um tira o outro); o começo
+    /// fica, mais curta sobra pausa, mais longa não passa da seguinte.
+    func setFigure(base: Int? = nil, dotted: Bool? = nil, triplet: Bool? = nil) {
+        guard let selection = tabSelection else { return }
+        guard let base = base ?? selection.base else {
+            tabMessage = "A nota soa por notas ligadas: escolha primeiro a figura (1 … 1/32)."
+            return
+        }
+        var dot = dotted ?? selection.dotted
+        var three = triplet ?? selection.triplet
+        if dotted == true { three = false }
+        if triplet == true { dot = false }
+        tabEdit("length", TabSelection.ticks(base: base, dotted: dot, triplet: three))
+    }
+
+    /// − e = na edição: a figura da metade ou do dobro (com o mesmo ponto ou tercina).
+    func stepFigure(_ direction: Int) {
+        guard let base = tabSelection?.base else { return }
+        let next = direction < 0 ? base / 2 : base * 2
+        guard Self.figures.contains(where: { $0.ticks == next }) else { return }
+        setFigure(base: next)
+    }
+
     /// ⌥← ⌥→ na edição: a nota escolhida um passo da grade mais cedo ou mais tarde.
     func shiftSelected(_ steps: Int) {
         guard let (note, track) = selectedScoreNote() else { return }

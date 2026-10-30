@@ -57,6 +57,7 @@
     grace: "Um compasso com apojatura não é refeito assim.",
     figure: "A duração não cabe em figuras (nem com tercinas): use outra grade.",
     missing: "Não achei a nota na voz 1.",
+    next: "Não cabe: a nota seguinte começa antes. Apague ou encurte a seguinte primeiro.",
   };
 
   const THEMES = {
@@ -935,6 +936,37 @@
         // Começo e fim novos em tiques (a barra de duração arrastada).
         retimeSelected(note, () => [value.start, value.end]);
         return;
+      case "length": {
+        // A figura nova (tiques), do mesmo começo.
+        const span = edit.span(note);
+        if (span) rewriteSelected(note, span.start, () => edit.setLength(alphaTab, note, value));
+        return;
+      }
+      case "rest": {
+        // A batida inteira (o acorde, as ligadas) vira pausa; a escolha passa para a nota seguinte.
+        // A seguinte fora do acorde e das ligadas dela (ou, no fim, a anterior).
+        const span = edit.span(note);
+        const list = edit.notesOf(note.beat.voice.bar.staff);
+        const next = span && (list.find((n) => n.beat.absolutePlaybackStart >= span.end - 0.5)
+          || list.slice().reverse().find((n) => n.beat.absolutePlaybackStart < span.start - 0.5));
+        const where = next ? { track: next.beat.voice.bar.staff.track.index, string: edit.tabString(next),
+          tick: next.beat.absolutePlaybackStart } : null;
+        let reason = null;
+        change(() => {
+          const result = edit.toRest(alphaTab, note);
+          if (result !== true) reason = result;
+          return result === true;
+        });
+        if (reason) {
+          post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para pôr a pausa." });
+          return;
+        }
+        const found = where ? edit.findNote(state.score, where.track, where.tick, where.string) : null;
+        state.selected = found ? edit.pathOf(found) : null;
+        drawSelection();
+        postSelection();
+        return;
+      }
       case "delete": {
         const next = edit.neighbor(note, 1) || edit.neighbor(note, -1);
         const nextPath = next ? edit.pathOf(next) : null;
@@ -971,10 +1003,16 @@
     const span = edit.span(note);
     if (!span) return;
     const [start, end] = target(span);
-    const where = { track: note.beat.voice.bar.staff.track.index, string: edit.tabString(note), tick: start };
+    rewriteSelected(note, start, () => edit.retime(alphaTab, note, start, end));
+  }
+
+  // Uma mudança no ritmo (o compasso refeito): o motivo vira aviso, e a nota é achada de novo pelo tique `tick` e pela
+  // corda.
+  function rewriteSelected(note, tick, apply) {
+    const where = { track: note.beat.voice.bar.staff.track.index, string: edit.tabString(note), tick };
     let reason = null;
     change(() => {
-      const result = edit.retime(alphaTab, note, start, end);
+      const result = apply();
       if (result !== true) reason = result;
       return result === true;
     });

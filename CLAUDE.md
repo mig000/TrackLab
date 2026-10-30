@@ -232,7 +232,10 @@ Mixer na ponta do transporte (ou ⌥⌘M, Visualizar) esconde o mixer e a Fita g
 `TabEditPanel`): uma coluna de 252 pontos à direita da TAB, da Onda e da Lente (elas perdem largura juntas, não altura,
 e a agulha segue no mesmo x), com tudo à vista e a tecla de cada comando: a nota (onde está e a figura, pelo `describe`
 da página com o `placeName`; casa e meio tom com − e +; a corda, um botão por corda com a casa em que a mesma altura cai
-nela, pelos `strings` do `describe`; anterior, seguinte, apagar), as articulações em grupos, o som e o encaixe, o tempo
+nela, pelos `strings` do `describe`; anterior, seguinte, apagar), a duração (a figura de 1 a 1/32, pontuada, tercina,
+pela `base` do `describe`, e a pausa: `length` refaz o compasso do mesmo começo, `edit.setLength`, mais curta sobra
+pausa e mais longa não passa da nota seguinte; `rest` tira a batida inteira, `edit.toRest`; teclas − = . T ⇧⌫), as
+articulações em grupos, o som e o encaixe, o tempo
 (barras de duração, grade, um passo para os lados), as suspeitas e, embaixo, o aviso da página, Desfazer, Refazer e
 Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o

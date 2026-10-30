@@ -343,6 +343,16 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let chosen = TabSelection(page: full)
     #expect(chosen?.place == "c. 24 · tempo 3 + 1/16" && chosen?.figure == "colcheia")
     #expect(chosen?.strings == [2, 3, 7, 12, nil, nil])
+    // A figura: colcheia pontuada (720 tiques); a base, o ponto e a tercina voltam à duração.
+    full["length"] = NSNumber(value: 720)
+    full["base"] = NSNumber(value: 480)
+    full["dots"] = NSNumber(value: 1)
+    full["triplet"] = false
+    let dotted = TabSelection(page: full)
+    #expect(dotted?.base == 480 && dotted?.dotted == true && dotted?.triplet == false && dotted?.length == 720)
+    #expect(TabSelection.ticks(base: 480, dotted: true, triplet: false) == 720)
+    #expect(TabSelection.ticks(base: 480, dotted: false, triplet: true) == 320)
+    #expect(TabSelection.ticks(base: 120, dotted: false, triplet: false) == 120)
 }
 
 /// Uma curva do som a cada 8 ms de `start` a `end` pela função.

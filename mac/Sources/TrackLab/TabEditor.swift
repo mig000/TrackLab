@@ -10,6 +10,7 @@ import TrackLabCore
 ///     ⌥↑ ⌥↓         meio tom                                  ← →   nota anterior / seguinte
 ///     ⌥← ⌥→         a nota um passo da grade mais cedo / mais tarde   D   as barras de duração
 ///     ⌫             apaga                                     Esc   tira a escolha (de novo: sai da edição)
+///     − =           a figura da metade / do dobro             .  T  ponto / tercina          ⇧⌫  vira pausa
 ///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
 ///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
@@ -76,6 +77,8 @@ struct TabEditPanel: View {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 14) {
                     noteSection(selection)
+                    Divider()
+                    durationSection(selection)
                     Divider()
                     articulations(selection)
                     Divider()
@@ -193,6 +196,48 @@ struct TabEditPanel: View {
                 }
             }
         }
+    }
+
+    /// A figura da nota (com as ligadas): a base, o ponto, a tercina e a pausa. O começo fica; mais curta sobra pausa,
+    /// mais longa não passa da nota seguinte.
+    private func durationSection(_ selection: TabSelection?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            title("Duração", keys: "− =  .  T")
+            HStack(spacing: 3) {
+                ForEach(SongModel.figures, id: \.ticks) { figure in
+                    let label = Text(figure.label).font(.callout.monospacedDigit()).frame(maxWidth: .infinity)
+                    if selection?.base == figure.ticks {
+                        Button {} label: { label }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .help("A nota é \(figure.name)\(selection?.dotted == true ? " pontuada" : "")"
+                                  + "\(selection?.triplet == true ? " em tercina" : "")")
+                    } else {
+                        Button { model.setFigure(base: figure.ticks) } label: { label }
+                            .buttonStyle(.bordered)
+                            .help("\(figure.name.prefix(1).uppercased() + figure.name.dropFirst()) (− e = passam à metade e ao dobro)")
+                    }
+                }
+            }
+            HStack(spacing: 4) {
+                Toggle(isOn: Binding(get: { selection?.dotted ?? false }, set: { model.setFigure(dotted: $0) })) {
+                    HStack(spacing: 3) { Text("Pontuada"); KeyHint(".") }
+                }
+                .toggleStyle(.button)
+                .help("Ponto: a figura e mais a metade dela (.)")
+                Toggle(isOn: Binding(get: { selection?.triplet ?? false }, set: { model.setFigure(triplet: $0) })) {
+                    HStack(spacing: 3) { Text("Tercina"); KeyHint("T") }
+                }
+                .toggleStyle(.button)
+                .help("Tercina: três no tempo de duas (T)")
+                Spacer(minLength: 0)
+                Button { model.tabEdit("rest") } label: {
+                    HStack(spacing: 3) { Text("Pausa"); KeyHint("⇧⌫") }
+                }
+                .help("A batida da nota (o acorde, as ligadas) vira pausa; as outras notas ficam no lugar (⇧⌫)")
+            }
+        }
+        .disabled(selection == nil)
     }
 
     /// Todas as articulações à vista, com a tecla de cada uma; as ligadas da nota escolhida ficam marcadas.
@@ -387,7 +432,10 @@ struct TabEditKeys: NSViewRepresentable {
             case 125: model.tabEdit(option ? "transpose" : "string", -1); return true     // ↓
             case 123: if option { model.shiftSelected(-1) } else { model.tabEdit("nav", -1) }; return true  // ←, ⌥←
             case 124: if option { model.shiftSelected(1) } else { model.tabEdit("nav", 1) }; return true    // →, ⌥→
-            case 51, 117: model.tabEdit("delete"); return true                            // ⌫, Delete
+            case 51, 117: model.tabEdit(flags.contains(.shift) ? "rest" : "delete"); return true  // ⌫, ⇧⌫ pausa
+            case 27, 78: model.stepFigure(-1); return true                                 // −, − do teclado numérico
+            case 24, 69: model.stepFigure(1); return true                                  // = (+), + do numérico
+            case 47: model.setFigure(dotted: !(model.tabSelection?.dotted ?? false)); return true  // .
             case 53:                                                                      // Esc
                 if model.tabSelection == nil { model.editingTab = false } else { model.tabEdit("clear") }
                 return true
@@ -418,6 +466,7 @@ struct TabEditKeys: NSViewRepresentable {
             case "r": model.toggleTechnique("let-ring")
             case "p": model.cycleTechnique(["pick-down", "pick-up"])
             case "f": model.fitToSound()
+            case "t": model.setFigure(triplet: !(model.tabSelection?.triplet ?? false))
             case "d": model.showDurations.toggle()
             default: return false
             }

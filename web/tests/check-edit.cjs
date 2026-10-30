@@ -195,6 +195,44 @@ test("tercinas quando a grade pede", () => {
   assert.equal(edit.figureName(320), "tercina de colcheias");
 });
 
+test("a figura da nota: mais curta deixa pausa, pontuada e tercina; mais longa não passa da seguinte", () => {
+  let score = load();
+  // A primeira semínima vira colcheia: a nota seguinte fica no lugar e o espaço é pausa.
+  assert.deepEqual(edit.rhythmOf(960), { base: 960, dots: 0, triplet: false });
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 480), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  assert.equal(at(score, 0).beat.playbackDuration, 480);
+  assert.ok(at(score, 960), "a seguinte não andou");
+  assert.ok(score.tracks[0].staves[0].bars[0].voices[0].beats[1].isRest);
+  const described = edit.describe(alphaTab, at(score, 0));
+  assert.equal(described.length, 480);
+  assert.equal(described.figure, "colcheia");
+  assert.equal(described.base, 480);
+  // Colcheia pontuada e tercina de colcheias.
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 720), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  assert.deepEqual(edit.rhythmOf(edit.span(at(score, 0)).end), { base: 480, dots: 1, triplet: false });
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 320), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  assert.equal(edit.describe(alphaTab, at(score, 0)).triplet, true);
+  // Mais longa que o espaço até a seguinte: não.
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 1920), "next");
+});
+
+test("a nota vira pausa: a batida sai e as outras ficam no lugar", () => {
+  let score = load();
+  assert.equal(edit.toRest(alphaTab, at(score, 960)), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  assert.equal(at(score, 960), undefined);
+  assert.ok(at(score, 0) && at(score, 1920), "as vizinhas ficam");
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  assert.ok(beats.some((b) => b.isRest && Math.abs(b.absolutePlaybackStart - 960) < 1));
+});
+
 test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");
