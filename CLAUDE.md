@@ -340,7 +340,29 @@ slide ou ligado de uma ou duas casas abaixo (o som entra subindo e fica na escri
 confirmado, 36 → 25, 19 → 6, 9 → 3; os bends escritos ficam como estavam (o `bend-curves.cjs` grava a chegada e a saída de
 cada nota). Com o começo da nota anterior e o fim da seguinte fora da medida (31/10, à noite): o reference.gp de 19
 para 14 notas suspeitas, tipo e alturas do bend escrito 8 → 12 de 21 (os ¼ de tom que saíam "1", "pré e bend" ou "pré e
-volta"), os licks 63 → 61, as músicas iguais (370). Na
+volta"), os licks 63 → 61, as músicas iguais (370). Quarto conjunto, o maior: o GOAT (`GOAT.zip` em "Backup projeto" no
+HD externo, o dataset do paper arXiv 2509.22655: 172 gravações de guitarra com o som direto, DI, a TAB em Guitar Pro e o
+MIDI alinhado nota a nota; o jogador tocou a TAB, então ela é a verdade). Um agente montou a medição (31/10; os scripts
+ficaram no scratchpad da sessão, `regenerar.sh`, ~15 min): o tempo de cada nota pelo MIDI do Guitar Pro casado com o
+alinhado (o alphaTab não aplica o swing que o Guitar Pro toca em 15 itens), centrado no ataque; 157 itens passam da
+validação de 70 % (mediana 96,7 %), 27.745 notas fora de acorde, 727 bends escritos. O que ele mostrou e mudou na
+detecção (antes → depois, no GOAT; as músicas, os licks e o reference iguais ou melhores): o vibrato numa corda dobrada
+oscila em volta do alto (abaixo, ou dos dois lados), e não só acima como na casa, então o alto é o pico da curva de
+200 ms sem tirar a meia oscilação (com bend escrito a partir de 0,3 semitom acima da casa; sem, de ¾: um vibrato largo
+na casa virava bend; o envelope de cima errava para cima nas músicas); a subida no último quarto sem nota colada depois
+é o bend, se há bend escrito (15 sumiam); a volta no último quarto que solta a corda para palhetar a mesma casa de novo
+não é volta, se a escrita não tem (26 de 53 "bend e volta" ouvidos); o pré-bend escrito vale a partir de 0,6 semitom, e a
+janela do ataque para em 150 ms (numa nota longa engolia a volta); a entrada e a saída por slide saem da medida mesmo
+quando sobram três quadros (a nota fica sem leitura; antes, 72 slides rápidos viravam bend); e o bend que não chega ao
+alto escrito, de 60 % dele até ⅓ de semitom acima, é o escrito (o músico escreve a altura que quis; 24 de 1 tom saíam ½,
+39 de ½ saíam ¼). No GOAT: o mesmo tipo 536 → 566 de 727, tipo e alturas 342 → 442, "não dobra" 47 → 38, bends não escritos
+de meio tom ou mais confirmados 300 → 278, suspeitas de bend 344 → 293, notas suspeitas 1.190 → 1.126 (4,1 % das notas;
+nos itens com 95 % ou mais de validação, ~2 %); nas músicas, tipo e alturas 85 → 104, notas suspeitas 370 → 368; nos
+licks 40 → 56 e 61 → 53; o reference igual (14). Parte do ganho em "tipo e alturas" é a própria tolerância. O corretor no
+GOAT muda 779 das 28.682 notas (2,7 %; antes 834); nas músicas 170, e faz as mesmas 16 das 24 correções do Miguel. O que o
+GOAT mostrou e ficou para depois: a altura de outra corda que ainda soa (148 suspeitas de altura, a maioria "+3"), o
+pré-bend escrito tocado como bend rápido da casa (27 de 30: é o que o músico fez), e a afinação por corda (uma só corda
+de um item, −0,35 semitom). Na
 linha do som da coluna, o bend em palavras (`BendForm.spoken`: "sobe 1 e volta a ½"); no gráfico do editor, tracejado,
 o que o som sugere (o que o F escreveria; numa nota sem bend escrito, uma linha "O som sugere"). A linha do som e o
 gráfico leem `pitchCurvesVersion` (antes podiam ficar com a medida de antes de a afinação da gravação ser refeita). Com o espectro à

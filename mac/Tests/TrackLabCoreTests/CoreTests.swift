@@ -782,6 +782,33 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(ended.form?.kind == .bend && ended.form?.top == 1)
 }
 
+@Test func bendsComoOGoatMostrou() throws {
+    func fit(next: Int? = nil, written: [[Double]] = [], _ f: @escaping (Double) -> Double?) throws -> CurveFit {
+        let curve = PitchCurve(from: 1, hop: 0.008, values: (0...125).map { f(1 + Double($0) * 0.008) })
+        let points = written.map { ScoreNote.BendPoint(offset: $0[0], value: $0[1]) }
+        return try #require(SoundNote(curve: curve, start: 1, end: 2, pitch: 60, next: next, written: points).fit)
+    }
+    let bendOne: [[Double]] = [[0, 0], [15, 4]]
+    // Vibrato de 6 Hz abaixo do alto de um bend de 1 tom (a mão solta e volta): o alto é o pico da curva de 200 ms, não
+    // ele menos a meia oscilação (antes saía ½).
+    let wobble = try fit { t in t < 1.25 ? 60 : t < 1.35 ? 60 + (t - 1.25) * 20 : 61.6 + 0.4 * sin(2 * .pi * 6 * (t - 1.35)) }
+    #expect(wobble.vibrato && wobble.form?.top == 4)
+    // A subida que só sai no último quarto, sem nota colada depois: com o bend escrito é o bend; sem ele, nada.
+    let late = { (t: Double) -> Double? in t < 1.8 ? 60 : min(62, 60 + (t - 1.8) * 40) }
+    #expect(try fit(written: [[0, 0], [60, 4]], late).form?.kind == .bend)
+    #expect(try fit(late).form == nil)
+    // Sobe, segura e solta no último quarto para palhetar a mesma casa de novo: sem volta escrita, é o bend.
+    let repick = { (t: Double) -> Double? in t < 1.1 ? 60 + (t - 1) * 20 : t < 1.85 ? 62 : max(60, 62 - (t - 1.85) * 40) }
+    #expect(try fit(next: 60, written: bendOne, repick).form?.kind == .bend)
+    #expect(try fit(next: 60, written: [[0, 0], [15, 4], [45, 4], [60, 0]], repick).form?.kind == .bendRelease)
+    // O bend de 1 tom que para em 1,3 semitom é o escrito; sem escrita, ½.
+    let short = { (t: Double) -> Double? in t < 1.2 ? 60 : min(61.3, 60 + (t - 1.2) * 13) }
+    #expect(try fit(written: bendOne, short).form?.top == 4)
+    #expect(try fit(short).form?.top == 2)
+    // O pré-bend de ½ tom escrito tocado a 0,7 semitom é o pré-bend.
+    #expect(try fit(written: [[0, 2], [60, 2]]) { _ in 60.7 }.form?.kind == .prebend)
+}
+
 @Test func leiturasECorretor() throws {
     // O som sobe um tom aos 50 ms e segura; a TAB escreve a nota sem bend.
     let curve = soundCurve(1, 1.5) { $0 < 1.05 ? 60 : min(62, 60 + ($0 - 1.05) * 40) }

@@ -214,7 +214,10 @@ public struct SoundNote: Sendable {
         if let pitch, approached || slidesOut {
             let target = pitch + (written.first?.value ?? 0) / 2
             let near = { (i: Int, within: Double) -> Bool in values[i].map { abs($0 - target) <= within } ?? false }
-            let enough = { (range: Range<Int>) -> Bool in values[range].compactMap { $0 }.count >= 6 }
+            // Basta sobrar um pouco: numa nota curta quase toda de slide, o que sobra não tem quadros para um encaixe, e a
+            // nota fica sem leitura (antes ficava o slide inteiro, lido como bend: no GOAT, 72 bends não escritos em
+            // notas com slide ou ligado).
+            let enough = { (range: Range<Int>) -> Bool in values[range].compactMap { $0 }.count >= 3 }
             let reach = min(0.25, 0.75 * length)
             if slidesOut, written.isEmpty, let last = values.indices.last(where: { near($0, 0.25) }), times[last] >= end - reach,
                enough(0..<last + 1) {
@@ -357,10 +360,12 @@ public struct SoundNote: Sendable {
             let list = series.indices.compactMap { times[$0] >= from && times[$0] <= to ? series[$0] : nil }
             return list.count >= 2 ? percentile(list, 0.5) : list.first
         }
-        // O ataque: o grave do começo (100 ms ou um quinto da nota). Num pré-bend o começo inteiro fica no alto; num
-        // bend rápido a corda passa pela casa; e os primeiros quadros, que ainda ouvem o fim da nota anterior (dobrada,
-        // num solo de bends), não contam sozinhos.
-        let opening = values.indices.compactMap { times[$0] <= start + 0.02 + max(0.1, 0.2 * length) ? values[$0] : nil }
+        // O ataque: o grave do começo (100 ms ou um quinto da nota, até 150 ms: numa nota longa a janela engolia a volta
+        // do pré-bend). Num pré-bend o começo inteiro fica no alto; num bend rápido a corda passa pela casa; e os primeiros
+        // quadros, que ainda ouvem o fim da nota anterior (dobrada, num solo de bends), não contam sozinhos.
+        let opening = values.indices.compactMap {
+            times[$0] <= start + 0.02 + min(0.15, max(0.1, 0.2 * length)) ? values[$0] : nil
+        }
         let attack = (opening.count >= 2 ? percentile(opening, 0.1) : low) - ref
         // O alto: com vibrato, pela curva de 200 ms (que tira a oscilação) menos a meia oscilação; sem ele, pela de 40 ms,
         // que alcança o bend que só chega no fim da nota (no Highway Star, c. 250, um bend de 1 tom que chega a 1,9
@@ -377,12 +382,24 @@ public struct SoundNote: Sendable {
         if peak == -.infinity, let first = level.indices.first(where: { level[$0] != nil }), let value = level[first] {
             (peak, peakAt) = (value, first)
         }
-        let rise = peak - ref - (vibrato ? depth : 0)
+        var rise = peak - ref - (vibrato ? depth : 0)
+        // Numa corda dobrada o vibrato oscila em volta do alto (abaixo dele, ou dos dois lados), e não só acima, como na
+        // casa: o alto é o pico da curva de 200 ms, sem tirar a meia oscilação. No GOAT (31/10), os bends escritos com
+        // vibrato no som saíam ¼ a ½ tom abaixo em 73 % das vezes; o envelope de cima errava para cima nas músicas, onde
+        // o vibrato passa do alto. Só numa nota dobrada: com bend escrito, a partir de 0,3 semitom acima da casa; sem, de
+        // ¾ (um vibrato largo na casa virava bend).
+        if vibrato, rise >= (writtenTop > 0 ? 0.3 : 0.75) {
+            rise = peak - ref
+        }
         // O fim pela curva de 40 ms (a de 200 ms apagava uma volta curta), nos últimos quadros medidos.
         let last = times.last ?? end
         let final = (median(from: last - max(0.05, 0.15 * length), to: last, quick) ?? peak) - ref
         // Um pré-bend de ao menos meio tom: abaixo disso é o ataque agudo da corda (palhetada forte) ou a afinação.
-        let pre = !missedStart && quarterTones(rise: attack) >= 2 ? quarterTones(rise: attack) : 0
+        // Com o pré-bend escrito, a partir de 0,6 semitom (no GOAT, o pré de ½ tom tocado a 0,8 semitom saía bend).
+        let writtenPre = (written.first?.value ?? 0) >= 2
+        let pre = missedStart ? 0
+            : quarterTones(rise: attack) >= 2 ? quarterTones(rise: attack)
+            : writtenPre && attack >= 0.6 ? 2 : 0
         let high = max(pre, quarterTones(rise: rise))
         // O instante (0–60) de `t`, e o tempo do movimento de `from` a `to` (semitons acima da casa) a partir do índice
         // `index`: de 20 % a 80 % pela curva de 40 ms, estendido até 0 % e 100 % (a de 200 ms começa 100 ms antes).
@@ -469,12 +486,25 @@ public struct SoundNote: Sendable {
             } else {
                 form = BendForm(kind: .prebend, pre: pre)
             }
+            // O bend que não chega ao alto escrito (a mão sobe menos, num bend de 1 tom que para em 1,3 semitom) é o
+            // escrito, de 60 % dele até ⅓ de semitom acima: o músico escreve a altura que quis. No GOAT, 24 bends de 1 tom
+            // escritos saíam ½ (o alto em 0,87 a 1,4 semitom) e 39 de ½ saíam ¼.
+            if var current = form, current.kind.usesTop, writtenTop > 0, rise >= 0.6 * writtenTop,
+               rise <= writtenTop + 0.35 {
+                current.top = Int((writtenTop * 2).rounded())
+                form = current
+            }
             form = form?.valid()
             // A passagem para a nota seguinte (ligado, slide), não um bend: a subida que só sai no último quarto da nota,
-            // ou que sai depois da metade e chega à altura da seguinte; a volta no último quarto que cai na altura da
-            // seguinte (outra casa).
+            // com uma nota colada depois ou sem bend escrito (com ele e sem nota colada, no GOAT, 15 bends escritos
+            // sumiam; sem bend escrito, uma subida no fim continua não contando), ou que sai depois da metade e chega
+            // à altura da seguinte; a volta no último quarto que cai na altura da seguinte (outra casa), ou que solta a
+            // corda para palhetar a mesma casa de novo, quando a escrita não tem volta (no GOAT, 26 dos 53 bends escritos
+            // ouvidos como "bend e volta").
             if let current = form {
-                let late = current.start >= 45
+                let writtenTopValue = written.map(\.value).max() ?? 0
+                let late = current.start >= 45 && (next != nil || writtenTopValue == 0)
+                let writtenReleases = written.count >= 2 && (written.last?.value ?? 0) < writtenTopValue
                 // Pelo alto da curva de 40 ms: a de 200 ms não alcança o salto no fim de uma nota curta.
                 let quickTop = (quick.compactMap { $0 }.max() ?? peak) - ref
                 let reachesNext = next.map { abs(Double($0) - ref - quickTop) <= 0.5 } ?? false
@@ -484,7 +514,8 @@ public struct SoundNote: Sendable {
                 case .prebendBend where late || (current.start >= 30 && reachesNext):
                     form = BendForm(kind: .prebend, pre: current.pre).valid()
                 case .bendRelease where current.hold >= 45
-                    && (next.map { abs(Double($0) - ref) >= 1 && abs(Double($0) - ref - final) <= 0.5 } ?? false):
+                    && (next.map { abs(Double($0) - ref) >= 1 && abs(Double($0) - ref - final) <= 0.5 } ?? false
+                        || next.map { abs(Double($0) - ref) < 0.5 && final <= 0.5 && !writtenReleases } ?? false):
                     var kept = current
                     kept.kind = .bend
                     form = kept.valid()
