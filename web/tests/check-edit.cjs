@@ -602,6 +602,46 @@ test("vibrato numa ligada com Hold (como a importação do Songsterr grava): o H
   assert.deepEqual(bends(score), sound);
 });
 
+test("apagar, colar e pôr nota numa ligada: a ligada não perde o que tem nem se prende a outra nota", () => {
+  // Uma cadeia no compasso 1: bend inteiro em 0, ligada em 960, ligada com vibrato em 1920.
+  const chain = () => {
+    let score = load();
+    edit.toggle(alphaTab, at(score, 0), "bend-full");
+    for (const tick of [960, 1920]) {
+      edit.tie(alphaTab, at(score, tick));
+      score = edit.refinish(alphaTab, score);
+    }
+    edit.toggle(alphaTab, at(score, 1920), "vibrato");
+    return edit.refinish(alphaTab, score);
+  };
+  const vibratoAt = (score, tick) => edit.notesOf(score.tracks[0].staves[0])
+    .filter((n) => n.beat.absolutePlaybackStart <= tick && tick < n.beat.absolutePlaybackStart + n.beat.playbackDuration)
+    .some((n) => n.vibrato);
+  // Colar em 2400, no meio da ligada com vibrato: a parte de antes encurta e fica com o vibrato.
+  let score = chain();
+  const clip = edit.copy([at(score, 3840)]);
+  assert.equal(edit.paste(alphaTab, score.tracks[0].staves[0], 2400, clip), true);
+  score = edit.refinish(alphaTab, score);
+  assert.ok(vibratoAt(score, 2000) && !vibratoAt(score, 1000), "o vibrato fica onde estava, até o colado");
+  // Nota nova noutra corda em 2400: a ligada continua vibrando até o fim dela.
+  score = chain();
+  assert.equal(edit.insertAt(alphaTab, score.tracks[0].staves[0], 2400, 1, 3, 0), true);
+  score = edit.refinish(alphaTab, score);
+  assert.ok(vibratoAt(score, 2000) && vibratoAt(score, 2600), "o vibrato segue depois da nota nova");
+  assert.ok(at(score, 2400) && edit.notesOf(score.tracks[0].staves[0]).some((n) =>
+    Math.abs(n.beat.absolutePlaybackStart - 2400) < 1 && n.string === 1 && n.fret === 3 && !n.isTieDestination));
+  // Apagar a cabeça de uma ligada: a seguinte ataca de novo, na casa dela (e não presa à nota de antes da pausa).
+  score = load();
+  edit.setFret(at(score, 1920), 7);
+  edit.setFret(at(score, 2880), 7);
+  edit.tie(alphaTab, at(score, 2880));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(at(score, 2880).isTieDestination);
+  assert.equal(edit.remove(at(score, 1920), alphaTab), true);
+  score = edit.refinish(alphaTab, score);
+  assert.ok(!at(score, 2880).isTieDestination && at(score, 2880).fret === 7);
+});
+
 test("o compasso refeito não muda o som: o bend de uma nota ligada continua no mesmo tempo", () => {
   // As 32 combinações (salvas pelo Guitar Pro 8): cada nota refeita na própria duração junta as ligadas sem articulação
   // numa figura maior; o bend medido no tempo (o que a Lente e o sintetizador tocam) tem de ser o mesmo.

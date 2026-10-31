@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from pathlib import Path
 
 from . import home, repertoire, tempomap
@@ -37,6 +38,18 @@ SCORE_HISTORY = 100
 SCORE_LIMIT = 50_000_000
 _LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
 
+
+
+PARTIAL_AGE = 3600   # segundos: uma pasta .partial mais velha que isto é de um trabalho interrompido
+
+
+def _sweep_partials(folder: Path) -> None:
+    """As pastas de uma separação ou síntese interrompida (o app fechado no meio do trabalho) ficavam para sempre,
+    escondidas e com os áudios pela metade. As de agora (um trabalho em curso) são novas e ficam."""
+    limit = time.time() - PARTIAL_AGE
+    for old in folder.glob(".*.partial"):
+        if old.is_dir() and old.stat().st_mtime < limit:
+            shutil.rmtree(old, ignore_errors=True)
 
 class SongPackage:
     """Um pacote publicado. O manifesto é lido do disco a cada acesso: o app e o motor podem tê-lo mudado."""
@@ -82,6 +95,7 @@ class SongPackage:
         stems = self.path / "stems"
         stems.mkdir(exist_ok=True)
         final = stems / key
+        _sweep_partials(stems)
         temp = stems / f".{key}.{new_id()}.partial"
         temp.mkdir()
         try:
@@ -113,6 +127,7 @@ class SongPackage:
         folder = self.path / "synth"
         folder.mkdir(exist_ok=True)
         final = folder / key
+        _sweep_partials(folder)
         temp = folder / f".{key}.{new_id()}.partial"
         temp.mkdir()
         try:

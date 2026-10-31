@@ -940,12 +940,18 @@
     return null;
   }
 
-  // Apaga a nota; a batida sem notas vira pausa.
-  function remove(note) {
+  // Apaga a nota; a batida sem notas vira pausa. A ligada que continuava a nota passa a atacar: sem a origem, o finish a
+  // prendia à nota anterior da corda (atravessando a pausa) e trocava a casa dela pela daquela nota.
+  function remove(note, at) {
     const notes = note.beat.notes;
     const index = notes.indexOf(note);
     if (index < 0) {
       return false;
+    }
+    const next = note.tieDestination;
+    if (next && next.isTieDestination) {
+      next.isTieDestination = false;
+      if (at && next.bendType === at.model.BendType.Hold) next.bendType = at.model.BendType.Prebend;
     }
     // O do alphaTab tira a nota também da busca por corda (que acha a origem de uma ligadura).
     note.beat.removeNote(note);
@@ -1046,7 +1052,8 @@
       } else if (ev.start < start) {
         low = Math.min(low, ev.start);
         high = Math.max(high, ev.end);
-        kept.push({ start: ev.start, end: start, beat: ev.beat, tail: [] });
+        // Encurta com as ligadas: o compasso refeito mantém o que elas têm (o vibrato da ligada) e o bend no tempo.
+        kept.push({ ...ev, end: start });
       } else {
         high = Math.max(high, ev.end);
       }
@@ -1234,8 +1241,7 @@
     for (const bar of staff.bars) {
       for (const voice of bar.voices) {
         for (const beat of voice.beats) {
-          const sorted = beat.notes.slice().sort((a, b) => b.string - a.string);
-          for (const note of sorted) list.push(note);
+          for (const note of beat.notes) list.push(note);
         }
       }
     }
@@ -1308,15 +1314,31 @@
     if (index >= 0) {
       const ev = events[index];
       if (tick - ev.start < MIN_TICKS || ev.end - tick < MIN_TICKS) return "short";
-      for (const old of ev.beat.notes) {
+      // O que soa no tique continua ligado com o que a parte dele tem (o vibrato, o P.M., o resto do bend), como no
+      // Dividir; as partes ligadas de depois ficam como estavam, com a nota nova no lugar da que soava na corda dela.
+      curvesOf(ev);
+      const pieces = [ev.beat, ...ev.tail];
+      const piece = pieces.filter((b) => b.absolutePlaybackStart <= tick).pop();
+      const cut = (tick - piece.absolutePlaybackStart) / piece.playbackDuration;
+      for (const old of piece.notes) {
         if (old.string === alphaString) continue;
-        const copy = new m.Note();
-        copy.string = old.string;
-        copy.fret = old.fret;
-        copy.isTieDestination = true;
+        const copy = tieCopy(at, old, piece !== ev.beat);
+        copy.vibrato = old.vibrato;
+        copy.isPalmMute = old.isPalmMute;
+        copy.isLetRing = old.isLetRing;
+        copy.harmonicType = old.harmonicType;
+        copy.harmonicValue = old.harmonicValue;
+        setBend(at, copy, held(bendPart(bendOf(old), cut, 1)), true);
         beat.addNote(copy);
       }
-      events.splice(index + 1, 0, { start: tick, end: ev.end, beat, tail: [] });
+      const later = ev.tail.filter((b) => b.absolutePlaybackStart > tick);
+      for (const b of later) {
+        for (const old of b.notes.filter((n) => n.string === alphaString)) b.removeNote(old);
+        b.addNote(tieCopy(at, note, false));
+      }
+      beat.tracklabLength = (later.length ? later[0].absolutePlaybackStart : ev.end) - tick;
+      events.splice(index + 1, 0, { start: tick, end: ev.end, beat, tail: later, from: tick,
+        breaks: later.map((b) => ({ tick: b.absolutePlaybackStart, beat: b })) });
       low = ev.start;
       high = ev.end;
       ev.end = tick;

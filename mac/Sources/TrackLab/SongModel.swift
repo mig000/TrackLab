@@ -1444,8 +1444,15 @@ final class SongModel {
         [1: "¼", 2: "½", 3: "¾", 4: "1 tom", 6: "1½ tom", 8: "2 tons"][quarterTones] ?? "\(Double(quarterTones) / 4) tom"
     }
 
+    /// A gravação da TAB em curso: a seguinte espera por ela.
+    @ObservationIgnored private var scoreSave: Task<Void, Never>?
+
+    /// Uma gravação por vez, na ordem em que a página manda: uma mais velha que demorasse (o motor ocupado) chegaria
+    /// depois da mais nova e desfaria a última edição no pacote.
     private func saveScore(_ data: Data) {
-        Task {
+        let previous = scoreSave
+        scoreSave = Task {
+            await previous?.value
             do {
                 try await Backend.shared.putScore(id, data)
                 tabMessage = "Guardado"

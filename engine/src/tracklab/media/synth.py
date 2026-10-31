@@ -254,11 +254,18 @@ def reverb(data: np.ndarray, rate: int, seconds: float = REVERB_SECONDS, wet: fl
     impulse = np.stack([np.convolve(impulse[:, c], kernel, "same") for c in range(2)], axis=1)
     norm = np.sqrt(np.sum(impulse ** 2, axis=0, keepdims=True))
     impulse /= np.where(norm > 0, norm, 1)
-    size = 1 << int(np.ceil(np.log2(len(data) + length)))
+    # A convolução em blocos (overlap-add), a mesma conta com FFTs pequenas: uma FFT da pista inteira (16 milhões de
+    # pontos numa música de 4 min) levava 3,9 s por pista e centenas de MB por canal.
+    size = 1 << int(np.ceil(np.log2(4 * length)))
+    block = size - length + 1
     out = np.empty_like(data)
     for c in range(2):
-        tail = np.fft.irfft(np.fft.rfft(data[:, c], size) * np.fft.rfft(impulse[:, c], size), size)[: len(data)]
-        out[:, c] = data[:, c] + wet * tail.astype(np.float32)
+        kernel = np.fft.rfft(impulse[:, c], size)
+        tail = np.zeros(len(data) + size)
+        for start in range(0, len(data), block):
+            piece = np.fft.rfft(data[start:start + block, c], size)
+            tail[start:start + size] += np.fft.irfft(piece * kernel, size)
+        out[:, c] = data[:, c] + wet * tail[: len(data)].astype(np.float32)
     return out
 
 

@@ -19,7 +19,8 @@ https://claude.ai/artifact/EomP8enfZv8mW3S46N5ycf.
 Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytest`.
 - `package.py`: o pacote `<artista-título>.tracklab` (manifest.json esquema 1, score/original.gp,
   score/tempo-map.json, audio/source.flac, stems/<chave>/, peaks/). Um pacote nasce numa pasta oculta e só ganha o
-  nome quando está inteiro; cada separação idem dentro de `stems/`. `save_tempo_map` grava o mapa ajustado e guarda
+  nome quando está inteiro; cada separação idem dentro de `stems/` (a pasta `.partial` de um trabalho interrompido sai no
+seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   o anterior em `score/tempo-map-history/` (as últimas 200 versões); antes do primeiro ajuste, copia o do Songsterr
   para `score/tempo-map-original.json` (o "Recomeçar do Songsterr" do Ajuste). Os compassos conferidos ficam no
   manifesto (`checkedBars`, `PUT songs/{id}/checked`).
@@ -65,7 +66,8 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   projeto (uma trilha por pista, com as articulações) e o andamento do GP é trocado pelo do mapa de tempo (um evento
   de andamento por ponto). Sem FluidSynth (o Homebrew não o instala mais no Intel: sem pacotes, e a compilação baixa do
   GitHub dentro da caixa de areia), quem toca é o TinySoundFont do próprio alphaTab em node (`web/tools/gp-synth.cjs`,
-  as sete pistas de White Room em ~6 s), com um reverb de convolução leve no motor; o MIDI sai com
+  as sete pistas de White Room em ~6 s), com um reverb de convolução leve no motor (em blocos, overlap-add: 1,8 s por pista
+de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   `extendBendArrowsOnTiedNotes` desligado: o bend no tempo da própria nota, como o Guitar Pro toca (conferido no MIDI que
   ele exporta), e não espalhado pelas ligadas como a seta do desenho (`synth.v2`); numa nota com bend e vibrato, o bend
   até onde ele para de mudar e dali ao fim o vibrato em volta do alto (`synth.v3`: num bend que segurava até o fim,
@@ -145,7 +147,10 @@ Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia det
 corda (mesma altura), meio tom, apaga, navega, liga e desliga as articulações do TabLab (`toggle`: ligados, slides,
 bends de tipo explícito com até 4 pontos, porque o GP7 perde um "Custom" de 5; vibratos, P.M., nota morta, let ring,
 acentos, harmônicos, palhetada, tapping; no mesmo grupo ligar troca). Depois de cada mudança a partitura passa pelo
-JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma cópia é o passo do Desfazer. Antes da cópia, as ligações entre notas (ligadura, ligado, slide) ficam de mão dupla e só entre notas da partitura (`tidyLinks`: desligar um Legato deixava a nota seguinte apontando para a origem, a leitura da cópia quebrava e nada mais desenhava nem gravava); uma mudança que falha volta inteira. 1,5 s depois
+JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma cópia é o passo do Desfazer (guardada em
+`state.copy` e reaproveitada como o "antes" da mudança seguinte: o alphaTab não mexe nela ao ler). Apagar a nota de onde
+sai uma ligadura faz a seguinte atacar (antes o finish a prendia à nota anterior da corda, na casa dela). As gravações vão
+ao motor uma de cada vez, na ordem (`scoreSave`). Antes da cópia, as ligações entre notas (ligadura, ligado, slide) ficam de mão dupla e só entre notas da partitura (`tidyLinks`: desligar um Legato deixava a nota seguinte apontando para a origem, a leitura da cópia quebrava e nada mais desenhava nem gravava); uma mudança que falha volta inteira. 1,5 s depois
 da última mudança, a página manda o Guitar Pro 7 (`Gp7Exporter`) e as notas novas.
 
 ## App (`mac/`)
@@ -280,7 +285,7 @@ inserção ali (`state.caret`, o endereço da batida com a corda; a corda sai da
 linhas igualmente espaçadas); digitar a casa (ou − + e "Pôr nota" na coluna) põe a nota (`edit.insertNote`) e a escolhe;
 ↑↓ andam de corda e ←→ de batida (numa corda com nota, a nota fica escolhida). Na faixa o cursor cai no tempo do clique,
 na grade (`placeCaret`, pelas âncoras): no meio de uma nota longa, a nota nova a divide (`edit.insertAt`: o que soava
-continua ligado, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
+continua ligado com o que a parte dele tinha, o vibrato e o resto do bend, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
 fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. Ouvir uma nota: o clique numa nota (na
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
 (`StemEngine.audition`: a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
@@ -294,8 +299,8 @@ das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fi
 (`edit.copy`: as propriedades de número, sim e não e texto de cada batida e nota, mais os pontos de bend e de alavanca;
 sem endereço nem figura); vai para a área de transferência do macOS como `local.tracklab.tab-clip` (cola noutra música e
 depois de reabrir o app). Colar (`edit.paste`) entra a partir da nota escolhida ou do cursor de inserção, por cima do que
-estava: o que começa no trecho sai, o que vem de antes encurta até ele, e os compassos são refeitos com figuras, pausas e
-ligaduras; não passa do fim da música. Uma nota ligada vai com as partes como estão (`parts`: o tamanho e as
+estava: o que começa no trecho sai, o que vem de antes encurta até ele (com as ligadas e o que elas têm), e os compassos
+são refeitos com figuras, pausas e ligaduras; não passa do fim da música. Uma nota ligada vai com as partes como estão (`parts`: o tamanho e as
 articulações de cada uma; antes, o bend se esticava pela cadeia colada e o vibrato da ligada se perdia). Recortar copia
 e deixa pausa. As coladas ficam escolhidas.
 Voz 2: as mudanças de ritmo (figura, pausa, arrastar, ⌥← ⌥→, colar, nota nova) valem na voz da nota (`timeline` e

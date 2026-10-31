@@ -1,7 +1,9 @@
 """A TAB sintetizada: o MIDI do Guitar Pro pelo alphaTab, no andamento do mapa de tempo, uma faixa por pista no
 tamanho do áudio do vídeo, refeita quando o mapa muda."""
 
+import os
 import shutil
+import time
 from pathlib import Path
 
 import mido
@@ -75,7 +77,16 @@ def test_each_track_lands_on_the_video_audio_and_goes_stale_with_a_new_map(tmp_p
         soundfile.write(str(target), data, rate, subtype="FLOAT")
 
     monkeypatch.setattr(synth, "render", fake_render)
+    # A pasta de uma síntese interrompida (o app fechado no meio) sai na seguinte; a de um trabalho em curso fica.
+    song.file("synth").mkdir(exist_ok=True)
+    stale = song.file("synth") / ".tab-velha.abc.partial"
+    fresh = song.file("synth") / ".tab-agora.def.partial"
+    stale.mkdir()
+    fresh.mkdir()
+    os.utime(stale, (time.time() - 2 * 3600,) * 2)
     result = stems.synthesize_tab(song, font=font, engine="fluidsynth")
+    assert not stale.exists() and fresh.exists()
+    fresh.rmdir()
     assert result["reused"] is False and result["soundfont"] == "Teste.sf2" and list(result["tracks"]) == ["0"]
     audio, got = soundfile.read(str(song.file(result["tracks"]["0"]["file"])), dtype="float32")
     assert got == rate and len(audio) == 20 * rate
