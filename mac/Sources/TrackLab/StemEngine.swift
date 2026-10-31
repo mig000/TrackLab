@@ -333,7 +333,8 @@ final class StemEngine {
 
     func seek(to seconds: Double) {
         let from = currentTime
-        let wasPlaying = isPlaying
+        // Uma nota clicada que tocava sozinha acaba parada: o seek (o clique noutra nota) não vira o estudo tocando.
+        let wasPlaying = isPlaying && auditioning == nil
         pause()
         anchorTime = min(max(0, seconds), duration)
         seekCount += 1

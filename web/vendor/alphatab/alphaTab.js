@@ -43469,10 +43469,21 @@
 				return;
 			}
 			if (note.hasBend) {
-				this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
-				// TrackLab: bend e vibrato na mesma nota, como o Guitar Pro toca: depois do último ponto do bend, o vibrato
-				// em volta do alto (antes só o bend soava).
-				if (note.vibrato !== VibratoType.None) this._tracklabVibratoAfterBend(note, noteStart, noteDuration, noteKey, channel);
+				// TrackLab: bend e vibrato na mesma nota, como o Guitar Pro toca: o bend até onde ele para de mudar e, dali ao
+				// fim, o vibrato em volta do alto (antes só o bend soava; e num bend que segura até o fim, como o "segurar"
+				// de uma ligada, os pontos parados iam até o fim e não sobrava vibrato).
+				const all = note.bendPoints;
+				let settle = 0;
+				for (let i = 1; i < all.length; i++) if (all[i].value !== all[i - 1].value) settle = i;
+				if (note.vibrato !== VibratoType.None && settle < all.length - 1) {
+					note.bendPoints = all.slice(0, settle + 1);
+					try {
+						this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
+					} finally {
+						note.bendPoints = all;
+					}
+				} else this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
+				if (note.vibrato !== VibratoType.None) this._tracklabVibratoAfterBend(note, all[settle], noteStart, noteDuration, noteKey, channel);
 			} else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
 			else if (note.slideInType !== SlideInType.None || note.slideOutType !== SlideOutType.None) this._generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
 			else if (note.vibrato !== VibratoType.None || note.isTieDestination && note.tieOrigin.vibrato !== VibratoType.None) this._generateVibrato(note, noteStart, noteDuration, noteKey, channel);
@@ -43679,8 +43690,7 @@
 				this._handler.addControlChange(track.index, tick, track.playbackInfo.secondaryChannel, ControllerType.VolumeCoarse, volume);
 			}
 		}
-		_tracklabVibratoAfterBend(note, noteStart, noteDuration, noteKey, channel) {
-			const last = note.bendPoints[note.bendPoints.length - 1];
+		_tracklabVibratoAfterBend(note, last, noteStart, noteDuration, noteKey, channel) {
 			const length = noteDuration.noteOnly;
 			const from = noteStart + (last.offset / BendPoint.MaxPosition) * length | 0;
 			if (noteStart + length - from <= 0) return;

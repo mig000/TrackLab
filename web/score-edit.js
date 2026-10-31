@@ -600,8 +600,9 @@
   function curvesOf(ev) {
     if (ev.curves) return ev.curves;
     const pieces = [ev.beat, ...(ev.tail || [])];
-    // Uma batida nova (colada, posta no meio de outra) ainda não tem duração: vale a do intervalo.
-    const lengths = pieces.map((beat) => beat.playbackDuration);
+    // Uma batida nova (colada, posta no meio de outra) ainda não tem duração: vale a que ela trouxe (as partes de uma
+    // nota ligada colada) ou a do intervalo.
+    const lengths = pieces.map((beat) => beat.playbackDuration || beat.tracklabLength || 0);
     if (!(lengths.every((x) => x > 0))) lengths.splice(0, lengths.length, ...pieces.map(() => (ev.end - ev.start) / pieces.length));
     const total = lengths.reduce((sum, x) => sum + x, 0);
     const curves = new Map();
@@ -969,16 +970,25 @@
     const start = Math.min(...chosen.map((e) => e.start));
     const end = Math.max(...chosen.map((e) => e.end));
     const clip = { length: end - start, events: [] };
+    const beatData = (beat) => Object.assign(plain(beat), {
+      whammy: beat.whammyBarPoints ? beat.whammyBarPoints.map((p) => [p.offset, p.value]) : null });
+    const notesData = (beat) => beat.notes.map((n) => Object.assign(plain(n), {
+      bend: n.bendPoints ? n.bendPoints.map((p) => [p.offset, p.value]) : null }));
     for (const ev of events) {
       if (ev.start < start || ev.start >= end) continue;
-      clip.events.push({
+      const item = {
         offset: ev.start - start,
         length: Math.min(ev.end, end) - ev.start,
-        beat: Object.assign(plain(ev.beat), {
-          whammy: ev.beat.whammyBarPoints ? ev.beat.whammyBarPoints.map((p) => [p.offset, p.value]) : null }),
-        notes: ev.beat.notes.map((n) => Object.assign(plain(n), {
-          bend: n.bendPoints ? n.bendPoints.map((p) => [p.offset, p.value]) : null })),
-      });
+        beat: beatData(ev.beat),
+        notes: notesData(ev.beat),
+      };
+      // Uma nota ligada leva as partes como estão (cada uma com a duração, o bend dela e o vibrato da ligada): colada,
+      // soa igual; antes saía uma nota só, sem o que as ligadas tinham, e com a subida do bend esticada.
+      if (ev.tail.length) {
+        item.parts = [ev.beat, ...ev.tail].map((beat) => ({ offset: beat.absolutePlaybackStart - ev.start,
+          length: beat.playbackDuration, beat: beatData(beat), notes: notesData(beat) }));
+      }
+      clip.events.push(item);
     }
     return clip;
   }
@@ -1028,7 +1038,21 @@
     }
     for (const item of clip.events) {
       const at0 = start + Math.round(item.offset);
-      kept.push({ start: at0, end: at0 + Math.round(item.length), beat: beatFrom(at, staff, item), tail: [] });
+      const ev = { start: at0, end: at0 + Math.round(item.length), beat: beatFrom(at, staff, item), tail: [] };
+      if (item.parts && item.parts.length > 1) {
+        // As partes da nota ligada: cada uma no seu lugar, ligada à anterior, e o bend repartido pelo tempo delas.
+        const parts = item.parts.filter((part) => part.offset < item.length);
+        ev.beat = beatFrom(at, staff, parts[0]);
+        ev.beat.tracklabLength = parts[0].length;
+        ev.tail = parts.slice(1).map((part) => {
+          const beat = beatFrom(at, staff, part);
+          for (const note of beat.notes) note.isTieDestination = true;
+          beat.tracklabLength = part.length;
+          return beat;
+        });
+        ev.breaks = ev.tail.map((beat, i) => ({ tick: at0 + Math.round(parts[i + 1].offset), beat }));
+      }
+      kept.push(ev);
     }
     kept.sort((a, b) => a.start - b.start);
     const first = barAt(staff, low);

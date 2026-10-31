@@ -67,11 +67,14 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   GitHub dentro da caixa de areia), quem toca é o TinySoundFont do próprio alphaTab em node (`web/tools/gp-synth.cjs`,
   as sete pistas de White Room em ~6 s), com um reverb de convolução leve no motor; o MIDI sai com
   `extendBendArrowsOnTiedNotes` desligado: o bend no tempo da própria nota, como o Guitar Pro toca (conferido no MIDI que
-  ele exporta), e não espalhado pelas ligadas como a seta do desenho (`synth.v2`); com o FluidSynth instalado, ele
+  ele exporta), e não espalhado pelas ligadas como a seta do desenho (`synth.v2`); numa nota com bend e vibrato, o bend
+  até onde ele para de mudar e dali ao fim o vibrato em volta do alto (`synth.v3`: num bend que segurava até o fim,
+  como o "segurar" das ligadas do solo do Sunshine, o vibrato não soava); com o FluidSynth instalado, ele
   (`web/tools/gp-midi.cjs` + mido). O SoundFont é o de `TRACKLAB_SOUNDFONT`, `config.json` → `soundfont`, ou o
   primeiro de `~/TrackLab/Sons` (lá está o GeneralUser GS 1.471; os testes usam o Sonivox do alphaTab, Apache 2.0). Cada pista vira `synth/<chave>/t<pista>.flac` no tamanho do áudio do vídeo, a partir de onde o tique 0 cai;
   um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont e versão; o `GET songs/{id}`
-  marca `synth.stale` quando o mapa mudou depois (o app oferece atualizar).
+  marca `synth.stale` quando o mapa, a partitura ou a versão (`version` no manifesto) mudou depois (o app refaz ao abrir
+  e oferece "Atualizar a TAB sintetizada").
 - Espectro (`media/spectrum.py`, `GET songs/{id}/spectrum?stem=guitar`): a receita da Lente do TabLab (mono 22 050 Hz,
   Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
@@ -114,7 +117,8 @@ Guitar Pro 8 a ligada depois de um bend: a seta para na ligada que tem vibrato t
 vibrato dela sai da ponta da seta e não se repete na faixa de efeitos, `tracklabBendPaintsVibrato`, e a ligada com
 vibrato aparece entre parênteses; sem vibrato ela fica escondida, como no Guitar Pro; os acentos e o staccato sobre a
 TAB, `TracklabAccentEffectInfo`; "let ring" em vez de "LetRing"; sem o rótulo N.H.; e, no som, o bend segue pela
-cadeia de ligadas, `bendOrigin`, também na cópia pelo JSON, e bend com vibrato na mesma nota vibra depois da subida). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
+cadeia de ligadas, `bendOrigin`, também na cópia pelo JSON, e bend com vibrato na mesma nota vibra de onde o bend para
+de mudar até o fim). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
 sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. A página dá a volta
 no loop sozinha, como o `PlaybackPlan` (antes passava do fim do loop até o próximo aviso do relógio, que vem a cada
 segundo), e com a música num loop que cabe na tela (`windowStart`) a pauta para no pino que o app manda (`view(at, pin)`, a mesma janela da Fita). Fora dele, a pauta rola com o cursor na
@@ -278,7 +282,8 @@ fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. 
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
 (`StemEngine.audition`: a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
 e a agulha volta ao começo; tocando, não interrompe; o
-seek do clique vai antes da escolha, senão calaria a nota); o botão direito numa nota da TAB (também fora da edição),
+seek do clique vai antes da escolha, senão calaria a nota; um clique noutra nota enquanto uma toca encerra a primeira
+parada, sem virar o estudo tocando até o fim); o botão direito numa nota da TAB (também fora da edição),
 numa faixa da Lente (`RightClickCatcher`, um monitor local de `rightMouseDown`) e a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
 dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
 velocidade do estudo). Copiar e colar (⌘C ⌘X ⌘V na edição, ou os botões da coluna): o recorte são as batidas inteiras
@@ -287,7 +292,9 @@ das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fi
 sem endereço nem figura); vai para a área de transferência do macOS como `local.tracklab.tab-clip` (cola noutra música e
 depois de reabrir o app). Colar (`edit.paste`) entra a partir da nota escolhida ou do cursor de inserção, por cima do que
 estava: o que começa no trecho sai, o que vem de antes encurta até ele, e os compassos são refeitos com figuras, pausas e
-ligaduras; não passa do fim da música. Recortar copia e deixa pausa. As coladas ficam escolhidas.
+ligaduras; não passa do fim da música. Uma nota ligada vai com as partes como estão (`parts`: o tamanho e as
+articulações de cada uma; antes, o bend se esticava pela cadeia colada e o vibrato da ligada se perdia). Recortar copia
+e deixa pausa. As coladas ficam escolhidas.
 Voz 2: as mudanças de ritmo (figura, pausa, arrastar, ⌥← ⌥→, colar, nota nova) valem na voz da nota (`timeline` e
 `rebuildBar` levam a voz; uma voz além da 1 sem nota no compasso fica com uma batida vazia, sem pausas à vista); no
 cursor de inserção, Voz 1 / Voz 2 escolhe onde a nota nova entra (na 2, sempre no tique do clique, com as pausas da voz 2

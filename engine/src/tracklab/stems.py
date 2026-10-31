@@ -159,11 +159,12 @@ def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, ca
                                          synth_media.PROCEDURE)))[:8]
     done = manifest.get("synth")
     if done and done.get("key") == key and all(package.file(t["file"]).is_file() for t in done["tracks"].values()):
-        # A chave já junta partitura e mapa: a síntese é desta partitura e deste mapa. Uma feita antes de o manifesto
-        # guardar os dois SHA ganha os dois aqui (sem eles ela pareceria velha para sempre).
-        if done.get("tempoSHA256") != tempo_sha or done.get("scoreSHA256") != score.get("sha256"):
+        # A chave já junta partitura, mapa e versão: a síntese é desta partitura, deste mapa e deste procedimento. Uma
+        # feita antes de o manifesto guardar os três ganha os três aqui (sem eles ela pareceria velha para sempre).
+        if (done.get("tempoSHA256") != tempo_sha or done.get("scoreSHA256") != score.get("sha256")
+                or done.get("version") != synth_media.PROCEDURE):
             def record(data: dict) -> None:
-                data["synth"].update(tempoSHA256=tempo_sha, scoreSHA256=score.get("sha256"))
+                data["synth"].update(tempoSHA256=tempo_sha, scoreSHA256=score.get("sha256"), version=synth_media.PROCEDURE)
 
             done = package.update(record)["synth"]
         if progress is not None:
@@ -182,14 +183,16 @@ def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, ca
 
 
 def synth_state(package: SongPackage) -> dict | None:
-    """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo mudou depois dela."""
+    """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo, a partitura ou o procedimento (uma síntese de
+    uma versão anterior do TrackLab) mudou depois dela."""
     manifest = package.manifest
     done, entry = manifest.get("synth"), manifest.get("tempoMap")
     if not done:
         return None
     current = sha256_file(package.file(entry["file"])) if entry and package.file(entry["file"]).is_file() else None
     score = (manifest.get("score") or {}).get("sha256")
-    return {**done, "stale": current != done.get("tempoSHA256") or (score is not None and score != done.get("scoreSHA256"))}
+    return {**done, "stale": current != done.get("tempoSHA256") or (score is not None and score != done.get("scoreSHA256"))
+            or done.get("version") != synth_media.PROCEDURE}
 
 
 def _publish(package: SongPackage, key: str, build, progress, stage: str, *, activate: bool) -> dict:

@@ -180,7 +180,7 @@ public struct StemSet: Codable, Hashable, Sendable {
 }
 
 /// A TAB sintetizada: uma faixa por pista do Guitar Pro (pelo índice da pista), feita no mapa de tempo de então;
-/// `stale` quando o mapa mudou depois (o Ajuste).
+/// `stale` quando o mapa (o Ajuste), a partitura (a edição) ou a versão da síntese mudou depois.
 public struct SynthSet: Codable, Hashable, Sendable {
     public let key: String
     public let soundfont: String?

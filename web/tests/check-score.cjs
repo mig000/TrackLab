@@ -199,6 +199,39 @@ if (files.length) {
     });
   }
 }
+test("TAB sintetizada: o vibrato de uma nota com bend começa onde o bend para (também no que segura até o fim)", () => {
+  const alphaTab = require("../vendor/alphatab/alphaTab.js");
+  const { BendPoint, BendType, VibratoType } = alphaTab.model;
+  const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(
+    new Uint8Array(fs.readFileSync(path.join(fixtures, "quatro-por-quatro.gp"))), new alphaTab.Settings());
+  const beats = score.tracks[0].staves[0].bars[0].voices[0].beats;
+  // Semínimas no compasso 1: a primeira sobe um tom no primeiro quarto e segura até o fim (como o Guitar Pro 7 grava um
+  // bend com a ponta), a terceira só segura um tom (o "segurar" das ligadas); as duas com vibrato.
+  const shape = (note, type, points) => {
+    note.bendType = type;
+    note.bendPoints = null;
+    for (const [offset, value] of points) note.addBendPoint(new BendPoint(offset, value));
+    note.vibrato = VibratoType.Slight;
+  };
+  shape(beats[0].notes[0], BendType.Bend, [[0, 0], [15, 4], [60, 4]]);
+  shape(beats[2].notes[0], BendType.Hold, [[0, 4], [60, 4]]);
+  const settings = new alphaTab.Settings();
+  settings.notation.extendBendArrowsOnTiedNotes = false;
+  const midi = new alphaTab.midi.MidiFile();
+  new alphaTab.midi.MidiFileGenerator(score, settings, new alphaTab.midi.AlphaSynthMidiFileHandler(midi, true)).generate();
+  const bends = (midi.tracks ? midi.tracks.flatMap((t) => t.events) : midi.events)
+    .filter((e) => e.type === alphaTab.midi.MidiEventType.PerNotePitchBend || e.type === alphaTab.midi.MidiEventType.PitchBend);
+  const top = alphaTab.midi.MidiFileGenerator.getPitchWheel(4);
+  const within = (from, to) => bends.filter((e) => e.tick >= from && e.tick < to).map((e) => e.value);
+  // A subida no primeiro quarto da nota, sem vibrato; depois, em volta do alto, para cima e para baixo.
+  const rise = within(0, 240);
+  assert.ok(rise.every((v, i) => i === 0 || v >= rise[i - 1]) && rise[rise.length - 1] <= top);
+  for (const [from, to] of [[240, 960], [1920, 2880]]) {
+    const values = within(from, to);
+    assert.ok(values.some((v) => v > top + 50) && values.some((v) => v < top - 50), `vibrato de ${from} a ${to}`);
+  }
+});
+
 test("modo página: a batida que toca pelo tique", () => {
   const ticks = [0, 480, 960, 1920];
   assert.equal(core.beatIndexAt(ticks, -1), -1);

@@ -130,7 +130,7 @@ class SongPackage:
         def record(data: dict) -> None:
             data["synth"] = {
                 "key": key, "soundfont": receipt.get("soundfont"), "tempoSHA256": receipt.get("tempoSHA256"),
-                "scoreSHA256": receipt.get("scoreSHA256"),
+                "scoreSHA256": receipt.get("scoreSHA256"), "version": receipt.get("version"),
                 "created": receipt.get("created", now_iso()), "seconds": receipt.get("seconds"),
                 "tracks": {index: {"file": f"synth/{key}/{info['file']}", "name": info.get("name"),
                                    "percussion": bool(info.get("percussion")), "program": info.get("program")}

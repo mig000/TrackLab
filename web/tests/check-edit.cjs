@@ -626,4 +626,25 @@ test("acorde em que só uma nota segue ligada: refazer o compasso não estica a 
   assert.ok(at(score, 720) && at(score, 720).isTieDestination && at(score, 720).string === 5);
 });
 
+test("copiar e colar uma nota ligada leva as partes como estão: o bend no mesmo tempo e o vibrato da ligada", () => {
+  const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, "fixtures", "combinacoes.gp")));
+  let score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, new alphaTab.Settings());
+  const staff = () => score.tracks[0].staves[0];
+  const parts = (bar) => staff().bars[bar - 1].voices[0].beats.filter((b) => b.notes.length).map((b) => [b.playbackStart,
+    b.playbackDuration, b.notes[0].isTieDestination, b.notes[0].vibrato, (b.notes[0].bendPoints || []).map((p) => [p.offset, p.value])]);
+  // O c. 31 (dividido: bend, e a ligada com vibrato) colado no c. 29, pelo recorte em JSON (como vai para o app).
+  const original = parts(31);
+  const clip = JSON.parse(JSON.stringify(edit.copy([staff().bars[30].voices[0].beats[0].notes[0]])));
+  assert.equal(edit.paste(alphaTab, staff(), score.masterBars[28].start, clip, 0), true);
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(parts(29), original);
+  // No quarto tempo de um compasso: a primeira parte se divide na barra e o bend sobe no mesmo tempo (uma semínima).
+  assert.equal(edit.paste(alphaTab, staff(), score.masterBars[22].start + 2880, clip, 0), true);
+  score = edit.refinish(alphaTab, score);
+  const head = staff().bars[22].voices[0].beats.find((b) => b.playbackStart === 2880).notes[0];
+  assert.deepEqual(head.bendPoints.map((p) => [p.offset, p.value]), [[0, 0], [60, 4]]);
+  const tail = staff().bars[23].voices[0].beats.find((b) => b.playbackStart === 960).notes[0];
+  assert.ok(tail.isTieDestination && tail.vibrato);
+});
+
 console.log(`${passed} verificações passaram`);

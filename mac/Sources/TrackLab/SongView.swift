@@ -675,7 +675,8 @@ private struct SynthRow: View {
                         .help("Toca cada pista do Guitar Pro com um SoundFont, no tempo da gravação, para misturar com o "
                               + "áudio (FluidSynth)")
                 } else if model.synthOutdated {
-                    Button("Atualizar a TAB (o mapa mudou)") { Task { await model.synthesize() } }
+                    Button("Atualizar a TAB sintetizada") { Task { await model.synthesize() } }
+                        .help("A partitura, o mapa de tempo ou o sintetizador do TrackLab mudou depois dela")
                 }
             }
         }

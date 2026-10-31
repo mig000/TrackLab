@@ -312,7 +312,8 @@ final class SongModel {
             }
             phase = .ready
             Task { await loadSources() }
-            // A TAB sintetizada é feita em segundo plano ao abrir (ou refeita, se o mapa mudou depois dela).
+            // A TAB sintetizada é feita em segundo plano ao abrir (ou refeita, se o mapa, a partitura ou a versão da
+            // síntese mudou depois dela).
             if detail.score != nil, detail.tempoMap != nil, detail.audio != nil,
                detail.synth == nil || detail.synth?.stale == true {
                 Task { await synthesize(quiet: true) }
