@@ -55088,13 +55088,14 @@
 					endX -= this.renderer.smuflMetrics.postNoteEffectPadding;
 				}
 				if (!isMultiBeatBend) endX -= tabBendArrowSize / 2;
+				this._tracklabReleaseOnNote = isMultiBeatBend && endNoteHasBend && !!endBeat;
 				this._paintBendLines(canvas, startX, topY, endX, startNoteRenderer, note, renderPoints);
 				this._paintBendVibrato(canvas, cx, endX + tabBendArrowSize / 2, topY - smufl.tabBendPerValueHeight * renderPoints[renderPoints.length - 1].lineValue, endNoteRenderer, endNote);
 				canvas.color = color;
 			}
 		}
 		_paintBendVibrato(canvas, cx, vibratoX, topY, endNoteRenderer, endNote) {
-			if (endNote.isTieDestination && endNote.vibrato !== VibratoType.None && !endNote.hasBend) {
+			if (endNote.vibrato !== VibratoType.None && tracklabBendPaintsVibrato(endNote)) {
 				const vibratoEndX = cx + endNoteRenderer.x;
 				const vibrato = new NoteVibratoGlyph(vibratoX - vibratoEndX, 0, endNote.vibrato);
 				vibrato.beat = endNote.beat;
@@ -55166,7 +55167,10 @@
 			} else y1 = cy - smufl.tabBendPerValueHeight * firstPt.lineValue;
 			const x2 = cx + dX * secondPt.offset;
 			let y2;
-			if (secondPt.lineValue === 0) y2 = cy + smufl.tabBendStaffPadding + noteRenderer.getNoteY(note.beat.maxStringNote, NoteYPosition.Center);
+			// TrackLab: a volta que chega numa ligada à vista (entre parênteses) para em cima do número, como no Guitar Pro
+			// (antes a ponta da seta cobria o número).
+			if (secondPt.lineValue === 0 && this._tracklabReleaseOnNote && secondPt.offset === BendPoint.MaxPosition) y2 = cy + smufl.tabBendStaffPadding + noteRenderer.getNoteY(note.beat.maxStringNote, NoteYPosition.Top) - noteNumberAndLinePaddingY;
+			else if (secondPt.lineValue === 0) y2 = cy + smufl.tabBendStaffPadding + noteRenderer.getNoteY(note.beat.maxStringNote, NoteYPosition.Center);
 			else y2 = cy - smufl.tabBendPerValueHeight * secondPt.lineValue;
 			this._paintBendLine(canvas, x1, y1, x2, y2, firstPt, secondPt);
 			const arrowSize = smufl.glyphWidths.get(MusicFontSymbol.ArrowheadBlackDown);
@@ -55507,10 +55511,18 @@
 	//#endregion
 	// TrackLab: o vibrato de uma ligada é desenhado pela seta do bend de antes na cadeia (a ponta da seta e o vibrato
 	// depois dela, como no Guitar Pro) quando a ligada não tem bend dela; o herdado da primeira também fica com a seta.
-	// Com bend próprio (um Hold do Songsterr), a faixa de efeitos o desenha por cima do pontilhado.
+	// Com bend próprio (um Hold do Songsterr), a faixa de efeitos o desenha por cima do pontilhado. Um bend que volta ao
+	// chão antes da ligada não deixa ponta no alto: o vibrato fica na faixa (antes saía também rente à pauta, embaixo da
+	// faixa, e o c. 77 do Sultans mostrava dois).
 	function tracklabBendPaintsVibrato(note) {
 		if (!note.isTieDestination || note.hasBend) return false;
-		for (let n = note.tieOrigin; n; n = n.isTieDestination ? n.tieOrigin : null) if (n.hasBend) return true;
+		for (let n = note.tieOrigin; n; n = n.isTieDestination ? n.tieOrigin : null) if (n.hasBend) return n.bendPoints[n.bendPoints.length - 1].value > 0;
+		return false;
+	}
+	// TrackLab: como no Guitar Pro, a ligadura de uma cadeia que começa num bend fica embaixo da nota (em cima, cruzava
+	// a seta; num acorde, as outras notas continuam em cima).
+	function tracklabTieUnderBend(note) {
+		for (let n = note; n; n = n.isTieDestination ? n.tieOrigin : null) if (n.hasBend) return true;
 		return false;
 	}
 	//#region src/rendering/effects/SlightNoteVibratoEffectInfo.ts
@@ -59308,6 +59320,7 @@
 	var TabTieGlyph = class TabTieGlyph extends NoteTieGlyph {
 		calculateTieDirection() {
 			if (this.isLeftHandTap) return BeamDirection.Up;
+			if (this.constructor === TabTieGlyph && tracklabTieUnderBend(this.startNote)) return BeamDirection.Down;
 			return TabTieGlyph.getBeamDirectionForNote(this.startNote);
 		}
 		static getBeamDirectionForNote(note) {

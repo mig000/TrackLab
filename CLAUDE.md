@@ -139,8 +139,10 @@ pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40
 alphaTab de `vendor/` tem ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
 ocupa largura; sem a linha "rendered by alphaTab"; a velocidade do trinado no Guitar Pro 7; e três para desenhar como o
 Guitar Pro 8 a ligada depois de um bend: a seta para na ligada que tem vibrato também na última batida do compasso, o
-vibrato dela sai da ponta da seta e não se repete na faixa de efeitos, `tracklabBendPaintsVibrato`, e a ligada com
-vibrato aparece entre parênteses; sem vibrato ela fica escondida, como no Guitar Pro; os acentos e o staccato sobre a
+vibrato dela sai da ponta da seta e não se repete na faixa de efeitos, `tracklabBendPaintsVibrato` (um bend que volta ao
+chão antes da ligada deixa o vibrato na faixa: o c. 77 do Sultans mostrava dois), e a ligada com vibrato aparece entre
+parênteses, com a volta parando em cima do número; sem vibrato ela fica escondida, como no Guitar Pro; a ligadura de
+uma cadeia que começa num bend fica embaixo da nota, sem cruzar a seta (`tracklabTieUnderBend`); os acentos e o staccato sobre a
 TAB, `TracklabAccentEffectInfo`; "let ring" em vez de "LetRing"; sem o rótulo N.H.; e, no som, o bend segue pela
 cadeia de ligadas, `bendOrigin`, também na cópia pelo JSON, e bend com vibrato na mesma nota vibra de onde o bend para
 de mudar até o fim). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som

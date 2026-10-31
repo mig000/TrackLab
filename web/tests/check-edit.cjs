@@ -904,6 +904,21 @@ test("o encaixe numa nota ligada põe o vibrato nas partes em que o som vibra", 
   assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.05, vibratoTo: 0.55 }));
   score = edit.refinish(alphaTab, score);
   assert.ok(at(score, 960).vibrato && !at(score, 1920).vibrato);
+  // Sem a chave `bend` (o corretor que só põe vibrato), o bend de cada parte fica como está.
+  score = build();
+  for (const tick of [960, 1920]) {
+    const n = at(score, tick);
+    n.addBendPoint(new alphaTab.model.BendPoint(0, 0));
+    n.addBendPoint(new alphaTab.model.BendPoint(30, 4));
+    n.bendType = alphaTab.model.BendType.Bend;
+  }
+  score = edit.refinish(alphaTab, score);
+  const bends = (sc) => [960, 1920].map((t) => (at(sc, t).bendPoints || []).map((p) => [p.offset, p.value]));
+  const kept = bends(score);
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, vibrato: true, vibratoFrom: 0.6, vibratoTo: 1 }));
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(bends(score), kept);
+  assert.ok(at(score, 1920).vibrato);
   // Com bend, só depois de chegar ao alto: a subida ocupa a primeira inteira.
   score = build();
   assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: [[0, 0], [30, 4]], vibrato: true, vibratoFrom: 0 }));

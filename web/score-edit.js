@@ -357,7 +357,9 @@
 
   // Encaixa a nota no som (o "Encaixar" da Lente do TabLab): a altura medida na mesma corda, o bend que o som faz
   // (pontos do Guitar Pro, até quatro: um bend que volta é Bend e volta, senão Bend) e o vibrato, se o som tem.
-  // `wanted`: { pitch, bend: [[deslocamento, quartos de tom], …] ou null, vibrato }. Devolve se mudou algo.
+  // `wanted`: { pitch, bend: [[deslocamento, quartos de tom], …] ou null, vibrato }; sem a chave `bend`, o bend fica
+  // como está (o corretor que só põe vibrato: antes ele reenviava o bend da cadeia inteira e o repartia de novo, e as
+  // ligadas de uma corda dupla do Sultans of Swing, c. 77, perderam o delas). Devolve se mudou algo.
   function fit(at, note, wanted) {
     const m = at.model;
     const chain = chainOf(note);
@@ -368,9 +370,11 @@
       return false;
     }
     let changed = semitones !== 0;
-    const bend = Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
+    const keep = !("bend" in wanted);
+    const bend = keep ? (note.bendPoints || []).map((p) => [p.offset, p.value])
+      : Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
     const before = JSON.stringify((note.bendPoints || []).map((p) => [p.offset, p.value]));
-    if (before !== JSON.stringify(bend)) {
+    if (!keep && before !== JSON.stringify(bend)) {
       clearGroup(at, note, "bend");
       if (bend.length >= 2) {
         for (const [offset, value] of bend) note.addBendPoint(new m.BendPoint(offset, value));
@@ -411,11 +415,14 @@
     }
     let changed = semitones !== 0;
     for (const n of chain) n.fret = head.fret;
-    const bend = Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
+    const keep = !("bend" in wanted);
     const lengths = chain.map((n) => n.beat.playbackDuration);
     const total = lengths.reduce((a, b) => a + b, 0);
+    // Sem `bend`, o de cada parte fica; para o vibrato, o da primeira na escala da cadeia (onde ele chega ao alto).
+    const bend = keep ? (head.bendPoints || []).map((p) => [p.offset * lengths[0] / total, p.value])
+      : Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
     let done = 0;
-    chain.forEach((n, i) => {
+    if (!keep) chain.forEach((n, i) => {
       const part = i > 0 ? held(bendPart(bend, done / total, (done + lengths[i]) / total))
         : bendPart(bend, done / total, (done + lengths[i]) / total);
       done += lengths[i];

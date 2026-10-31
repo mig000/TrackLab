@@ -51,7 +51,7 @@ extension SongModel {
                 // O vibrato que a escrita já tem, numa nota ligada sem bend: vai às partes em que o som vibra (a página
                 // não muda nada se já está assim, nem numa nota sem ligadas). Não marca a nota: é a mesma leitura.
                 if let fit = sound.fit, fit.vibrato, fit.trill == nil, note.vibrato > 0, note.bend.isEmpty {
-                    var item = fitValue(NoteReading(note: note), note: note, sound: sound)
+                    var item = fitValue(NoteReading(note: note), note: note, sound: sound, keepBend: true)
                     item["track"] = track
                     item["tick"] = note.tick
                     item["string"] = note.string
@@ -78,7 +78,7 @@ extension SongModel {
                 fix.vibrato = true
                 fix.kind = .sound
                 fix.name = "Pelo som"
-                var item = fitValue(fix, note: note, sound: soundNotes[curveKey(note, track: track)])
+                var item = fitValue(fix, note: note, sound: soundNotes[curveKey(note, track: track)], keepBend: true)
                 item["track"] = track
                 item["tick"] = note.tick
                 item["string"] = note.string
@@ -119,9 +119,10 @@ extension SongModel {
     }
 
     /// O que o `fit` da página escreve para uma leitura (o trinado com a figura medida contra a semínima ali).
-    func fitValue(_ reading: NoteReading, note: ScoreNote, sound: SoundNote?) -> [String: Any] {
-        var value: [String: Any] = ["pitch": reading.pitch, "bend": reading.bend.isEmpty ? NSNull() : reading.bend,
-                                    "vibrato": reading.vibrato, "trill": reading.trill ?? NSNull()]
+    /// `keepBend`: só o vibrato muda, e o bend de cada parte fica como está (sem a chave `bend`).
+    func fitValue(_ reading: NoteReading, note: ScoreNote, sound: SoundNote?, keepBend: Bool = false) -> [String: Any] {
+        var value: [String: Any] = ["pitch": reading.pitch, "vibrato": reading.vibrato, "trill": reading.trill ?? NSNull()]
+        if !keepBend { value["bend"] = reading.bend.isEmpty ? NSNull() : reading.bend }
         if reading.trill != nil {
             let beat = grid.seconds(at: note.tick + TempoGrid.ticksPerQuarter) - grid.seconds(at: note.tick)
             value["trillSpeed"] = sound?.fit?.trill?.speed(beatSeconds: beat) ?? 16
