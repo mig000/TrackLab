@@ -184,7 +184,11 @@ final class SongModel {
     }
     /// Muda com as notas e com o mapa (as chaves das curvas levam o tempo da nota): a lista de suspeitas se refaz.
     @ObservationIgnored private var notesVersion = 0
-    @ObservationIgnored private var suspectCache: (key: [Int], list: [(note: ScoreNote, reasons: [SoundDisagreement])])?
+    @ObservationIgnored private var suspectCache: (key: [Int], list: [Suspect])?
+    /// Os sons da faixa da pista (`GET songs/{id}/sounds`), para o som sem nota escrita.
+    private(set) var heardSounds: [HeardSound] = []
+    @ObservationIgnored private var soundsVersion = 0
+    @ObservationIgnored private var soundsKey: String?
 
     /// ⇧ + arrastar em curso: quanto a onda da Fita andou sob as linhas paradas, em segundos.
     private(set) var soundShift = 0.0
@@ -526,6 +530,7 @@ final class SongModel {
         if let kept = spectra[key] {
             spectrumImage = kept.image
             spectrum = kept.spectrum
+            await loadSounds(stem: stem)
             return
         }
         spectrumMessage = "Calculando o espectro…"
@@ -543,6 +548,22 @@ final class SongModel {
             spectrumMessage = nil
         } catch {
             spectrumMessage = error.localizedDescription
+        }
+        await loadSounds(stem: stem)
+    }
+
+    /// Os sons da faixa em que a pista soa (para o som sem nota escrita); uma vez por faixa.
+    func loadSounds(stem: String?) async {
+        let key = "\(detail?.activeStems ?? "")/\(stem ?? "original")"
+        guard key != soundsKey else { return }
+        soundsKey = key
+        do {
+            let found = try await Backend.shared.sounds(id, stem: stem)
+            guard soundsKey == key else { return }
+            heardSounds = found
+            soundsVersion += 1
+        } catch {
+            soundsKey = nil
         }
     }
 
@@ -982,50 +1003,116 @@ final class SongModel {
     }
 
     /// As notas da pista em que o som discorda da escrita (`SoundNote.disagreements`), em ordem de tempo e de corda.
-    func suspects(track: Int) -> [(note: ScoreNote, reasons: [SoundDisagreement])] {
+    /// Uma suspeita: uma nota escrita em que o som discorda (`note` e os motivos), ou um som forte sem nota escrita
+    /// (`note` nil). `seconds` e `pitch` dizem onde, para a navegação e a Lente.
+    struct Suspect {
+        let note: ScoreNote?
+        let seconds: Double
+        let pitch: Int
+        let reasons: [SoundDisagreement]
+        let kind: SuspectKind
+    }
+
+    /// Os tipos de suspeita ligados no filtro da coluna (guardados); o vibrato vem desligado.
+    var suspectKinds: Set<SuspectKind> = {
+        let saved = UserDefaults.standard.stringArray(forKey: "suspectKinds")
+        return saved.map { Set($0.compactMap(SuspectKind.init(rawValue:))) } ?? SuspectKind.standard
+    }() {
+        didSet { UserDefaults.standard.set(suspectKinds.map(\.rawValue).sorted(), forKey: "suspectKinds") }
+    }
+
+    /// Todas as suspeitas da pista, de todos os tipos, em ordem de tempo (o filtro escolhe as que aparecem).
+    func allSuspects(track: Int) -> [Suspect] {
         guard scoreNotes.indices.contains(track) else { return [] }
-        let key = [pitchCurvesVersion, notesVersion, track]
+        let key = [pitchCurvesVersion, notesVersion, track, soundsVersion]
         if let suspectCache, suspectCache.key == key { return suspectCache.list }
-        let list = scoreNotes[track].compactMap { note -> (note: ScoreNote, reasons: [SoundDisagreement])? in
-            guard let reasons = soundNotes[curveKey(note, track: track)]?.disagreements(with: note), !reasons.isEmpty
-            else { return nil }
-            return (note, reasons)
+        var list: [Suspect] = []
+        for note in scoreNotes[track] {
+            guard let sound = soundNotes[curveKey(note, track: track)] else { continue }
+            let start = grid.seconds(at: note.tick)
+            let end = grid.seconds(at: note.tick + note.duration)
+            let reasons = sound.checks(with: note, start: start, end: end)
+            guard let first = reasons.first else { continue }
+            list.append(Suspect(note: note, seconds: start, pitch: note.pitch, reasons: reasons, kind: first.kind))
         }
-        .sorted { ($0.note.tick, $0.note.string) < ($1.note.tick, $1.note.string) }
+        // O som forte sem nota escrita: nos sons da faixa da pista, contra as notas de todas as pistas (o vazamento de
+        // outro instrumento na faixa não conta).
+        if pitchStem(track: track).measured, !heardSounds.isEmpty {
+            let notes = scoreNotes.flatMap { $0 }.map { note in
+                (start: grid.seconds(at: note.tick), end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
+            }
+            for sound in HeardSound.unwritten(heardSounds, notes: notes) {
+                list.append(Suspect(note: nil, seconds: sound.seconds, pitch: sound.pitch, reasons: [], kind: .unwritten))
+            }
+        }
+        list.sort { ($0.seconds, $0.note?.string ?? 0) < ($1.seconds, $1.note?.string ?? 0) }
         suspectCache = (key, list)
         return list
     }
 
-    /// Tab e ⇧Tab: a suspeita seguinte (ou a anterior) da pista, a partir da nota escolhida ou da agulha. Escolhe a
-    /// nota (liga a edição), leva a agulha até ela e diz o que o som tem.
+    /// As suspeitas que aparecem: as dos tipos ligados (numa nota, só os motivos desses tipos).
+    func suspects(track: Int) -> [Suspect] {
+        allSuspects(track: track).compactMap { suspect in
+            guard suspect.note != nil else { return suspectKinds.contains(.unwritten) ? suspect : nil }
+            let reasons = suspect.reasons.filter { suspectKinds.contains($0.kind) }
+            guard let first = reasons.first else { return nil }
+            return Suspect(note: suspect.note, seconds: suspect.seconds, pitch: suspect.pitch, reasons: reasons, kind: first.kind)
+        }
+    }
+
+    /// Quantas suspeitas de cada tipo a pista tem (para o filtro).
+    func suspectCounts(track: Int) -> [SuspectKind: Int] {
+        var counts: [SuspectKind: Int] = [:]
+        for suspect in allSuspects(track: track) {
+            if suspect.note == nil {
+                counts[.unwritten, default: 0] += 1
+            } else {
+                for kind in Set(suspect.reasons.map(\.kind)) { counts[kind, default: 0] += 1 }
+            }
+        }
+        return counts
+    }
+
+    /// As notas suspeitas (dos tipos ligados) da pista, para o contorno vermelho na Lente.
+    func suspectNotes(track: Int) -> Set<ScoreNote> {
+        Set(suspects(track: track).compactMap(\.note))
+    }
+
+    /// Os sons sem nota escrita (se o tipo está ligado), para a Lente.
+    func unwrittenSounds(track: Int) -> [Suspect] {
+        suspectKinds.contains(.unwritten) ? allSuspects(track: track).filter { $0.note == nil } : []
+    }
+
+    /// Tab e ⇧Tab: a suspeita seguinte (ou a anterior) da pista, a partir da nota escolhida ou da agulha. Numa nota,
+    /// escolhe a nota (liga a edição); num som sem nota, põe o cursor de inserção ali, na corda mais à mão e com a casa
+    /// sugerida. Leva a agulha até lá e diz o que o som tem.
     func nextSuspect(_ delta: Int) {
         let track = scoreTrack
         let list = suspects(track: track)
         guard !list.isEmpty else {
-            tabMessage = measuring ? "Medindo o som das notas…" : "Nenhuma nota suspeita nesta pista."
+            tabMessage = measuring ? "Medindo o som das notas…" : "Nenhuma suspeita desses tipos nesta pista."
             return
         }
-        let here: (tick: Double, string: Int)? = selectedScoreNote().flatMap { $0.track == track ? ($0.note.tick, $0.note.string) : nil }
+        let here = selectedScoreNote().flatMap { $0.track == track ? grid.seconds(at: $0.note.tick) : nil }
+            ?? engine.currentTime
         let index: Int
-        if let here {
-            let key = (here.tick, here.string)
-            if delta > 0 {
-                index = list.firstIndex { ($0.note.tick, $0.note.string) > key } ?? 0
-            } else {
-                index = list.lastIndex { ($0.note.tick, $0.note.string) < key } ?? list.count - 1
-            }
+        if delta > 0 {
+            index = list.firstIndex { $0.seconds > here + 0.005 } ?? 0
         } else {
-            let now = grid.tick(at: engine.currentTime)
-            if delta > 0 {
-                index = list.firstIndex { $0.note.tick >= now - 1 } ?? 0
-            } else {
-                index = list.lastIndex { $0.note.tick < now - 1 } ?? list.count - 1
-            }
+            index = list.lastIndex { $0.seconds < here - 0.005 } ?? list.count - 1
         }
-        let (note, reasons) = list[index]
-        selectNote(note, track: track)
-        engine.seek(to: grid.seconds(at: note.tick))
-        tabMessage = "Suspeita \(index + 1) de \(list.count)\(measuring ? "…" : ""): " + Self.describe(reasons) + " · F encaixa"
+        let suspect = list[index]
+        let counter = "Suspeita \(index + 1) de \(list.count)\(measuring ? "…" : ""): "
+        if let note = suspect.note {
+            selectNote(note, track: track)
+            engine.seek(to: suspect.seconds)
+            tabMessage = counter + Self.describe(suspect.reasons) + " · F encaixa"
+        } else {
+            if !editingTab { editingTab = true }
+            bridge.edit("caretPitch", ["track": track, "tick": grid.tick(at: suspect.seconds), "pitch": suspect.pitch])
+            engine.seek(to: suspect.seconds)
+            tabMessage = counter + "soa \(Self.pitchName(suspect.pitch)) sem nota escrita · Pôr nota (ou a casa) escreve"
+        }
     }
 
     /// O que o som tem, em palavras.
@@ -1036,6 +1123,9 @@ final class SongModel {
             case let .bend(quarterTones): quarterTones > 0 ? "o som dobra \(bendName(quarterTones))" : "o som não dobra"
             case let .trill(low, high): "trinado \(pitchName(low))⇄\(pitchName(high))"
             case .noTrill: "o som não faz o trinado escrito"
+            case let .attack(ms): "o ataque soa \(abs(ms)) ms \(ms < 0 ? "antes" : "depois")"
+            case .silent: "a nota não soa"
+            case .vibrato: "o som tem vibrato, não escrito"
             }
         }
         .joined(separator: ", ")
@@ -1245,6 +1335,14 @@ final class SongModel {
         if engine.isPlaying { engine.pause() }
         setLoop(seconds, seekToStart: true)
         engine.play()
+    }
+
+    /// Dividir (/): a nota vira duas ligadas com o mesmo som, para a segunda ter articulação dela (o vibrato no fim de
+    /// um bend). A página divide no cursor de inserção, se ele está dentro de uma nota, senão na agulha, se ela está
+    /// dentro da escolhida, senão no meio; na grade.
+    func splitNote() {
+        guard editingTab, tabSelection != nil || tabCaret != nil, !grid.isEmpty else { return }
+        bridge.edit("split", grid.tick(at: engine.currentTime))
     }
 
     /// − e = na edição: a figura da metade ou do dobro (com o mesmo ponto ou tercina).

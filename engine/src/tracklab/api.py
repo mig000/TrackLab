@@ -226,13 +226,9 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(404, "Arquivo não encontrado no pacote.")
         return FileResponse(path)
 
-    @app.get("/api/songs/{song_id}/spectrum")
-    def song_spectrum(song_id: str, stem: str | None = None):
-        """O espectro da Fita (media/spectrum.py) do áudio original ou de uma faixa da separação ativa, em bytes
-        (quadros × linhas); as medidas vão nos cabeçalhos X-Frames, X-Rows, X-Hop, X-Low e X-Per-Semitone. Calculado
-        uma vez e guardado em `peaks/`."""
-        from fastapi.responses import Response
-
+    def spectrum_of(song_id: str, stem: str | None) -> tuple[dict, bytes, str]:
+        """O espectro (media/spectrum.py) do original ou de uma faixa da separação ativa: as medidas, os bytes e o
+        nome com que fica em `peaks/` (calculado uma vez)."""
         from .media import spectrum
 
         found = song(song_id)
@@ -263,9 +259,39 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             for stale in [*found.file("peaks").glob(f"spectrum-{base}.*"), *found.file("peaks").glob(f"spectrum-{base}-v*")]:
                 if stale not in (data_file, meta_file):
                     stale.unlink(missing_ok=True)
+        return meta, data, name
+
+    @app.get("/api/songs/{song_id}/spectrum")
+    def song_spectrum(song_id: str, stem: str | None = None):
+        """O espectro da Fita (media/spectrum.py) do áudio original ou de uma faixa da separação ativa, em bytes
+        (quadros × linhas); as medidas vão nos cabeçalhos X-Frames, X-Rows, X-Hop, X-Low e X-Per-Semitone. Calculado
+        uma vez e guardado em `peaks/`."""
+        from fastapi.responses import Response
+
+        meta, data, _ = spectrum_of(song_id, stem)
         headers = {"X-Frames": str(meta["frames"]), "X-Rows": str(meta["rows"]), "X-Hop": repr(meta["hop"]),
                    "X-Low": str(meta["low"]), "X-Per-Semitone": str(meta["perSemitone"])}
         return Response(content=data, media_type="application/octet-stream", headers=headers)
+
+    @app.get("/api/songs/{song_id}/sounds")
+    def song_sounds(song_id: str, stem: str | None = None) -> dict:
+        """Os sons da faixa (media/sounds.py): os ataques fortes e a altura de cada um, `{sounds: [[segundo, altura,
+        dB, dB abaixo do mais forte em ±2 s], …]}`, para o app achar o som sem nota escrita. Lidos no espectro da
+        faixa e guardados em `peaks/`."""
+        import numpy as np
+
+        from .media import sounds
+
+        meta, data, name = spectrum_of(song_id, stem)
+        found = song(song_id)
+        cache = found.file(f"peaks/sounds-{name}-s{sounds.VERSION}.json")
+        if cache.is_file():
+            return read_json(cache)
+        grid = np.frombuffer(data, dtype=np.uint8).reshape(meta["frames"], meta["rows"])
+        result = {"sounds": sounds.detect(grid, meta["hop"], meta["low"], meta["perSemitone"]), "version": sounds.VERSION}
+        cache.parent.mkdir(exist_ok=True)
+        atomic_json(cache, result)
+        return result
 
     @app.post("/api/songs/{song_id}/pitch")
     def song_pitch(song_id: str, body: dict = Body(...)) -> dict:

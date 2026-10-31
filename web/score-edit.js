@@ -18,11 +18,13 @@
   // As articulações da paleta: chave, grupo (no mesmo grupo, ligar uma desliga as outras) e onde o alphaTab a guarda.
   // Os bends são em quartos de tom (o alphaTab), com o deslocamento de 0 a 60 ao longo da nota, e com o tipo dito:
   // o Guitar Pro 7 guarda até quatro pontos por bend e perde um "Custom" de cinco (o aviso da exportação do TabLab).
+  // O Bend é como o do Guitar Pro 8: dois pontos, chega no alto a um quarto da nota e fica (com um terceiro ponto no
+  // fim, a gravação reduzia aos das pontas e a subida ia até o fim da nota).
   const BENDS = {
-    "bend-half": { type: "Bend", points: [[0, 0], [15, 2], [60, 2]] },
-    "bend-full": { type: "Bend", points: [[0, 0], [15, 4], [60, 4]] },
-    "bend-1.5": { type: "Bend", points: [[0, 0], [15, 6], [60, 6]] },
-    "bend-2": { type: "Bend", points: [[0, 0], [15, 8], [60, 8]] },
+    "bend-half": { type: "Bend", points: [[0, 0], [15, 2]] },
+    "bend-full": { type: "Bend", points: [[0, 0], [15, 4]] },
+    "bend-1.5": { type: "Bend", points: [[0, 0], [15, 6]] },
+    "bend-2": { type: "Bend", points: [[0, 0], [15, 8]] },
     "bend-release": { type: "BendRelease", points: [[0, 0], [20, 4], [40, 4], [60, 0]] },
     "prebend": { type: "Prebend", points: [[0, 4], [60, 4]] },
     "prebend-release": { type: "PrebendRelease", points: [[0, 4], [30, 4], [60, 0]] },
@@ -87,6 +89,7 @@
     if (beat && beat.pickStroke === m.PickStroke.Down) on.push("pick-down");
     if (beat && beat.pickStroke === m.PickStroke.Up) on.push("pick-up");
     if (beat && beat.tap) on.push("tap");
+    if (note.isTieDestination) on.push("tie");
     return on;
   }
 
@@ -101,6 +104,10 @@
     const peak = Math.max(...values);
     const first = values[0];
     const last = values[values.length - 1];
+    // A ligada que só segura o alto do bend de antes (Hold) não é um pré-bend dela.
+    if (note.isTieDestination && values.every((v) => v === first)) {
+      return null;
+    }
     if (first > 0) {
       return last < first ? "prebend-release" : "prebend";
     }
@@ -117,18 +124,45 @@
     if (!group) {
       return false;
     }
+    // Como o Guitar Pro grava (conferido nele): o P.M. vale para a nota com as ligadas seguintes; o vibrato e o let ring
+    // ficam só na nota escolhida (a ligada vibra com ela no som, e a linha do vibrato fica sobre ela).
+    const notes = [note];
+    if (group === "palm-mute") {
+      for (let n = note.tieDestination; n && n.isTieDestination; n = n.tieDestination) notes.push(n);
+    }
     const was = techniquesOf(at, note).includes(key);
-    clearGroup(at, note, group);
-    if (!was) {
-      apply(at, note, key);
-      if (key === "dead") {
-        for (const other of ["bend", "vibrato", "harmonic"]) clearGroup(at, note, other);
-      }
-      if (group === "bend" || group === "vibrato" || group === "harmonic") {
-        note.isDead = false;
+    for (const n of notes) {
+      clearGroup(at, n, group);
+      if (!was) {
+        apply(at, n, key);
+        if (key === "dead") {
+          for (const other of ["bend", "vibrato", "harmonic"]) clearGroup(at, n, other);
+        }
+        if (group === "bend" || group === "vibrato" || group === "harmonic") {
+          n.isDead = false;
+        }
+        // P.M. e let ring não convivem (o Guitar Pro tira um ao pôr o outro; o let ring tira o P.M. das ligadas também).
+        if (key === "palm-mute") n.isLetRing = false;
       }
     }
+    if (key === "let-ring" && !was) {
+      for (let n = note; n; n = n.tieDestination && n.tieDestination.isTieDestination ? n.tieDestination : null) {
+        n.isPalmMute = false;
+      }
+    }
+    if (group === "bend") freeFollowers(at, note);
     return true;
+  }
+
+  // As ligadas depois de um bend ficam sem bend, como o Guitar Pro grava: elas continuam no alto do bend de antes (a
+  // seta segue por elas até uma com vibrato). Um Hold que estivesse nelas sai (com ele, o Guitar Pro desenha o
+  // pontilhado e o vibrato por cima dele); a primeira com bend próprio, que sobe ou desce, para a busca.
+  function freeFollowers(at, note) {
+    for (let n = note.tieDestination; n && n.isTieDestination; n = n.tieDestination) {
+      const own = (n.bendPoints || []).map((p) => p.value);
+      if (own.length && own.some((v) => v !== own[0])) break;
+      if (own.length) setBend(at, n, [], true);
+    }
   }
 
   function clearGroup(at, note, group) {
@@ -194,6 +228,9 @@
     }
     if (HARMONICS[key]) {
       note.harmonicType = m.HarmonicType[HARMONICS[key]];
+      // O Guitar Pro precisa do traste do harmônico (sem ele, o harmônico some ao abrir): o natural soa no traste da
+      // casa, e os outros uma oitava acima da nota presa.
+      note.harmonicValue = key === "harmonic-natural" ? note.fret : 12;
       return;
     }
     switch (key) {
@@ -307,6 +344,9 @@
   // `wanted`: { pitch, bend: [[deslocamento, quartos de tom], …] ou null, vibrato }. Devolve se mudou algo.
   function fit(at, note, wanted) {
     const m = at.model;
+    const chain = chainOf(note);
+    if (chain.length > 1 && wanted.trill == null) return fitChain(at, chain, wanted);
+    note = chain[0];
     const semitones = Math.round(wanted.pitch) - note.realValue;
     if (semitones !== 0 && !transpose(note, semitones)) {
       return false;
@@ -339,6 +379,45 @@
     if (value !== note.trillValue || (value >= 0 && speed !== note.trillSpeed)) {
       note.trillValue = value;
       if (value >= 0) note.trillSpeed = speed;
+      changed = true;
+    }
+    return changed;
+  }
+
+  // O encaixe numa nota ligada (o app mede a nota inteira): a altura na primeira (as ligadas seguem a casa dela), o
+  // bend medido repartido entre as ligadas pelo tempo de cada uma, e o vibrato onde já está escrito (sem nenhum, na
+  // última: o vibrato no fim de um bend).
+  function fitChain(at, chain, wanted) {
+    const m = at.model;
+    const head = chain[0];
+    const semitones = Math.round(wanted.pitch) - head.realValue;
+    if (semitones !== 0 && !transpose(head, semitones)) {
+      return false;
+    }
+    let changed = semitones !== 0;
+    for (const n of chain) n.fret = head.fret;
+    const bend = Array.isArray(wanted.bend) ? wanted.bend.slice(0, 4) : [];
+    const lengths = chain.map((n) => n.beat.playbackDuration);
+    const total = lengths.reduce((a, b) => a + b, 0);
+    let done = 0;
+    chain.forEach((n, i) => {
+      const part = i > 0 ? held(bendPart(bend, done / total, (done + lengths[i]) / total))
+        : bendPart(bend, done / total, (done + lengths[i]) / total);
+      done += lengths[i];
+      if (JSON.stringify((n.bendPoints || []).map((p) => [p.offset, p.value])) !== JSON.stringify(part)) {
+        setBend(at, n, part, i > 0);
+        changed = true;
+      }
+    });
+    if (wanted.vibrato && !chain.some((n) => n.vibrato)) {
+      chain[chain.length - 1].vibrato = m.VibratoType.Slight;
+      changed = true;
+    } else if (!wanted.vibrato && chain.some((n) => n.vibrato)) {
+      for (const n of chain) n.vibrato = m.VibratoType.None;
+      changed = true;
+    }
+    if (head.trillValue >= 0) {
+      head.trillValue = -1;
       changed = true;
     }
     return changed;
@@ -402,12 +481,17 @@
         const start = beat.absolutePlaybackStart;
         const end = start + beat.playbackDuration;
         const last = events[events.length - 1];
-        if (last && beat.notes.every((n) => n.isTieDestination) && Math.abs(last.end - start) < 1) {
+        // A batida continua a anterior só se todas as cordas dela seguem ligadas: num acorde em que só uma nota segue,
+        // juntar as duas esticava as outras notas do acorde até o fim da ligada.
+        const piece = last && (last.tail.length ? last.tail[last.tail.length - 1] : last.beat);
+        const same = piece && piece.notes.length === beat.notes.length
+          && beat.notes.every((n) => n.isTieDestination && piece.notes.some((p) => p.string === n.string));
+        if (last && same && Math.abs(last.end - start) < 1) {
           last.end = end;
           last.tail.push(beat);
           continue;
         }
-        events.push({ start, end, beat, tail: [] });
+        events.push({ start, end, beat, tail: [], from: start });
       }
     }
     return events;
@@ -435,6 +519,237 @@
     return false;
   }
 
+  // Uma cópia ligada da nota: a casa e a corda; com `full`, também o que a ligada tem de seu (o vibrato, o bend
+  // segurado), sem o que é do ataque ou leva à nota seguinte (slides, ligado, acento).
+  function tieCopy(at, original, full) {
+    const m = at.model;
+    const copy = new m.Note();
+    if (full) {
+      Object.assign(copy, plain(original));
+      for (const p of original.bendPoints || []) copy.addBendPoint(new m.BendPoint(p.offset, p.value));
+      copy.slideInType = m.SlideInType.None;
+      copy.slideOutType = m.SlideOutType.None;
+      copy.isHammerPullOrigin = false;
+      copy.accentuated = m.AccentuationType.None;
+    }
+    copy.string = original.string;
+    copy.fret = original.fret;
+    copy.isTieDestination = true;
+    return copy;
+  }
+
+  // Onde uma nota ligada muda de articulação (a ligada com vibrato depois do bend, o bend segurado): o compasso refeito
+  // corta ali, na mesma distância do começo da nota, e reaproveita a batida. `ev.breaks` dá os cortes à mão (o split).
+  function breaksOf(at, ev) {
+    if (!ev.breaks) {
+      const from = ev.from === undefined ? ev.start : ev.from;
+      const own = (n) => techniquesOf(at, n).some((k) => k !== "tie") || (n.bendPoints || []).length > 0;
+      ev.breaks = (ev.tail || []).filter((b) => b.notes.some(own))
+        .map((b) => ({ tick: ev.start + b.absolutePlaybackStart - from, beat: b }));
+    }
+    return ev.breaks.filter((x) => x.tick > ev.start && x.tick < ev.end);
+  }
+
+  // O bend (quartos de tom) no deslocamento `x` (0 a 60) pelos pontos [[deslocamento, valor], …].
+  function bendAt(points, x) {
+    if (x <= points[0][0]) return points[0][1];
+    for (let i = 1; i < points.length; i++) {
+      const [x0, y0] = points[i - 1];
+      const [x1, y1] = points[i];
+      if (x <= x1) return x1 > x0 ? y0 + ((y1 - y0) * (x - x0)) / (x1 - x0) : y1;
+    }
+    return points[points.length - 1][1];
+  }
+
+  // O trecho de `a` a `b` (frações da nota, 0 a 1) de um bend, nos 0 a 60 do trecho: as pontas interpoladas, os
+  // pontos de dentro, sem os do meio de um trecho reto, até quatro (o Guitar Pro 7 perde um bend de cinco). Vazio sem
+  // bend no trecho.
+  function bendPart(points, a, b) {
+    if (!points.length || b <= a) return [];
+    const xa = a * 60;
+    const xb = b * 60;
+    let out = [[xa, bendAt(points, xa)], ...points.filter(([x]) => x > xa && x < xb), [xb, bendAt(points, xb)]]
+      .map(([x, y]) => [Math.round(((x - xa) / (xb - xa)) * 60), Math.round(y)]);
+    out = out.filter((p, i) => i === 0 || i === out.length - 1 || p[1] !== out[i - 1][1] || p[1] !== out[i + 1][1]);
+    // Parado antes de subir ou depois de chegar fica implícito, como o Guitar Pro 7 guarda (um Bend de três pontos ele
+    // reduz aos das pontas, e a subida esticava até o fim da nota).
+    while (out.length > 2 && out[0][1] === out[1][1]) out.shift();
+    while (out.length > 2 && out[out.length - 1][1] === out[out.length - 2][1]) out.pop();
+    while (out.length > 4) {
+      // Sai o ponto de dentro que menos se afasta da reta entre os vizinhos.
+      let worst = 1;
+      let least = Infinity;
+      for (let i = 1; i < out.length - 1; i++) {
+        const [x0, y0] = out[i - 1];
+        const [x1, y1] = out[i + 1];
+        const line = x1 > x0 ? y0 + ((y1 - y0) * (out[i][0] - x0)) / (x1 - x0) : y0;
+        if (Math.abs(out[i][1] - line) < least) {
+          least = Math.abs(out[i][1] - line);
+          worst = i;
+        }
+      }
+      out.splice(worst, 1);
+    }
+    return out.some((p) => p[1] !== 0) ? out : [];
+  }
+
+  // O bend de cada corda de uma nota (com as ligadas), em frações da nota inteira como ela era (0 a 60 = do começo ao
+  // fim dela; uma ligada sem pontos segura o alto da de antes). Guardado antes de o compasso ser refeito: as partes novas
+  // recebem o mesmo som no mesmo tempo (`keepBend`). Antes os pontos ficavam relativos à parte, e juntar as ligadas numa
+  // figura maior esticava a subida (o bend de uma semínima ligada à mínima subia em uma semínima, e não em 1/16).
+  function curvesOf(ev) {
+    if (ev.curves) return ev.curves;
+    const pieces = [ev.beat, ...(ev.tail || [])];
+    // Uma batida nova (colada, posta no meio de outra) ainda não tem duração: vale a do intervalo.
+    const lengths = pieces.map((beat) => beat.playbackDuration);
+    if (!(lengths.every((x) => x > 0))) lengths.splice(0, lengths.length, ...pieces.map(() => (ev.end - ev.start) / pieces.length));
+    const total = lengths.reduce((sum, x) => sum + x, 0);
+    const curves = new Map();
+    let t = 0;
+    for (const [index, beat] of pieces.entries()) {
+      const length = lengths[index];
+      for (const note of beat.notes) {
+        const curve = curves.get(note.string) || { points: [], held: 0, bent: false };
+        const own = note.bendPoints || [];
+        if (own.length) {
+          for (const p of own) curve.points.push([((t + (p.offset / 60) * length) / total) * 60, p.value]);
+          curve.held = own[own.length - 1].value;
+          curve.bent = true;
+        } else if (curve.held > 0) {
+          curve.points.push([(t / total) * 60, curve.held], [((t + length) / total) * 60, curve.held]);
+        }
+        curves.set(note.string, curve);
+      }
+      t += length;
+    }
+    ev.curves = curves;
+    ev.total = total;
+    return curves;
+  }
+
+  // A parte da nota que começa `offset` tiques depois do começo dela e dura `length`: o bend de cada corda no tempo dela
+  // (a primeira parte com o tipo dele; as ligadas que só seguram o alto, sem bend, como o Guitar Pro grava).
+  function keepBend(at, ev, beat, offset, length) {
+    const curves = curvesOf(ev);
+    for (const note of beat.notes) {
+      const curve = curves.get(note.string);
+      if (!curve || !curve.bent) continue;
+      const part = bendPart(curve.points, offset / ev.total, (offset + length) / ev.total);
+      setBend(at, note, offset === 0 ? part : held(part), offset > 0);
+    }
+  }
+
+  // Uma parte ligada que só fica no alto do bend de antes não leva bend (o Guitar Pro grava assim).
+  function held(points) {
+    return points.every((p) => p[1] === (points[0] || [0, 0])[1]) ? [] : points;
+  }
+
+  // Os pontos do bend na nota, com o tipo pela forma; `tied`: uma ligada que fica no alto é Hold.
+  function setBend(at, note, points, tied) {
+    const m = at.model;
+    clearGroup(at, note, "bend");
+    if (points.length < 2) return;
+    for (const [x, y] of points) note.addBendPoint(new m.BendPoint(x, y));
+    const first = points[0][1];
+    const last = points[points.length - 1][1];
+    note.bendType = points.every((p) => p[1] === first) ? (tied ? m.BendType.Hold : m.BendType.Prebend)
+      : first > 0 ? (last < first ? m.BendType.PrebendRelease : m.BendType.PrebendBend)
+      : last === 0 ? m.BendType.BendRelease : m.BendType.Bend;
+  }
+
+  // Os pontos do bend de uma nota ligada: os dela, ou o alto em que a anterior deixou a corda (uma ligada sem pontos
+  // segura o bend de antes).
+  function bendOf(note) {
+    if (note.bendPoints && note.bendPoints.length) return note.bendPoints.map((p) => [p.offset, p.value]);
+    for (let n = note.tieOrigin; n; n = n.tieOrigin) {
+      if (n.bendPoints && n.bendPoints.length) {
+        const top = n.bendPoints[n.bendPoints.length - 1].value;
+        return top > 0 ? [[0, top], [60, top]] : [];
+      }
+    }
+    return [];
+  }
+
+  // A nota (a batida dela, com o acorde) dividida em duas ligadas no tique `tick`, sem mudar o som: o bend se reparte
+  // entre as duas (a segunda segura no alto), a segunda continua o vibrato, o let ring, o P.M. e o harmônico, e leva o
+  // slide e o ligado para a nota seguinte se é a última. As outras ligadas ficam onde estão. Devolve true ou o motivo
+  // ("short", "same", "grace", "figure", "missing").
+  function split(at, note, tick) {
+    const m = at.model;
+    const staff = note.beat.voice.bar.staff;
+    const v = note.beat.voice.index;
+    const events = timeline(staff, v);
+    const ev = events.find((e) => e.beat === note.beat || e.tail.includes(note.beat));
+    if (!ev) return "missing";
+    tick = Math.round(tick);
+    if (tick - ev.start < MIN_TICKS || ev.end - tick < MIN_TICKS) return "short";
+    const pieces = [ev.beat, ...ev.tail];
+    if (pieces.some((b) => Math.abs(b.absolutePlaybackStart - tick) < 1)) return "same";
+    // O bend da nota inteira, antes de mexer nas partes: o compasso refeito o reparte pelo tempo.
+    curvesOf(ev);
+    const first = barAt(staff, ev.start);
+    const last = barAt(staff, ev.end - 1);
+    if (hasGrace(at, staff, first, last, v)) return "grace";
+    // O pedaço que soa no tique fica com o começo; a batida nova, com o resto.
+    const piece = pieces.filter((b) => b.absolutePlaybackStart < tick).pop();
+    const cut = (tick - piece.absolutePlaybackStart) / piece.playbackDuration;
+    const ending = piece === pieces[pieces.length - 1];
+    const beat = new m.Beat();
+    for (const original of piece.notes) {
+      const copy = tieCopy(at, original, piece !== ev.beat);
+      copy.vibrato = original.vibrato;
+      copy.isPalmMute = original.isPalmMute;
+      copy.isLetRing = original.isLetRing;
+      copy.harmonicType = original.harmonicType;
+      copy.harmonicValue = original.harmonicValue;
+      const points = bendOf(original);
+      setBend(at, original, bendPart(points, 0, cut), piece !== ev.beat);
+      setBend(at, copy, held(bendPart(points, cut, 1)), true);
+      if (ending) {
+        copy.slideOutType = original.slideOutType;
+        copy.isHammerPullOrigin = original.isHammerPullOrigin;
+        clearGroup(at, original, "slide-out");
+        clearGroup(at, original, "hammer");
+      }
+      beat.addNote(copy);
+    }
+    // Os cortes de agora ficam (cada ligada com a sua batida), mais o novo.
+    ev.breaks = [...ev.tail.map((b) => ({ tick: b.absolutePlaybackStart, beat: b })), { tick, beat }]
+      .sort((a, b) => a.tick - b.tick);
+    for (let b = first; b <= last; b++) {
+      if (!rebuildBar(at, staff.bars[b], events, v)) return "figure";
+    }
+    return true;
+  }
+
+  // L: a nota passa a ser ligada à da batida anterior na mesma corda (continua o som dela, sem atacar: a casa dela e o
+  // alto do bend, segurado) ou deixa de ser (ataca de novo). Devolve true ou o motivo ("tie": sem nota antes na corda).
+  function tie(at, note) {
+    const m = at.model;
+    if (note.isTieDestination) {
+      note.isTieDestination = false;
+      if (note.bendType === m.BendType.Hold) note.bendType = m.BendType.Prebend;
+      return true;
+    }
+    const before = note.beat.previousBeat;
+    const previous = before ? before.notes.find((n) => n.string === note.string) : null;
+    if (!previous) return "tie";
+    note.isTieDestination = true;
+    note.fret = previous.fret;
+    // Sem bend: a ligada continua no alto do bend de antes, como o Guitar Pro grava.
+    if (note.bendType === m.BendType.Hold) setBend(at, note, [], true);
+    return true;
+  }
+
+  // As notas de uma nota ligada, da primeira à última (a cadeia de ligaduras na corda).
+  function chainOf(note) {
+    let head = note;
+    while (head.tieOrigin && head.isTieDestination) head = head.tieOrigin;
+    const chain = [head];
+    for (let n = head.tieDestination; n && n.isTieDestination; n = n.tieDestination) chain.push(n);
+    return chain;
+  }
+
   // Um compasso refeito a partir dos intervalos da voz `v`: pausas nos espaços, o primeiro pedaço de cada intervalo na
   // batida original, os outros em cópias ligadas. Uma voz além da 1 sem nota no compasso fica vazia (sem pausas à
   // vista). Devolve false se um trecho não cabe em figuras.
@@ -450,7 +765,21 @@
       const a = Math.max(ev.start, from);
       const b = Math.min(ev.end, to);
       if (a > t) items.push({ length: a - t });
-      items.push({ ev, length: b - a, first: ev.start >= from });
+      // O pedaço do compasso, cortado onde a ligada muda de articulação: cada parte reaproveita a batida que começa
+      // nela (a original, ou a ligada dividida) e as outras partes são cópias ligadas da que soa ali.
+      const breaks = breaksOf(at, ev);
+      const before = breaks.filter((x) => x.tick <= a).pop();
+      let start = a;
+      let source = before ? before.beat : ev.beat;
+      let reuse = ev.start >= from && a === ev.start ? ev.beat : before && before.tick === a ? before.beat : null;
+      curvesOf(ev);
+      for (const cut of breaks.filter((x) => x.tick > a && x.tick < b)) {
+        items.push({ ev, length: cut.tick - start, reuse, source, pos: start });
+        start = cut.tick;
+        source = cut.beat;
+        reuse = cut.beat;
+      }
+      items.push({ ev, length: b - start, reuse, source, pos: start });
       t = b;
     }
     if (t < to) items.push({ length: to - t });
@@ -466,23 +795,20 @@
     for (const item of items) {
       const figures = decompose(Math.round(item.length));
       if (!figures) return false;
+      let pos = item.pos;
       figures.forEach((figure, i) => {
         let beat;
-        if (item.ev && item.first && i === 0) {
-          beat = item.ev.beat;
+        if (item.reuse && i === 0) {
+          beat = item.reuse;
         } else {
           beat = new at.model.Beat();
           if (item.ev) {
-            for (const original of item.ev.beat.notes) {
-              const copy = new at.model.Note();
-              copy.string = original.string;
-              copy.fret = original.fret;
-              copy.isTieDestination = true;
-              beat.addNote(copy);
-            }
+            for (const original of item.source.notes) beat.addNote(tieCopy(at, original, item.source !== item.ev.beat));
           }
         }
         setFigure(at, beat, figure);
+        if (item.ev) keepBend(at, item.ev, beat, pos - item.ev.start, figure.ticks);
+        pos += figure.ticks;
         beats.push(beat);
       });
     }
@@ -605,7 +931,8 @@
     if (index < 0) {
       return false;
     }
-    notes.splice(index, 1);
+    // O do alphaTab tira a nota também da busca por corda (que acha a origem de uma ligadura).
+    note.beat.removeNote(note);
     notes.forEach((other, i) => {
       other.index = i;
     });
@@ -983,7 +1310,72 @@
 
   // A partitura de novo pelo JSON do alphaTab, que roda o finish: as ligações e as formas ficam certas.
   function snapshot(at, score) {
+    tidyLinks(at, score);
     return at.model.JsonConverter.scoreToJsObject(score);
+  }
+
+  // As ligações entre notas (ligadura, ligado, slide, slur) de mão dupla e só entre notas da partitura. Um slide
+  // desligado ou uma nota apagada deixava a outra ponta apontando para ela, e o alphaTab quebrava ao ler a cópia de
+  // volta (procura a origem pelo id e não acha): a edição parava de desenhar e de gravar.
+  function tidyLinks(at, score) {
+    const notes = new Set();
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        for (const bar of staff.bars) {
+          for (const voice of bar.voices) {
+            for (const beat of voice.beats) {
+              for (const note of beat.notes) notes.add(note);
+            }
+          }
+        }
+      }
+    }
+    for (const note of notes) {
+      const slide = note.slideOrigin;
+      if (slide && (!notes.has(slide) || slide.slideTarget !== note)) note.slideOrigin = null;
+      const hammer = note.hammerPullOrigin;
+      if (hammer && (!notes.has(hammer) || !hammer.isHammerPullOrigin || hammer.hammerPullDestination !== note)) {
+        note.hammerPullOrigin = null;
+      }
+      const slur = note.slurOrigin;
+      if (slur && (!notes.has(slur) || slur.slurDestination !== note)) note.slurOrigin = null;
+      if (note.tieOrigin && !notes.has(note.tieOrigin)) note.tieOrigin = null;
+      if (note.slideTarget && !notes.has(note.slideTarget)) note.slideTarget = null;
+      if (note.hammerPullDestination && (!notes.has(note.hammerPullDestination) || !note.isHammerPullOrigin)) {
+        note.hammerPullDestination = null;
+      }
+      if (note.slurDestination && !notes.has(note.slurDestination)) note.slurDestination = null;
+      if (note.tieDestination && !notes.has(note.tieDestination)) note.tieDestination = null;
+    }
+    // As ligaduras das cordas refeitas em ordem: cada ligada vem da nota anterior da corda na mesma voz (até três
+    // compassos antes, como o alphaTab procura) e segue a casa dela. Um compasso refeito ou uma nota dividida deixavam a
+    // ligada de depois presa à primeira, pulando as novas. Nas músicas do repertório, todas as ligaduras já eram assim.
+    for (const track of score.tracks) {
+      for (const staff of track.staves) {
+        if (!staff.tuning || !staff.tuning.length) continue;
+        const voices = Math.max(0, ...staff.bars.map((b) => b.voices.length));
+        for (let v = 0; v < voices; v++) {
+          const last = new Map();
+          for (const bar of staff.bars) {
+            for (const beat of bar.voices[v] ? bar.voices[v].beats : []) {
+              for (const note of beat.notes) {
+                note.tieDestination = null;
+                const before = note.isTieDestination ? last.get(note.string) : null;
+                const origin = before && bar.index - before.bar <= 3 ? before.note : null;
+                note.tieOrigin = origin;
+                if (origin) {
+                  origin.tieDestination = note;
+                  note.fret = origin.fret;
+                } else {
+                  note.isTieDestination = false;
+                }
+                last.set(note.string, { note, bar: bar.index });
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   function restore(at, object) {
@@ -1016,7 +1408,8 @@
     const length = sounding ? sounding.end - sounding.start : note.beat.playbackDuration;
     const rhythm = rhythmOf(length);
     return { track: staff.track.index, string: tabString(note), fret: note.fret,
-      pitch: note.realValue, tick: note.beat.absolutePlaybackStart, techniques: techniquesOf(at, note),
+      pitch: note.realValue, tick: sounding ? sounding.start : note.beat.absolutePlaybackStart,
+      techniques: techniquesOf(at, note),
       voice: note.beat.voice.index + 1,
       figure: figureName(length), length, base: rhythm ? rhythm.base : null, dots: rhythm ? rhythm.dots : 0,
       triplet: rhythm ? rhythm.triplet : false, strings };
@@ -1026,6 +1419,7 @@
     BENDS,
     GROUPS,
     MAX_FRET,
+    MIN_TICKS,
     describe,
     exportGp,
     findNote,
@@ -1035,6 +1429,8 @@
     notesOf,
     nudge,
     retime,
+    split,
+    tie,
     rangeOf,
     insertBar,
     deleteBar,

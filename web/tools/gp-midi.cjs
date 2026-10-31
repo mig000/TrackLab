@@ -21,7 +21,10 @@ for (const track of score.tracks) {
 }
 const midi = new alphaTab.midi.MidiFile();
 midi.format = alphaTab.midi.MidiFileFormat.MultiTrack;
-const generator = new alphaTab.midi.MidiFileGenerator(score, new alphaTab.Settings(),
+// Como o Guitar Pro toca: o bend no tempo da própria nota (o alphaTab o espalhava pelas ligadas, como estica a seta).
+const playback = new alphaTab.Settings();
+playback.notation.extendBendArrowsOnTiedNotes = false;
+const generator = new alphaTab.midi.MidiFileGenerator(score, playback,
   new alphaTab.midi.AlphaSynthMidiFileHandler(midi, true));
 generator.generate();
 fs.writeFileSync(target, midi.toBinary());

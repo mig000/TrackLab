@@ -260,6 +260,15 @@ final class Backend {
     /// A curva de altura do som de cada nota (key, início, fim, altura escrita), na guitarra da separação ativa.
     /// A altura do som em cada nota, na faixa `stem` da separação ativa (nil: a guitarra, ou o original). `others`:
     /// as outras notas do acorde, para o motor medir entre elas.
+    /// Os sons da faixa (os ataques e a altura de cada um), para as suspeitas de som sem nota escrita.
+    func sounds(_ id: String, stem: String? = nil) async throws -> [HeardSound] {
+        struct Answer: Decodable { let sounds: [[Double]] }
+        let answer: Answer = try await get("songs/\(id)/sounds", query: stem.map { [URLQueryItem(name: "stem", value: $0)] } ?? [])
+        return answer.sounds.compactMap { item in
+            item.count >= 4 ? HeardSound(seconds: item[0], pitch: Int(item[1]), level: item[2], relative: item[3]) : nil
+        }
+    }
+
     func pitchCurves(_ id: String, notes: [(key: String, start: Double, end: Double, pitch: Int)],
                      others: [String: [Int]] = [:], stem: String? = nil) async throws -> [String: PitchCurve] {
         struct Note: Encodable { let key: String; let start: Double; let end: Double; let pitch: Int; let others: [Int]? }

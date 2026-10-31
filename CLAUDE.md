@@ -65,7 +65,9 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   projeto (uma trilha por pista, com as articulações) e o andamento do GP é trocado pelo do mapa de tempo (um evento
   de andamento por ponto). Sem FluidSynth (o Homebrew não o instala mais no Intel: sem pacotes, e a compilação baixa do
   GitHub dentro da caixa de areia), quem toca é o TinySoundFont do próprio alphaTab em node (`web/tools/gp-synth.cjs`,
-  as sete pistas de White Room em ~6 s), com um reverb de convolução leve no motor; com o FluidSynth instalado, ele
+  as sete pistas de White Room em ~6 s), com um reverb de convolução leve no motor; o MIDI sai com
+  `extendBendArrowsOnTiedNotes` desligado: o bend no tempo da própria nota, como o Guitar Pro toca (conferido no MIDI que
+  ele exporta), e não espalhado pelas ligadas como a seta do desenho (`synth.v2`); com o FluidSynth instalado, ele
   (`web/tools/gp-midi.cjs` + mido). O SoundFont é o de `TRACKLAB_SOUNDFONT`, `config.json` → `soundfont`, ou o
   primeiro de `~/TrackLab/Sons` (lá está o GeneralUser GS 1.471; os testes usam o Sonivox do alphaTab, Apache 2.0). Cada pista vira `synth/<chave>/t<pista>.flac` no tamanho do áudio do vídeo, a partir de onde o tique 0 cai;
   um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont e versão; o `GET songs/{id}`
@@ -74,6 +76,13 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
   `peaks/spectrum-<faixa>-v<VERSION>.u8` (a v1 pegava a raia de baixo e a nota subia até um semitom na imagem) (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos.
+- Sons da faixa (`media/sounds.py`, `GET songs/{id}/sounds?stem=guitar`), para a suspeita de som sem nota escrita: os
+  ataques fortes (o fluxo espectral nas linhas da FFT curta, do Dó central para cima, contra a mediana de ±0,5 s mais 2
+  desvios; o ataque aparece meia janela antes e é corrigido em 24 ms) e a altura de cada um (a soma harmônica até o 5º
+  harmônico, 23 a 58 ms depois, com energia na fundamental e acima das vizinhas a um semitom; um segundo som no mesmo
+  ataque se forte e fora dos harmônicos), lidos no espectro da Fita já guardado: `[segundo, altura, dB, dB abaixo do
+  mais forte em ±2 s]`, guardados em `peaks/sounds-*-s<VERSION>.json`. Sunshine (guitarra MVSEP): 901 ataques em 0,35 s,
+  o riff certo.
 - Altura do som (`media/pitch.py`, `POST songs/{id}/pitch` com as notas da tela): a curva a cada 8 ms em cada nota,
   na faixa da separação ativa onde a pista soa (`stem`; a guitarra se não vier), pela receita da Lente do TabLab (`trackPitch`: correlação normalizada em volta da
   altura escrita, de −2 a +4 semitons; `trackHarmonics` quando outra corda soa junto; mediana de 5). Conferido contra o
@@ -99,8 +108,13 @@ segunda embaixo nos mesmos compassos; perfil Default com TAB nas pistas de corda
 perfil "só TAB" quebrava na bateria, que não tem TAB) e não têm áudio: o app empurra o relógio e o mapa de tempo. A TAB tem a escala da Fita (`span` segundos na largura): cada
 compasso ganha `displayWidth` = duração × px/s (descontada a clave e a fórmula, medidas num primeiro desenho de cada
 pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. O
-alphaTab de `vendor/` tem quatro ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
-ocupa largura; sem a linha "rendered by alphaTab"; a velocidade do trinado no Guitar Pro 7). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
+alphaTab de `vendor/` tem ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
+ocupa largura; sem a linha "rendered by alphaTab"; a velocidade do trinado no Guitar Pro 7; e três para desenhar como o
+Guitar Pro 8 a ligada depois de um bend: a seta para na ligada que tem vibrato também na última batida do compasso, o
+vibrato dela sai da ponta da seta e não se repete na faixa de efeitos, `tracklabBendPaintsVibrato`, e a ligada com
+vibrato aparece entre parênteses; sem vibrato ela fica escondida, como no Guitar Pro; os acentos e o staccato sobre a
+TAB, `TracklabAccentEffectInfo`; "let ring" em vez de "LetRing"; sem o rótulo N.H.; e, no som, o bend segue pela
+cadeia de ligadas, `bendOrigin`, também na cópia pelo JSON, e bend com vibrato na mesma nota vibra depois da subida). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
 sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. A página dá a volta
 no loop sozinha, como o `PlaybackPlan` (antes passava do fim do loop até o próximo aviso do relógio, que vem a cada
 segundo), e com a música num loop que cabe na tela (`windowStart`) a pauta para no pino que o app manda (`view(at, pin)`, a mesma janela da Fita). Fora dele, a pauta rola com o cursor na
@@ -124,7 +138,7 @@ Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia det
 corda (mesma altura), meio tom, apaga, navega, liga e desliga as articulações do TabLab (`toggle`: ligados, slides,
 bends de tipo explícito com até 4 pontos, porque o GP7 perde um "Custom" de 5; vibratos, P.M., nota morta, let ring,
 acentos, harmônicos, palhetada, tapping; no mesmo grupo ligar troca). Depois de cada mudança a partitura passa pelo
-JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma cópia é o passo do Desfazer. 1,5 s depois
+JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma cópia é o passo do Desfazer. Antes da cópia, as ligações entre notas (ligadura, ligado, slide) ficam de mão dupla e só entre notas da partitura (`tidyLinks`: desligar um Legato deixava a nota seguinte apontando para a origem, a leitura da cópia quebrava e nada mais desenhava nem gravava); uma mudança que falha volta inteira. 1,5 s depois
 da última mudança, a página manda o Guitar Pro 7 (`Gp7Exporter`) e as notas novas.
 
 ## App (`mac/`)
@@ -188,9 +202,18 @@ figura de cada troca medida contra a semínima, `CurveFit.Trill.speed`). O Guita
 da nota (688062467: a duração de cada troca a 240 por semínima, 30 é fusa; visto num arquivo feito no Guitar Pro 8) que o
 alphaTab ignorava: o `vendor` agora lê e grava (ajuste `TrackLab:`); o `trackNotes` manda a altura do
 trinado escrito (`ScoreNote.trill`) e um trinado escrito entre as mesmas notas não é suspeito, um que o som não faz é.
-Notas suspeitas (`SoundNote.disagreements`): o som discorda da escrita na altura, no bend (meio tom de diferença; uma
-subida que só sai no último quarto da nota é a passagem para a seguinte) ou no trinado; o vibrato fica de fora (no
-Sunshine eram 22 das 75, quase sempre um vibrato que a TAB não escreve) e notas de acorde não acusam. Com o espectro à
+Notas suspeitas (`SoundNote.checks`, tipos em `SuspectKind`): o som discorda da escrita na altura, no bend (meio tom de
+diferença; uma subida que só sai no último quarto da nota é a passagem para a seguinte) ou no trinado
+(`disagreements`); a nota não soa (no corpo dela, menos de um quinto dos pontos com altura); o ataque a mais de 60 ms
+do começo escrito; o vibrato não escrito (vem desligado: no Sunshine eram 22 das 75 da primeira versão); e o som sem
+nota escrita (`HeardSound.unwritten`: um som forte da faixa, até 18 dB abaixo do mais forte em volta, sem nota de
+nenhuma pista que comece a até 120 ms na mesma altura, com um semitom de folga ou a oitava, nem nota dessa altura
+soando ali). Notas de acorde não acusam altura, bend, vibrato nem silêncio. Na coluna, Suspeitas tem o filtro por tipo
+com quantas há de cada um (`suspectKinds`, guardado); Tab numa nota a escolhe, num som sem nota põe o cursor de
+inserção no tique dele (na grade), na corda em que a altura cai mais perto da casa da nota escrita mais próxima, com a
+casa sugerida em Pôr nota (`caretPitch` na página); a Lente contorna em vermelho as notas e os sons sem nota dos tipos
+ligados. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem nota 87, não soa 1, ataque 42, vibrato 25. A
+calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Com o espectro à
 vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
 notas, pista ou mapa; a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
 com o espectro) vão de uma a outra: escolhem a nota, levam a agulha e dizem o que o som tem; o monitor de teclas da
@@ -280,7 +303,42 @@ fórmulas de cada compasso (`state.before`; sem isso a TAB descolava da Fita dep
 para o histórico do pacote), e os trechos de estudo e os compassos conferidos andam junto. O Desfazer volta a partitura
 e o mapa juntos (o passo guarda os pontos e a mudança contrária). Repetições (ritornelo, casa 1 e 2) ficaram de fora: o
 TrackLab supõe cada compasso escrito tocado uma vez (os pontos do Songsterr são um por compasso escrito, e a TAB
-sintetizada tocaria a repetição). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
+sintetizada tocaria a repetição). Dividir (/, na Duração; `edit.split`): a nota vira duas ligadas com o mesmo som, para a
+segunda ter articulação dela (o bend e depois o vibrato no alto): no cursor de inserção dentro da nota, na agulha se ela
+está dentro da escolhida, ou no meio, na grade; o bend se reparte pelo tempo (`bendPart`: a primeira sobe, a segunda
+segura no alto como Hold, do jeito que o Guitar Pro 7 guarda, sem o trecho parado no fim, que ele perdia esticando a
+subida), a segunda continua vibrato, P.M., let ring e harmônico e leva o slide e o ligado para a seguinte. O compasso
+refeito mantém as ligadas com articulação própria (`breaksOf`: no mesmo lugar da nota, reaproveitando a batida; antes
+virava cópia só com casa e corda e perdia o bend segurado e o ligado, e a cópia da partitura quebrava 608 vezes ao refazer
+cada nota da Highway Star). Vibrato, P.M. e let ring ligados numa ligada seguem pelas seguintes que estavam iguais. A
+Lente junta a cadeia numa faixa com o bend de cada parte no tempo dela (`chainBend`) e o vibrato de qualquer parte; o F
+numa nota ligada reparte o bend medido entre as partes (`fitChain`) e põe o vibrato na última se nenhuma tinha. Ligada (L, a primeira de Ligados e slides,
+`edit.tie`), como no Guitar Pro: a nota passa a continuar a da batida anterior na mesma corda (a casa dela e o alto do
+bend, segurado) ou deixa de continuar; com ela, duas notas (o bend na primeira, o vibrato na segunda) se escrevem sem o
+Dividir. Como o Guitar Pro 8 grava (conferido nele, 30/10): o Bend tem dois pontos e chega no alto a um quarto da nota
+(com um terceiro no fim, a gravação reduzia aos das pontas e a subida ia até o fim da nota); a ligada depois de um bend
+fica sem bend e continua no alto (um Hold nela faz o Guitar Pro desenhar o pontilhado e o vibrato por cima dele; pôr ou
+tirar o bend na primeira tira o Hold das seguintes, `freeFollowers`; o Dividir, o F e o L não gravam Hold); o harmônico
+leva o traste (`harmonicValue`: o natural na casa, os outros 12; sem ele, o Guitar Pro o apagava). A ligada que a TAB
+não mostra se escolhe com o clique na linha da corda, no espaço de tempo dela (`noteAt`/`beatInSlot`: o alphaTab só
+acha a batida pela área visível, que nela tem largura zero), como o cursor do Guitar Pro; a caixa da escolha fica na
+linha da corda. Como o Guitar Pro grava (conferido nele): o vibrato e o let ring ficam só na nota escolhida, o P.M.
+vai também para as ligadas seguintes, e P.M. e let ring não convivem. O compasso refeito não muda o som: o bend de cada
+corda da nota inteira é guardado no tempo antes (`curvesOf`) e repartido pelas partes novas (`keepBend`; antes, juntar
+as ligadas numa figura maior esticava a subida), e uma batida só continua a anterior se todas as cordas dela seguem
+ligadas (num acorde em que só uma segue, juntar esticava as outras: o solo da Sunshine, c. 72). Conferido refazendo cada
+nota das três músicas (Sunshine 1.321, White Room 2.134, Highway Star 1.978): o mesmo som. `trackNotes` sai em ordem de
+tempo também com a voz 2. Segunda referência: `web/tests/fixtures/combinacoes.gp`, 32 compassos de articulações
+misturadas (ligadas em cadeia, bend que volta na ligada, pela barra, com slide, H/P, P.M., let ring, acordes,
+harmônicos, trinado, voz 2, tercinas, o Dividir e o L), feitos pela edição do TrackLab e salvos pelo Guitar Pro 8; a ida
+e volta pelo Guitar Pro não perde nada. A coluna
+de edição usa os símbolos da paleta do Guitar Pro (`NotationIcons.swift`): as figuras, os acentos, os vibratos, a nota
+morta, a fantasma, os harmônicos e a palhetada na Bravura do alphaTab (o CoreText registra o woff2 do pacote), os bends,
+os slides e a ligadura desenhados como na TAB; as seis figuras numa linha, do mesmo tamanho. Referência:
+`web/tests/fixtures/notacao.gp`, 24 compassos com uma combinação cada (o nome no texto da primeira batida), gerado pela
+edição do TrackLab e aberto no Guitar Pro 8; no repertório, "Notação (teste)" é o mesmo arquivo com silêncio. As
+ligaduras das cordas são refeitas em ordem a cada cópia (`tidyLinks`: a ligada vem da nota anterior da corda na mesma
+voz e segue a casa dela). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
 se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo

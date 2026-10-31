@@ -335,6 +335,8 @@ struct FitaView: View {
         let semitone = height / (highPitch - lowPitch)
         let thick = Self.bandWidth(semitone: semitone)
         let selection = model.tabSelection
+        // As notas suspeitas dos tipos ligados no filtro (uma vez por quadro, não por nota).
+        let flagged = model.suspectNotes(track: model.scoreTrack)
         func bands(_ notes: [ScoreNote], track: Int, rgb: (Double, Double, Double)) {
             let color = Color(red: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255)
             var visible: [ScoreNote] = []
@@ -386,7 +388,7 @@ struct FitaView: View {
                         .foregroundStyle(color), at: CGPoint(x: x1 + dx + 6, y: centers[0].y), anchor: .leading)
                 }
                 // Suspeita (o som discorda da escrita): contorno vermelho e um ponto sobre o ataque.
-                if let sound, !sound.disagreements(with: note).isEmpty {
+                if sound != nil, track == model.scoreTrack, flagged.contains(note) {
                     suspect.addPath(band)
                     suspect.addEllipse(in: CGRect(x: x0 - 3, y: Double(centers[0].y) - thick / 2 - 9, width: 6, height: 6))
                 }
@@ -462,6 +464,15 @@ struct FitaView: View {
         }
         // A principal em âmbar (mais escuro no papel, para ler sobre o claro).
         bands(main, track: model.scoreTrack, rgb: paper ? (196, 118, 10) : (245, 181, 68))
+        // O som forte sem nota escrita (suspeita): um contorno vermelho na altura dele, do ataque a 120 ms depois.
+        var unwritten = Path()
+        for sound in model.unwrittenSounds(track: model.scoreTrack) {
+            let x = gx(sound.seconds)
+            guard x > -20, x < width + 20, Double(sound.pitch) >= lowPitch - 1, Double(sound.pitch) <= highPitch + 1 else { continue }
+            let rect = CGRect(x: x, y: y(Double(sound.pitch)) - thick / 2, width: max(8, 0.12 / span * width), height: thick)
+            unwritten.addRoundedRect(in: rect, cornerSize: CGSize(width: thick / 3, height: thick / 3))
+        }
+        context.stroke(unwritten, with: .color(Color(red: 1, green: 0.36, blue: 0.36)), lineWidth: 1.6)
         // No Ajuste, no alto de cada compasso: quanto os ataques chegam depois (+) ou antes (−) do mapa, de 25 ms para
         // cima (A leva o 1 até eles).
         if model.adjusting {
@@ -484,7 +495,7 @@ struct FitaView: View {
             info.append(Text("gravação \(cents > 0 ? "+" : "−")\(abs(cents)) cents").foregroundStyle(.secondary))
         }
         if suspects > 0 {
-            info.append(Text("\(suspects) nota\(suspects == 1 ? "" : "s") suspeita\(suspects == 1 ? "" : "s")"
+            info.append(Text("\(suspects) suspeita\(suspects == 1 ? "" : "s")"
                              + "\(model.measuring ? "…" : "") · Tab")
                 .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.45)))
         } else if model.measuring {

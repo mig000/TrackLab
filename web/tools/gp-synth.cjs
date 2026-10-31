@@ -25,8 +25,16 @@ for (const track of score.tracks) {
 }
 const whole = new alphaTab.midi.MidiFile();
 whole.format = alphaTab.midi.MidiFileFormat.MultiTrack;
-new alphaTab.midi.MidiFileGenerator(score, new alphaTab.Settings(), new alphaTab.midi.AlphaSynthMidiFileHandler(whole, true))
+new alphaTab.midi.MidiFileGenerator(score, playback(), new alphaTab.midi.AlphaSynthMidiFileHandler(whole, true))
   .generate();
+
+// Como o Guitar Pro toca: o bend no tempo da própria nota, e as ligadas seguram o alto (o alphaTab espalhava a subida
+// pela cadeia de ligadas inteira, a mesma regra que estica a seta no desenho).
+function playback() {
+  const settings = new alphaTab.Settings();
+  settings.notation.extendBendArrowsOnTiedNotes = false;
+  return settings;
+}
 
 // O andamento do mapa: em cada ponto, o do trecho até o ponto seguinte; o primeiro trecho vale desde o tique 0.
 const points = JSON.parse(fs.readFileSync(pointsPath, "utf8"))

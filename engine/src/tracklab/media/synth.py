@@ -39,7 +39,8 @@ from .separate import _write_stem
 Progress = Callable[[str, str, float | None], None]
 
 STAGE = "synth"
-PROCEDURE = "synth.v1"
+# v2: o bend no tempo da própria nota (como o Guitar Pro), o alto segurado pelas ligadas e o vibrato depois do bend.
+PROCEDURE = "synth.v2"
 GAIN = 0.4                 # ganho do FluidSynth por pista: folga para os acordes e a bateria não estourarem
 LOUDNESS = 0.8             # todas as pistas juntas a 80 % do volume (RMS) do áudio do vídeo
 PEAK = 0.95

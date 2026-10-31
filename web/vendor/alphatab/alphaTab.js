@@ -6486,6 +6486,8 @@
 				if (this._noteIdBag.tieOriginNoteId !== -1) {
 					this.tieOrigin = noteIdLookup.get(this._noteIdBag.tieOriginNoteId);
 					this.tieOrigin.tieDestination = this;
+					// TrackLab: também na cópia pelo JSON (a edição), o bend que a ligada continua.
+					this.bendOrigin = this.tieOrigin.hasBend ? this.tieOrigin : this.tieOrigin.bendOrigin;
 				}
 				if (this._noteIdBag.slurOriginNoteId !== -1) {
 					this.slurOrigin = noteIdLookup.get(this._noteIdBag.slurOriginNoteId);
@@ -6506,7 +6508,8 @@
 					this.fret = tieOrigin.fret;
 					this.octave = tieOrigin.octave;
 					this.tone = tieOrigin.tone;
-					if (tieOrigin.hasBend) this.bendOrigin = this.tieOrigin;
+					// TrackLab: o bend segue pela cadeia de ligadas (a de antes pode ser uma ligada sem bend).
+					this.bendOrigin = tieOrigin.hasBend ? tieOrigin : tieOrigin.bendOrigin;
 				}
 			}
 		}
@@ -43465,8 +43468,12 @@
 				this._generateTremoloPicking(note, noteStart, noteDuration, noteKey, velocity, channel);
 				return;
 			}
-			if (note.hasBend) this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
-			else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
+			if (note.hasBend) {
+				this._generateBend(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
+				// TrackLab: bend e vibrato na mesma nota, como o Guitar Pro toca: depois do último ponto do bend, o vibrato
+				// em volta do alto (antes só o bend soava).
+				if (note.vibrato !== VibratoType.None) this._tracklabVibratoAfterBend(note, noteStart, noteDuration, noteKey, channel);
+			} else if (note.beat.hasWhammyBar && note.index === 0) this._generateWhammy(note.beat, noteStart, noteDuration, channel, tempoOnBeatStart);
 			else if (note.slideInType !== SlideInType.None || note.slideOutType !== SlideOutType.None) this._generateSlide(note, noteStart, noteDuration, noteKey, channel, tempoOnBeatStart);
 			else if (note.vibrato !== VibratoType.None || note.isTieDestination && note.tieOrigin.vibrato !== VibratoType.None) this._generateVibrato(note, noteStart, noteDuration, noteKey, channel);
 			if (!note.isTieDestination && (!note.slideOrigin || note.slideOrigin.slideOutType !== SlideOutType.Legato)) this._handler.addNote(track.index, noteStart, noteSoundDuration, noteKey, velocity, channel);
@@ -43672,6 +43679,19 @@
 				this._handler.addControlChange(track.index, tick, track.playbackInfo.secondaryChannel, ControllerType.VolumeCoarse, volume);
 			}
 		}
+		_tracklabVibratoAfterBend(note, noteStart, noteDuration, noteKey, channel) {
+			const last = note.bendPoints[note.bendPoints.length - 1];
+			const length = noteDuration.noteOnly;
+			const from = noteStart + (last.offset / BendPoint.MaxPosition) * length | 0;
+			if (noteStart + length - from <= 0) return;
+			const wide = note.vibrato === VibratoType.Wide;
+			const vibrato = this._settings.player.vibrato;
+			const track = note.beat.voice.bar.staff.track;
+			this._generateVibratorWithParams(from, noteStart + length - from, wide ? vibrato.noteWideLength : vibrato.noteSlightLength,
+				last.value, wide ? vibrato.noteWideAmplitude : vibrato.noteSlightAmplitude, (tick, value) => {
+					this._handler.addNoteBend(track.index, tick, channel, noteKey, value);
+				});
+		}
 		_generateVibrato(note, noteStart, noteDuration, noteKey, channel) {
 			let phaseLength = 0;
 			let bendAmplitude = 0;
@@ -43688,8 +43708,11 @@
 			}
 			const track = note.beat.voice.bar.staff.track;
 			let bendBase = 0;
-			if (note.isTieDestination && note.tieOrigin.hasBend) {
-				const bendPoints = note.tieOrigin.bendPoints;
+			// TrackLab: a ligada sem bend vibra em volta do alto do bend de antes na cadeia (`bendOrigin`), não só do da
+			// ligada imediatamente antes (bend → ligada → ligada com vibrato vibrava em volta da nota sem bend).
+			const carried = note.isTieDestination && !note.hasBend ? (note.tieOrigin.hasBend ? note.tieOrigin : note.bendOrigin) : null;
+			if (carried) {
+				const bendPoints = carried.bendPoints;
 				bendBase = bendPoints[bendPoints.length - 1].value;
 			}
 			this._generateVibratorWithParams(noteStart, noteDuration.noteOnly, phaseLength, bendBase, bendAmplitude, (tick, value) => {
@@ -51922,7 +51945,8 @@
 			return EffectBarGlyphSizing.GroupedOnBeat;
 		}
 		createNewGlyph(_renderer, _beat) {
-			return new LineRangedGlyph("LetRing", NotationElement.EffectLetRing);
+			// TrackLab: "let ring", como o Guitar Pro escreve.
+			return new LineRangedGlyph("let ring", NotationElement.EffectLetRing);
 		}
 		canExpand(_from, _to) {
 			return true;
@@ -52505,6 +52529,47 @@
 		}
 		createNewGlyph(_renderer, beat) {
 			return new PickStrokeGlyph(0, 0, beat.pickStroke);
+		}
+		canExpand(_from, _to) {
+			return true;
+		}
+	};
+	// TrackLab: os acentos (>, ^) e o staccato sobre a TAB, como o Guitar Pro mostra (o alphaTab só os desenhava junto
+	// das cabeças da partitura, e a TAB sozinha ficava sem eles).
+	function tracklabAccentSymbol(beat) {
+		if (beat.notes.some((n) => n.accentuated === AccentuationType.Heavy)) return MusicFontSymbol.ArticMarcatoAbove;
+		if (beat.notes.some((n) => n.accentuated === AccentuationType.Normal)) return MusicFontSymbol.ArticAccentAbove;
+		if (beat.notes.some((n) => n.isStaccato)) return MusicFontSymbol.ArticStaccatoAbove;
+		return MusicFontSymbol.None;
+	}
+	var TracklabAccentGlyph = class extends MusicFontGlyph {
+		constructor(x, y, symbol) {
+			super(x, y, 1, symbol);
+			this.center = true;
+		}
+		doLayout() {
+			super.doLayout();
+			this.offsetY = this.height;
+		}
+	};
+	var TracklabAccentEffectInfo = class extends EffectInfo {
+		get notationElement() {
+			return NotationElement.EffectPickStroke;
+		}
+		get hideOnMultiTrack() {
+			return false;
+		}
+		get canShareBand() {
+			return true;
+		}
+		get sizingMode() {
+			return EffectBarGlyphSizing.SingleOnBeat;
+		}
+		shouldCreateGlyph(_settings, beat) {
+			return tracklabAccentSymbol(beat) !== MusicFontSymbol.None;
+		}
+		createNewGlyph(_renderer, beat) {
+			return new TracklabAccentGlyph(0, 0, tracklabAccentSymbol(beat));
 		}
 		canExpand(_from, _to) {
 			return true;
@@ -54992,7 +55057,9 @@
 				}
 				endBeat = endNote.beat;
 				endNoteRenderer = this.renderer.scoreRenderer.layout.getRendererForBar(this.renderer.staff.staffId, endBeat.voice.bar);
-				if (endBeat.isLastOfVoice && !endNote.hasBend && this.renderer.settings.notation.extendBendArrowsOnTiedNotes) endBeat = null;
+				// TrackLab: como no Guitar Pro, a seta para na ligada que tem vibrato também quando ela é a última batida do
+				// compasso (antes a seta seguia até o fim do compasso e o vibrato não aparecia).
+				if (endBeat.isLastOfVoice && !endNote.hasBend && !endNoteHasBend && this.renderer.settings.notation.extendBendArrowsOnTiedNotes) endBeat = null;
 				const smufl = startNoteRenderer.smuflMetrics;
 				const tabBendArrowSize = smufl.glyphWidths.get(MusicFontSymbol.ArrowheadBlackDown);
 				const topY = cy + startNoteRenderer.y - smufl.tabBendStaffPadding;
@@ -55428,6 +55495,14 @@
 		}
 	};
 	//#endregion
+	// TrackLab: o vibrato de uma ligada é desenhado pela seta do bend de antes na cadeia (a ponta da seta e o vibrato
+	// depois dela, como no Guitar Pro) quando a ligada não tem bend dela; o herdado da primeira também fica com a seta.
+	// Com bend próprio (um Hold do Songsterr), a faixa de efeitos o desenha por cima do pontilhado.
+	function tracklabBendPaintsVibrato(note) {
+		if (!note.isTieDestination || note.hasBend) return false;
+		for (let n = note.tieOrigin; n; n = n.isTieDestination ? n.tieOrigin : null) if (n.hasBend) return true;
+		return false;
+	}
 	//#region src/rendering/effects/SlightNoteVibratoEffectInfo.ts
 	/**
 	* @internal
@@ -55439,7 +55514,7 @@
 		}
 		shouldCreateGlyphForNote(note) {
 			let hasVibrato = note.vibrato === VibratoType.Slight || note.isTieDestination && note.tieOrigin.vibrato === VibratoType.Slight;
-			if (this._hideOnTiedBend && hasVibrato && note.isTieDestination && note.tieOrigin.hasBend) hasVibrato = false;
+			if (this._hideOnTiedBend && hasVibrato && tracklabBendPaintsVibrato(note)) hasVibrato = false;
 			return hasVibrato;
 		}
 		get sizingMode() {
@@ -56106,6 +56181,7 @@
 			return NotationElement.EffectWideNoteVibrato;
 		}
 		shouldCreateGlyphForNote(note) {
+			if (tracklabBendPaintsVibrato(note)) return false;
 			return note.vibrato === VibratoType.Wide || note.isTieDestination && note.tieOrigin.vibrato === VibratoType.Wide;
 		}
 		get sizingMode() {
@@ -63755,7 +63831,9 @@
 					if (i >= 0) this._noteString = this._noteString.substr(0, i + 2);
 					this._noteString = `<${this._noteString}>`;
 				}
-			} else if (n.beat.index === 0 && this.renderer.settings.notation.notationMode === NotationMode.GuitarPro || (n.bendType === BendType.Bend || n.bendType === BendType.BendRelease) && this.renderer.settings.notation.isNotationElementVisible(NotationElement.TabNotesOnTiedBends)) this._noteString = `(${(n.tieOrigin.fret - n.beat.voice.bar.staff.transpositionPitch).toString()})`;
+			} else if (n.beat.index === 0 && this.renderer.settings.notation.notationMode === NotationMode.GuitarPro || (n.bendType === BendType.Bend || n.bendType === BendType.BendRelease) && this.renderer.settings.notation.isNotationElementVisible(NotationElement.TabNotesOnTiedBends) || n.vibrato !== VibratoType.None) this._noteString = `(${(n.tieOrigin.fret - n.beat.voice.bar.staff.transpositionPitch).toString()})`;
+			// TrackLab: a ligada com vibrato aparece entre parênteses, como no Guitar Pro (sem vibrato, só no começo do
+			// compasso ou com bend dela).
 			else this._noteString = "";
 			if (n.isTrill) this._trillNoteString = `(${(n.trillFret - n.beat.voice.bar.staff.transpositionPitch).toString()})`;
 			else if (!ModelUtils.isAlmostEqualTo(n.harmonicValue, 0)) switch (n.harmonicType) {
@@ -65122,10 +65200,7 @@
 					effect: new FadeEffectInfo(),
 					mode: EffectBandMode.OwnedTop
 				},
-				{
-					effect: new HarmonicsEffectInfo(HarmonicType.Natural),
-					mode: EffectBandMode.OwnedTop
-				},
+				// TrackLab: sem o rótulo N.H. sobre a TAB: o harmônico natural já aparece como <12>, como no Guitar Pro.
 				{
 					effect: new HarmonicsEffectInfo(HarmonicType.Artificial),
 					mode: EffectBandMode.OwnedTop
@@ -65160,6 +65235,11 @@
 				},
 				{
 					effect: new PickStrokeEffectInfo(),
+					mode: EffectBandMode.OwnedTop
+				},
+				{
+					// TrackLab: os acentos e o staccato sobre a TAB, como o Guitar Pro.
+					effect: new TracklabAccentEffectInfo(),
 					mode: EffectBandMode.OwnedTop
 				},
 				{

@@ -257,6 +257,29 @@
     }
   }
 
+  // O bend de uma nota ligada na duração inteira (deslocamento de 0 a 60): os pontos de cada ligada no tempo dela, e
+  // uma ligada sem pontos segura o alto da anterior. Uma nota só fica com os pontos dela.
+  function chainBend(pieces, duration) {
+    const own = (n) => (n.bendPoints || []).map((p) => [p.offset, p.value]);
+    if (pieces.length === 1) return own(pieces[0]);
+    const out = [];
+    let start = 0;
+    let held = 0;
+    for (const n of pieces) {
+      const length = n.beat.playbackDuration;
+      const points = own(n);
+      const scale = (x) => ((start + (x / 60) * length) / duration) * 60;
+      if (points.length) {
+        for (const [x, y] of points) out.push([scale(x), y]);
+        held = points[points.length - 1][1];
+      } else if (held > 0) {
+        out.push([scale(0), held], [scale(60), held]);
+      }
+      start += length;
+    }
+    return out.some((p) => p[1] > 0) ? out : [];
+  }
+
   // As notas de cada pista do Guitar Pro lido, para as barras sobre o espectro da Fita: [tique, duração em tiques, altura
   // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), a altura MIDI do trinado (0 sem trinado), e os
   // pontos do bend em pares (deslocamento de 0 a 60 ao longo da nota, valor em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não
@@ -275,13 +298,12 @@
                 if (note.isTieDestination) {
                   continue;
                 }
-                let duration = beat.playbackDuration;
-                for (let tied = note.tieDestination; tied; tied = tied.tieDestination) {
-                  duration += tied.beat.playbackDuration;
-                }
+                const pieces = [note];
+                for (let tied = note.tieDestination; tied; tied = tied.tieDestination) pieces.push(tied);
+                const duration = pieces.reduce((sum, n) => sum + n.beat.playbackDuration, 0);
                 const strings = staff.tuning ? staff.tuning.length : 0;
-                const vibrato = note.vibrato === 2 ? 2 : note.vibrato ? 1 : 0;
-                const bend = (note.bendPoints || []).flatMap((p) => [p.offset, p.value]);
+                const vibrato = Math.max(...pieces.map((n) => (n.vibrato === 2 ? 2 : n.vibrato ? 1 : 0)));
+                const bend = chainBend(pieces, duration).flatMap((p) => p);
                 const trill = note.isTrill ? note.realValue + note.trillFret - note.fret : 0;
                 notes.push([beat.absolutePlaybackStart, duration, note.realValue, strings ? strings - note.string + 1 : 0,
                   note.fret, vibrato, trill, ...bend]);
@@ -290,7 +312,8 @@
           }
         }
       }
-      return notes;
+      // Em ordem de tempo (e de corda): a voz 2 do compasso vinha depois das notas da voz 1 dele.
+      return notes.sort((a, b) => a[0] - b[0] || a[3] - b[3]);
     });
   }
 

@@ -429,6 +429,41 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
                       start: 1, end: 2, pitch: 60).fit == nil)
 }
 
+@Test func novosTiposDeSuspeita() {
+    let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
+    // A nota que não soa: quase nenhum ponto com altura no corpo dela.
+    let quiet = SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: nil, count: 125)),
+                          start: 1, end: 2, pitch: 60)
+    #expect(quiet.checks(with: plain, start: 1, end: 2) == [.silent])
+    // O ataque 90 ms depois do começo escrito; 40 ms não conta.
+    let late = SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: 60.0, count: 125), attack: 1.09),
+                         start: 1, end: 2, pitch: 60)
+    #expect(late.checks(with: plain, start: 1, end: 2) == [.attack(90)])
+    let close = SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: Array(repeating: 60.0, count: 125), attack: 1.04),
+                          start: 1, end: 2, pitch: 60)
+    #expect(close.checks(with: plain, start: 1, end: 2).isEmpty)
+    // O vibrato que a escrita não tem; escrito, nada.
+    let wobble = SoundNote(curve: soundCurve(1, 2) { 60 + 0.3 * sin(2 * .pi * 6 * ($0 - 1)) }, start: 1, end: 2, pitch: 60)
+    #expect(wobble.checks(with: plain, start: 1, end: 2) == [.vibrato])
+    let written = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, vibrato: 1)
+    #expect(wobble.checks(with: written, start: 1, end: 2).isEmpty)
+    #expect(SoundDisagreement.attack(90).kind == .attack && SuspectKind.standard.contains(.unwritten)
+        && !SuspectKind.standard.contains(.vibrato))
+}
+
+@Test func somSemNotaEscrita() {
+    let notes = [(start: 1.0, end: 1.5, pitch: 60), (start: 2.0, end: 3.0, pitch: 64)]
+    let sounds = [
+        HeardSound(seconds: 1.05, pitch: 60, level: -20, relative: -3),     // a nota de 1 s (no tempo, na altura)
+        HeardSound(seconds: 1.02, pitch: 72, level: -25, relative: -8),     // a oitava dela: o harmônico
+        HeardSound(seconds: 1.6, pitch: 67, level: -18, relative: -2),      // forte e sem nota: suspeita
+        HeardSound(seconds: 2.5, pitch: 64, level: -22, relative: -6),      // dentro da nota de 2 s (vibrato, bend)
+        HeardSound(seconds: 3.4, pitch: 55, level: -50, relative: -30),     // fraco: vazamento
+    ]
+    let found = HeardSound.unwritten(sounds, notes: notes)
+    #expect(found.map(\.seconds) == [1.6])
+}
+
 @Test func notasSuspeitasPeloSom() throws {
     let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
     let flat = SoundNote(curve: soundCurve(1, 2) { _ in 60.1 }, start: 1, end: 2, pitch: 60)

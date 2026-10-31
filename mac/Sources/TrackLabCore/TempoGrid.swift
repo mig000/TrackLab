@@ -347,14 +347,18 @@ public struct TabCaret: Hashable, Sendable {
     public let figure: String?
     /// A voz da nota nova (1 ou 2).
     public let voice: Int
+    /// A casa sugerida (um som sem nota escrita: a altura dele nessa corda), ou nil.
+    public let fret: Int?
 
-    public init(place: String, string: Int, rest: Bool, inside: Bool = false, figure: String? = nil, voice: Int = 1) {
+    public init(place: String, string: Int, rest: Bool, inside: Bool = false, figure: String? = nil, voice: Int = 1,
+                fret: Int? = nil) {
         self.place = place
         self.string = string
         self.rest = rest
         self.inside = inside
         self.figure = figure
         self.voice = voice
+        self.fret = fret
     }
 
     public init?(page: [String: Any]?) {
@@ -363,7 +367,7 @@ public struct TabCaret: Hashable, Sendable {
         }
         self.init(place: place, string: string, rest: page["rest"] as? Bool ?? false,
                   inside: page["inside"] as? Bool ?? false, figure: page["figure"] as? String,
-                  voice: (page["voice"] as? NSNumber)?.intValue ?? 1)
+                  voice: (page["voice"] as? NSNumber)?.intValue ?? 1, fret: (page["fret"] as? NSNumber)?.intValue)
     }
 }
 

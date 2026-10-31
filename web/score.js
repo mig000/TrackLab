@@ -66,6 +66,7 @@
     missing: "Não achei a nota na voz 1.",
     next: "Não cabe: a nota seguinte começa antes. Apague ou encurte a seguinte primeiro.",
     end: "Não cabe: o trecho passaria do fim da música.",
+    same: "A nota já está dividida aí.",
   };
 
   const THEMES = {
@@ -152,6 +153,8 @@
     caret: null,
     // A voz em que a nota nova entra (0: voz 1; 1: voz 2).
     caretVoice: 0,
+    // A casa sugerida para a nota nova (um som sem nota escrita, achado pelo app), ou null.
+    suggestedFret: null,
     undo: [],
     redo: [],
     saveTimer: 0,
@@ -796,8 +799,9 @@
     const x = (event.clientX - surface.left) / zoomStretch();
     const y = event.clientY - surface.top;
     const lookup = api.renderer.boundsLookup;
-    const beat = lookup.getBeatAtPos(x, y);
-    const note = beat ? lookup.getNoteAtPos(beat, x, y) : null;
+    // A nota sob o clique, também a ligada que a TAB não mostra (`noteAt`).
+    const note = noteAt(event);
+    const beat = note ? note.beat : lookup.getBeatAtPos(x, y);
     // ⇧: da nota de partida até esta, todas no meio; ⌘: põe ou tira só esta; sem tecla, só esta.
     const found = note ? edit.resolve(state.score, edit.pathOf(note)) : null;
     if (found && event.shiftKey && selectedNote()) {
@@ -847,6 +851,46 @@
       return;
     }
     state.caret = [...edit.caretOf(holder, string), tick];
+  }
+
+  // Um som sem nota escrita (o app achou no espectro): o cursor de inserção no tique dele, na grade, na corda em que a
+  // altura cai mais à mão (a casa mais perto da nota escrita mais próxima no tempo), com a casa sugerida.
+  function caretAtPitch(value) {
+    const track = state.score && state.score.tracks[value.track];
+    const staff = track && track.staves.find((s) => s.tuning && s.tuning.length);
+    if (!staff) return;
+    const master = masterAt(value.tick);
+    if (!master) return;
+    const tick = master.start + Math.round((value.tick - master.start) / state.grid) * state.grid;
+    const bar = staff.bars[master.index];
+    const voice = bar && bar.voices[0];
+    const holder = voice && voice.beats.find((b) => b.absolutePlaybackStart <= tick + 0.5
+      && tick < b.absolutePlaybackStart + b.playbackDuration - 0.5);
+    if (!holder) return;
+    const at = Math.abs(holder.absolutePlaybackStart - tick) < 1;
+    const notes = edit.notesOf(staff);
+    let nearest = null;
+    for (const n of notes) {
+      if (!nearest || Math.abs(n.beat.absolutePlaybackStart - tick) < Math.abs(nearest.beat.absolutePlaybackStart - tick)) nearest = n;
+    }
+    const reference = nearest ? nearest.fret : 5;
+    const count = staff.tuning.length;
+    let best = null;
+    for (let alpha = 1; alpha <= count; alpha++) {
+      const fret = value.pitch - staff.tuning[count - alpha];
+      if (fret < 0 || fret > edit.MAX_FRET) continue;
+      if (at && holder.notes.some((n) => n.string === alpha)) continue;
+      if (!best || Math.abs(fret - reference) < Math.abs(best.fret - reference)) best = { alpha, fret };
+    }
+    if (!best) {
+      post({ type: "notice", text: "Essa altura não cabe em nenhuma corda livre aqui." });
+      return;
+    }
+    choose(null);
+    state.caret = at ? edit.caretOf(holder, best.alpha) : [...edit.caretOf(holder, best.alpha), tick];
+    state.suggestedFret = best.fret;
+    drawSelection();
+    postSelection();
   }
 
   // O compasso da escolha (da nota principal ou do cursor de inserção), ou null.
@@ -983,6 +1027,7 @@
     state.group = null;
     state.anchor = path;
     state.caret = null;
+    state.suggestedFret = null;
   }
 
   // As notas escolhidas, a principal primeiro e as outras em ordem de tempo.
@@ -1056,7 +1101,14 @@
     const surface = state.api.canvasElement.element.getBoundingClientRect();
     const page = sheet.getBoundingClientRect();
     const stretch = zoomStretch();
-    const box = head.noteHeadBounds;
+    let box = head.noteHeadBounds;
+    const count = note.beat.voice.bar.staff.tuning.length;
+    if (box.w < 4 && bounds.barBounds && count > 1) {
+      // A ligada que a TAB não mostra: a caixa do tamanho de um número, na linha da corda, no x das notas da batida.
+      const lines = bounds.barBounds.visualBounds;
+      const y = lines.y + (count - note.string) * (lines.h / (count - 1));
+      box = { x: bounds.onNotesX - 7, y: y - 8, w: 14, h: 16 };
+    }
     selectionBox.hidden = false;
     selectionBox.style.left = (surface.left - page.left) / stretch + box.x - 3 + "px";
     selectionBox.style.top = surface.top - page.top + box.y - 3 + "px";
@@ -1134,7 +1186,8 @@
       caret: caretBeat ? { place: placeName(state.caret.length > 6 ? state.caret[6] : caretBeat.absolutePlaybackStart),
         string: caretBeat.voice.bar.staff.tuning.length - state.caret[5] + 1, rest: caretBeat.notes.length === 0,
         inside: state.caret.length > 6 && Math.abs(state.caret[6] - caretBeat.absolutePlaybackStart) >= 1,
-        voice: (state.caret[7] || 0) + 1, figure: edit.figureName(caretBeat.playbackDuration) } : null,
+        voice: (state.caret[7] || 0) + 1, figure: edit.figureName(caretBeat.playbackDuration),
+        fret: state.suggestedFret } : null,
       bar: (() => {
         const index = state.score ? chosenBar() : null;
         const master = index === null ? null : state.score.masterBars[index];
@@ -1157,8 +1210,16 @@
   function change(apply) {
     const before = { score: edit.snapshot(alphaTab, state.score), selected: state.selected, group: state.group,
       anchor: state.anchor, points: state.points, change: null };
-    if (!apply(before)) {
+    let next = null;
+    let failure = null;
+    try {
+      next = apply(before) ? edit.refinish(alphaTab, state.score) : null;
+    } catch (error) {
+      failure = error;
+    }
+    if (!next) {
       // Uma mudança que não deu pode ter mexido em parte (várias notas, um compasso refeito pela metade): volta tudo.
+      // Também quando a cópia falha: a partitura pela metade não desenhava nem gravava mais nada depois.
       state.score = edit.restore(alphaTab, before.score);
       state.selected = before.selected;
       state.group = before.group;
@@ -1166,6 +1227,7 @@
       state.points = before.points;
       core.showPreferences(state.score);
       render();
+      if (failure) throw failure;
       return;
     }
     state.undo.push(before);
@@ -1173,7 +1235,7 @@
       state.undo.shift();
     }
     state.redo = [];
-    replace(edit.refinish(alphaTab, state.score));
+    replace(next);
   }
 
   // A partitura nova no lugar (editada, desfeita ou refeita): desenhada de novo nas mesmas larguras, gravada depois.
@@ -1256,6 +1318,14 @@
       barEdit(value);
       return;
     }
+    if (op === "caretPitch") {
+      caretAtPitch(value);
+      return;
+    }
+    if (op === "split") {
+      splitAt(value);
+      return;
+    }
     if (op === "voice") {
       // A voz da nota nova (1 ou 2): o cursor de inserção passa a pôr nela.
       state.caretVoice = value === 2 ? 1 : 0;
@@ -1315,9 +1385,22 @@
         }
         return;
       }
-      case "technique":
+      case "technique": {
+        if (value === "tie") {
+          // Ligada (L): todas passam a ser ligadas à anterior da corda, ou todas deixam, pela principal.
+          const tied = note.isTieDestination;
+          let reason = null;
+          change(() => notes.filter((n) => n.isTieDestination === tied).every((n) => {
+            const result = edit.tie(alphaTab, n);
+            if (result !== true) reason = result;
+            return result === true;
+          }));
+          if (reason) post({ type: "notice", text: "Não há nota na batida de antes, nessa corda, para ligar." });
+          return;
+        }
         change(() => (several ? edit.toggleAll(alphaTab, notes, value) : edit.toggle(alphaTab, note, value)));
         return;
+      }
       case "fret":
         change(() => edit.setFret(note, value));
         return;
@@ -1635,6 +1718,38 @@
     postSelection();
   }
 
+  // Dividir (/): a nota escolhida vira duas ligadas sem mudar o som, para a segunda ter articulação dela (o vibrato no
+  // fim de um bend). Onde: no cursor de inserção, se ele está dentro de uma nota; senão na agulha (`needle`, o tique que
+  // o app manda), se ela está dentro da nota; senão no meio. Na grade; a parte nova fica escolhida.
+  function splitAt(needle) {
+    let note = null;
+    let tick = null;
+    if (state.caret) {
+      const beat = edit.resolveBeat(state.score, state.caret);
+      const at = state.caret.length > 6 ? state.caret[6] : null;
+      const ev = beat && at !== null && at !== undefined
+        ? edit.timeline(beat.voice.bar.staff, state.caret[7] || 0).find((e) => e.start < at && at < e.end) : null;
+      if (ev) {
+        note = ev.beat.notes.find((n) => n.string === state.caret[5]) || ev.beat.notes[0];
+        tick = at;
+      }
+    } else {
+      note = selectedNote();
+    }
+    const span = note ? edit.span(note) : null;
+    if (!span) {
+      post({ type: "notice", text: "Escolha a nota (ou ponha o cursor dentro dela) para dividir." });
+      return;
+    }
+    const inside = (t) => Number.isFinite(t) && t - span.start >= edit.MIN_TICKS && span.end - t >= edit.MIN_TICKS;
+    if (tick === null) {
+      const atNeedle = Number.isFinite(needle) ? snap(needle, state.grid) : null;
+      tick = inside(atNeedle) ? atNeedle : snap((span.start + span.end) / 2, state.grid);
+      if (!inside(tick)) tick = Math.round((span.start + span.end) / 2);
+    }
+    rewriteSelected(note, tick, () => edit.split(alphaTab, note, tick));
+  }
+
   // Uma mudança no ritmo (o compasso refeito): o motivo vira aviso, e a nota é achada de novo pelo tique `tick` e pela
   // corda.
   function rewriteSelected(note, tick, apply) {
@@ -1797,7 +1912,30 @@
     const x = (event.clientX - surface.left) / zoomStretch();
     const y = event.clientY - surface.top;
     const beat = lookup.getBeatAtPos(x, y);
-    return beat ? lookup.getNoteAtPos(beat, x, y) : null;
+    const note = beat ? lookup.getNoteAtPos(beat, x, y) : null;
+    if (note) return note;
+    // A ligada que a TAB não mostra (como no Guitar Pro, só com vibrato ou no começo do compasso) não tem caixa nem
+    // largura: o clique na linha da corda, no espaço de tempo da batida dela, a escolhe, como o cursor do Guitar Pro.
+    const slot = beatInSlot(lookup, x, y);
+    const string = slot ? stringAt(slot, y) : null;
+    return slot ? slot.notes.find((n) => n.string === string && n.isTieDestination) || null : null;
+  }
+
+  // A batida cujo espaço de tempo (a caixa real, que vai até a seguinte) tem o ponto, na pauta em que ele cai.
+  function beatInSlot(lookup, x, y) {
+    for (const system of lookup.staffSystems) {
+      const r = system.realBounds;
+      if (y < r.y || y > r.y + r.h) continue;
+      for (const master of system.bars) {
+        for (const bar of master.bars) {
+          const b = bar.realBounds;
+          if (y < b.y || y > b.y + b.h) continue;
+          const hit = bar.beats.find((beat) => x >= beat.realBounds.x && x < beat.realBounds.x + beat.realBounds.w);
+          if (hit) return hit.beat;
+        }
+      }
+    }
+    return null;
   }
 
   sheet.addEventListener("pointerdown", (event) => {

@@ -304,9 +304,115 @@ public enum SoundDisagreement: Hashable, Sendable {
     case trill(low: Int, high: Int)
     /// O trinado escrito que o som não faz.
     case noTrill
+    /// O ataque medido longe do começo escrito (milissegundos; negativo: antes).
+    case attack(Int)
+    /// A nota escrita não soa (a curva quase não tem altura no corpo dela).
+    case silent
+    /// O som tem vibrato e a escrita não.
+    case vibrato
+
+    public var kind: SuspectKind {
+        switch self {
+        case .pitch: .pitch
+        case .bend: .bend
+        case .trill, .noTrill: .trill
+        case .attack: .attack
+        case .silent: .silent
+        case .vibrato: .vibrato
+        }
+    }
+}
+
+/// Os tipos de suspeita, para o filtro da coluna: as que comparam o som com a nota escrita (altura, bend, trinado,
+/// ataque fora do tempo, nota que não soa, vibrato não escrito) e o som sem nota escrita.
+public enum SuspectKind: String, CaseIterable, Codable, Hashable, Sendable {
+    case pitch, bend, trill, unwritten, silent, attack, vibrato
+
+    public var label: String {
+        switch self {
+        case .pitch: "Altura"
+        case .bend: "Bend"
+        case .trill: "Trinado"
+        case .unwritten: "Sem nota"
+        case .silent: "Não soa"
+        case .attack: "Ataque"
+        case .vibrato: "Vibrato"
+        }
+    }
+
+    /// Os que vêm ligados: o vibrato fica de fora (muita TAB não o escreve, e ele encheria a lista).
+    public static let standard: Set<SuspectKind> = Set(allCases).subtracting([.vibrato])
+}
+
+/// Um som que a faixa tem (o motor acha os ataques e a altura de cada um, `GET songs/{id}/sounds`): o segundo, a
+/// altura MIDI, a intensidade em dB e quanto ela está abaixo do mais forte em ±2 s.
+public struct HeardSound: Hashable, Sendable {
+    public let seconds: Double
+    public let pitch: Int
+    public let level: Double
+    public let relative: Double
+
+    public init(seconds: Double, pitch: Int, level: Double, relative: Double) {
+        self.seconds = seconds
+        self.pitch = pitch
+        self.level = level
+        self.relative = relative
+    }
+
+    /// Os sons fortes (até `strong` dB abaixo do mais forte em volta) sem nota escrita: nenhuma nota de nenhuma pista
+    /// começa perto (`tolerance` segundos) na mesma altura (um semitom de folga, ou a oitava), nem uma nota dessa altura
+    /// está soando ali (um ligado, um bend ou o vibrato também dão ataque no espectro).
+    public static func unwritten(_ sounds: [HeardSound], notes: [(start: Double, end: Double, pitch: Int)],
+                                 tolerance: Double = 0.12, strong: Double = -18) -> [HeardSound] {
+        let sorted = notes.sorted { $0.start < $1.start }
+        let longest = sorted.map { $0.end - $0.start }.max() ?? 0
+        func same(_ a: Int, _ b: Int) -> Bool { abs(a - b) <= 1 || abs(abs(a - b) - 12) <= 1 }
+        return sounds.filter { sound in
+            guard sound.relative >= strong else { return false }
+            // As notas que podem cobrir o som: as que começam até `longest` antes dele.
+            var low = 0, high = sorted.count
+            let from = sound.seconds - max(tolerance, longest) - 0.05
+            while low < high {
+                let mid = (low + high) / 2
+                if sorted[mid].start < from { low = mid + 1 } else { high = mid }
+            }
+            var i = low
+            while i < sorted.count, sorted[i].start <= sound.seconds + tolerance {
+                let note = sorted[i]
+                if same(note.pitch, sound.pitch) {
+                    if abs(note.start - sound.seconds) <= tolerance { return false }
+                    if note.start < sound.seconds, sound.seconds < note.end + 0.05 { return false }
+                }
+                i += 1
+            }
+            return true
+        }
+    }
 }
 
 extension SoundNote {
+    /// Tudo o que o som discorda da nota escrita que começa em `start` e acaba em `end` (segundos): a altura, o bend, o
+    /// trinado (`disagreements`), a nota que não soa (no corpo dela, sem as pontas, menos de um quinto dos pontos têm
+    /// altura), o ataque a mais de 60 ms do começo escrito e o vibrato que a escrita não tem.
+    public func checks(with note: ScoreNote, start: Double, end: Double) -> [SoundDisagreement] {
+        let length = end - start
+        var body = 0, heard = 0
+        for (k, value) in curve.values.enumerated() {
+            let t = curve.from + Double(k) * curve.hop
+            if t >= start + 0.15 * length, t <= end - 0.15 * length {
+                body += 1
+                if value != nil { heard += 1 }
+            }
+        }
+        if !chord, body >= 5, Double(heard) < 0.2 * Double(body) { return [.silent] }
+        var list = disagreements(with: note)
+        if let attack = curve.attack, abs(attack - start) >= 0.06 { list.append(.attack(Int(((attack - start) * 1000).rounded()))) }
+        if !chord, fit?.vibrato == true, note.vibrato == 0, fit?.trill == nil, !list.contains(where: { $0.kind == .pitch }) {
+            list.append(.vibrato)
+        }
+        return list
+    }
+
     public func disagreements(with note: ScoreNote) -> [SoundDisagreement] {
         guard !chord, let fit else { return [] }
         if let trill = fit.trill {

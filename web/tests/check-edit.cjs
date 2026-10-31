@@ -65,6 +65,46 @@ test("ligado e slide entre notas ficam presos à nota seguinte da corda", () => 
   assert.ok(edit.resolve(score, where).slideTarget, "o finish liga o slide à nota seguinte");
 });
 
+test("desligar ou trocar o slide, ou apagar a nota de onde ele sai, não solta a outra ponta", () => {
+  // O alphaTab lia a cópia procurando a origem do slide pelo id e quebrava: a edição parava de desenhar e gravar.
+  const pair = (score) => {
+    const notes = edit.notesOf(score.tracks[0].staves[0]);
+    const index = notes.findIndex((n, i) => notes[i + 1] && notes[i + 1].string === n.string);
+    return [notes[index], notes[index + 1]];
+  };
+  for (const link of ["slide-legato", "slide-shift", "hammer"]) {
+    for (const then of ["off", "slide-out-up", "slide-in-below", "remove"]) {
+      let score = load();
+      const [from] = pair(score);
+      const where = edit.pathOf(from);
+      edit.toggle(alphaTab, from, link);
+      score = edit.refinish(alphaTab, score);
+      const origin = edit.resolve(score, where);
+      assert.ok(origin.slideTarget || origin.hammerPullDestination, `${link} ligado à seguinte`);
+      if (then === "off") edit.toggle(alphaTab, origin, link);
+      else if (then === "remove") edit.remove(origin);
+      else edit.toggle(alphaTab, origin, then);
+      score = edit.refinish(alphaTab, score);
+      reread(score);
+      const on = then === "remove" ? [] : edit.techniquesOf(alphaTab, edit.resolve(score, where));
+      // Sai ↗ troca um slide (o mesmo grupo); Entra e o ligado convivem com ele.
+      const replaced = then === "off" || (then === "slide-out-up" && link !== "hammer");
+      assert.equal(on.includes(link), then !== "remove" && !replaced, `${link} → ${then}`);
+    }
+  }
+  // A ligadura: apagada a nota de onde vem, a seguinte deixa de ser ligada (ou liga na anterior da corda).
+  let score = load();
+  const [from, to] = pair(score);
+  const where = edit.pathOf(to);
+  to.fret = from.fret;
+  to.isTieDestination = true;
+  score = edit.refinish(alphaTab, score);
+  assert.ok(edit.resolve(score, where).tieOrigin, "a ligadura liga");
+  edit.remove(edit.resolve(score, where).tieOrigin);
+  score = edit.refinish(alphaTab, score);
+  reread(score);
+});
+
 test("casa, corda (mesma altura), meio tom e apagar", () => {
   const score = load();
   const note = first(score);
@@ -424,6 +464,166 @@ test("o que não dá: passar por cima da anterior, ficar curta demais", () => {
   const score = load();
   assert.equal(edit.retime(alphaTab, at(score, 960), -10, 900), "overlap");
   assert.equal(edit.retime(alphaTab, at(score, 960), 960, 970), "short");
+});
+
+test("dividir: duas ligadas com o mesmo som, o vibrato só na segunda, e a divisão sobrevive ao compasso refeito", () => {
+  const core = require("../score-core.js");
+  let score = load();
+  for (const tick of [1920, 2880]) {
+    assert.equal(edit.toRest(alphaTab, at(score, tick)), true);
+    score = edit.refinish(alphaTab, score);
+  }
+  assert.equal(edit.setLength(alphaTab, at(score, 960), 1920), true);
+  score = edit.refinish(alphaTab, score);
+  edit.toggle(alphaTab, at(score, 960), "bend-full");
+  score = edit.refinish(alphaTab, score);
+  // Dividida no meio: a subida (no primeiro quarto da mínima) fica na primeira; a segunda fica sem bend e continua no
+  // alto, como o Guitar Pro grava.
+  assert.equal(edit.split(alphaTab, at(score, 960), 1920), true);
+  score = edit.refinish(alphaTab, score);
+  const tail = at(score, 1920);
+  assert.ok(tail.isTieDestination && tail.tieOrigin === at(score, 960));
+  const points = (n) => (n.bendPoints || []).map((p) => [p.offset, p.value]);
+  assert.deepEqual(points(at(score, 960)), [[0, 0], [30, 4]]);
+  assert.deepEqual(points(tail), []);
+  assert.equal(edit.split(alphaTab, at(score, 960), 1920), "same");
+  assert.equal(edit.split(alphaTab, at(score, 960), 965), "short");
+  edit.toggle(alphaTab, tail, "vibrato");
+  score = reread(edit.refinish(alphaTab, score));
+  assert.equal(at(score, 960).vibrato, 0);
+  assert.equal(at(score, 1920).vibrato, alphaTab.model.VibratoType.Slight);
+  assert.deepEqual(points(at(score, 960)), [[0, 0], [30, 4]], "o Guitar Pro guarda a subida no lugar");
+  // Na Lente, uma nota só: a mínima inteira, a subida no primeiro oitavo e o vibrato.
+  const lens = core.trackNotes(score)[0].find((n) => n[0] === 960);
+  assert.equal(lens[1], 1920);
+  assert.equal(lens[5], 1);
+  assert.deepEqual(lens.slice(7), [0, 0, 15, 4, 30, 4, 60, 4]);
+  // A nota anda uma semínima: a divisão e o vibrato vão junto.
+  assert.equal(edit.nudge(alphaTab, at(score, 960), 1, 960), true);
+  score = edit.refinish(alphaTab, score);
+  barsAreWhole(score);
+  assert.ok(at(score, 2880).isTieDestination && at(score, 2880).vibrato);
+  assert.ok(!at(score, 1920).isTieDestination && !at(score, 1920).vibrato);
+  // O encaixe na nota inteira reparte o bend medido: sobe no primeiro sexto e fica; o vibrato continua na segunda.
+  assert.ok(edit.fit(alphaTab, at(score, 1920), { pitch: at(score, 1920).realValue, bend: [[0, 0], [10, 2]], vibrato: true }));
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(points(at(score, 1920)), [[0, 0], [20, 2]]);
+  assert.deepEqual(points(at(score, 2880)), []);
+  assert.ok(at(score, 2880).vibrato && !at(score, 1920).vibrato);
+  // Dividida de novo, a ligada do meio entra na cadeia: cada uma vem da anterior (antes a de depois ficava presa à
+  // primeira), e a nova continua o vibrato.
+  assert.equal(edit.split(alphaTab, at(score, 2880), 3360), true);
+  score = reread(edit.refinish(alphaTab, score));
+  assert.equal(at(score, 1920).tieDestination, at(score, 2880));
+  assert.equal(at(score, 2880).tieDestination, at(score, 3360));
+  assert.ok(at(score, 3360).vibrato);
+  assert.equal(core.trackNotes(score)[0].find((n) => n[0] === 1920)[1], 1920);
+  // Como o Guitar Pro: o vibrato fica só na nota escolhida; o P.M. vai também para as ligadas seguintes e o let ring o
+  // tira (os dois não convivem).
+  edit.toggle(alphaTab, at(score, 2880), "vibrato");
+  assert.ok(!at(score, 2880).vibrato && at(score, 3360).vibrato);
+  edit.toggle(alphaTab, at(score, 1920), "palm-mute");
+  assert.ok(at(score, 1920).isPalmMute && at(score, 2880).isPalmMute && at(score, 3360).isPalmMute);
+  edit.toggle(alphaTab, at(score, 1920), "let-ring");
+  assert.ok(at(score, 1920).isLetRing && !at(score, 1920).isPalmMute && !at(score, 3360).isPalmMute);
+  assert.ok(!at(score, 2880).isLetRing, "o let ring fica só na nota");
+  // O bend ligado na primeira parte: a ligada seguinte fica sem bend (continua no alto); um Hold que ela tivesse sai.
+  at(score, 3360).addBendPoint(new alphaTab.model.BendPoint(0, 2));
+  at(score, 3360).addBendPoint(new alphaTab.model.BendPoint(60, 2));
+  edit.toggle(alphaTab, at(score, 2880), "bend-full");
+  assert.deepEqual(points(at(score, 2880)), [[0, 0], [15, 4]]);
+  assert.deepEqual(points(at(score, 3360)), []);
+});
+
+test("ligada (L), como no Guitar Pro: duas notas, o bend na primeira e o vibrato na segunda, ligada", () => {
+  let score = load();
+  const points = (n) => (n.bendPoints || []).map((p) => [p.offset, p.value]);
+  assert.equal(edit.tie(alphaTab, at(score, 0)), "tie", "a primeira da música não tem de onde vir");
+  edit.toggle(alphaTab, at(score, 0), "bend-full");
+  edit.setFret(at(score, 960), 7);
+  assert.equal(edit.tie(alphaTab, at(score, 960)), true);
+  score = edit.refinish(alphaTab, score);
+  const second = at(score, 960);
+  assert.ok(second.isTieDestination && second.tieOrigin === at(score, 0));
+  assert.equal(second.fret, 5, "a ligada fica na casa da de antes");
+  assert.deepEqual(points(second), [], "e continua no alto do bend sem bend dela, como o Guitar Pro grava");
+  assert.ok(edit.techniquesOf(alphaTab, second).includes("tie"));
+  assert.ok(!edit.techniquesOf(alphaTab, second).includes("prebend"), "segurar não é pré-bend");
+  edit.toggle(alphaTab, second, "wide-vibrato");
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(at(score, 960).isTieDestination && at(score, 960).vibrato === alphaTab.model.VibratoType.Wide);
+  assert.equal(at(score, 0).vibrato, 0);
+  // O vibrato largo sai da ligada; e L de novo solta a nota, que ataca outra vez.
+  edit.toggle(alphaTab, at(score, 960), "wide-vibrato");
+  assert.equal(at(score, 960).vibrato, 0);
+  assert.equal(edit.tie(alphaTab, at(score, 960)), true);
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(!at(score, 960).isTieDestination && !at(score, 0).tieDestination);
+});
+
+test("o compasso refeito não muda o som: o bend de uma nota ligada continua no mesmo tempo", () => {
+  // As 32 combinações (salvas pelo Guitar Pro 8): cada nota refeita na própria duração junta as ligadas sem articulação
+  // numa figura maior; o bend medido no tempo (o que a Lente e o sintetizador tocam) tem de ser o mesmo.
+  const core = require("../score-core.js");
+  const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, "fixtures", "combinacoes.gp")));
+  let score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, new alphaTab.Settings());
+  const sound = (sc) => new Map(core.trackNotes(sc)[0].map((n) => {
+    const points = [];
+    for (let i = 7; i + 1 < n.length; i += 2) points.push([n[i], n[i + 1]]);
+    const at = (x) => {
+      if (!points.length) return 0;
+      if (x <= points[0][0]) return points[0][1];
+      for (let i = 1; i < points.length; i++) {
+        const [x0, y0] = points[i - 1];
+        const [x1, y1] = points[i];
+        if (x <= x1) return x1 > x0 ? y0 + ((y1 - y0) * (x - x0)) / (x1 - x0) : y1;
+      }
+      return points[points.length - 1][1];
+    };
+    return [`${n[0]}/${n[3]}`, [n[1], n[5], ...Array.from({ length: 13 }, (_, k) => Math.round(at(k * 5) * 2) / 2)].join()];
+  }));
+  const before = sound(score);
+  // Pelo tique e pela corda (o endereço muda quando as ligadas se juntam).
+  for (const v of [0, 1]) {
+    const heads = edit.timeline(score.tracks[0].staves[0], v).map((e) => [e.start, edit.tabString(e.beat.notes[0])]);
+    for (const [tick, string] of heads) {
+      const note = edit.findNote(score, 0, tick, string);
+      const span = edit.span(note);
+      assert.equal(edit.setLength(alphaTab, note, span.end - span.start), true, `${tick}`);
+      score = edit.refinish(alphaTab, score);
+    }
+  }
+  assert.deepEqual(sound(score), before);
+});
+
+test("acorde em que só uma nota segue ligada: refazer o compasso não estica a outra", () => {
+  // Como no solo da Sunshine (c. 72): colcheia pontuada com duas notas e a semicolcheia seguinte só com uma, ligada.
+  const m = alphaTab.model;
+  let score = load();
+  const voice = score.tracks[0].staves[0].bars[0].voices[0];
+  voice.beats = [];
+  const beat = (duration, dots, notes) => {
+    const b = new m.Beat();
+    b.duration = duration;
+    b.dots = dots;
+    for (const [string, fret, tie] of notes) {
+      const n = new m.Note();
+      n.string = string;
+      n.fret = fret;
+      n.isTieDestination = tie;
+      b.addNote(n);
+    }
+    voice.addBeat(b);
+  };
+  beat(m.Duration.Eighth, 1, [[4, 12, false], [5, 10, false]]);
+  beat(m.Duration.Sixteenth, 0, [[5, 10, true]]);
+  beat(m.Duration.Half, 1, [[4, 12, false]]);
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 720), true);
+  score = edit.refinish(alphaTab, score);
+  const first = score.tracks[0].staves[0].bars[0].voices[0].beats[0];
+  assert.equal(first.playbackDuration, 720, "a colcheia pontuada continua");
+  assert.ok(at(score, 720) && at(score, 720).isTieDestination && at(score, 720).string === 5);
 });
 
 console.log(`${passed} verificações passaram`);
