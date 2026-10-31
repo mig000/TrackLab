@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import platform
+import threading
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from . import __version__, home, multitracks, package, songsterr, stems, tempomap
-from .errors import PackageError, TrackLabError
+from .errors import JobCancelled, PackageError, TrackLabError
 from .jobs import JobManager
 from .media import mvsep
 from .media.peaks import peaks
-from .util import atomic_json, read_json
+from .util import atomic_bytes, atomic_json, read_json
 
 PEAKS_PER_SECOND = 200
 
@@ -87,6 +88,8 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             if request.separate and made.manifest.get("audio"):
                 try:
                     result["stems"] = stems.separate_song(made, progress=progress, cancel=cancel, run=separate_run)
+                except JobCancelled:
+                    raise   # cancelada é cancelada (a música fica no repertório), não "concluída com aviso"
                 except TrackLabError as error:
                     # A música já está no repertório; a separação pode ser pedida de novo depois.
                     made.update(lambda data: data["warnings"].append(f"Faixas não separadas: {error}"))
@@ -107,8 +110,11 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
     @app.put("/api/songs/{song_id}/score")
     async def put_score(song_id: str, request: Request) -> dict:
         """A partitura editada na TAB (Guitar Pro 7 no corpo do pedido); o original do Songsterr fica guardado."""
+        from starlette.concurrency import run_in_threadpool
+
         found = song(song_id)
-        return {"score": found.save_score(await request.body())}
+        # Numa thread: conferir o Guitar Pro de uma música grande leva alguns décimos e seguraria os outros pedidos.
+        return {"score": await run_in_threadpool(found.save_score, await request.body())}
 
     @app.post("/api/songs/{song_id}/synth", status_code=202)
     def synth(song_id: str) -> dict:
@@ -226,6 +232,8 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(404, "Arquivo não encontrado no pacote.")
         return FileResponse(path)
 
+    spectrum_guard, spectrum_locks = threading.Lock(), {}
+
     def spectrum_of(song_id: str, stem: str | None) -> tuple[dict, bytes, str]:
         """O espectro (media/spectrum.py) do original ou de uma faixa da separação ativa: as medidas, os bytes e o
         nome com que fica em `peaks/` (calculado uma vez)."""
@@ -244,16 +252,17 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             name = f"{manifest['activeStems']}-{stem}"
         base, name = name, f"{name}-v{spectrum.VERSION}"
         data_file, meta_file = found.file(f"peaks/spectrum-{name}.u8"), found.file(f"peaks/spectrum-{name}.json")
-        if data_file.is_file() and meta_file.is_file():
-            meta, data = read_json(meta_file), data_file.read_bytes()
-        else:
+        # Um cálculo por faixa: dois pedidos juntos (o espectro e os sons, ou a aparência trocada no meio do primeiro)
+        # esperam o mesmo cálculo em vez de fazer dois e disputar o arquivo.
+        with spectrum_guard:
+            lock = spectrum_locks.setdefault(str(data_file), threading.Lock())
+        with lock:
+            if data_file.is_file() and meta_file.is_file():
+                return read_json(meta_file), data_file.read_bytes(), name
             made = spectrum.compute(found.file(relative))
             data = made.pop("data").tobytes()
             meta = made
-            data_file.parent.mkdir(exist_ok=True)
-            temp = data_file.with_name(data_file.name + ".partial")
-            temp.write_bytes(data)
-            temp.replace(data_file)
+            atomic_bytes(data_file, data)
             atomic_json(meta_file, meta)
             # As receitas antigas da mesma faixa não servem mais.
             for stale in [*found.file("peaks").glob(f"spectrum-{base}.*"), *found.file("peaks").glob(f"spectrum-{base}-v*")]:

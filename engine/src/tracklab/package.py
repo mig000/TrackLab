@@ -16,12 +16,15 @@ inteiro, e cada separação faz o mesmo dentro de `stems/`. Copiar a pasta para 
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
 import threading
 import time
+import zipfile
 from pathlib import Path
+from xml.parsers import expat
 
 from . import home, repertoire, tempomap
 from .errors import PackageError
@@ -37,10 +40,41 @@ SCORE_EDITED = "score/edited.gp"
 SCORE_HISTORY = 100
 SCORE_LIMIT = 50_000_000
 _LOCK = threading.RLock()   # o manifesto de um pacote é lido e regravado inteiro; um escritor por vez
-
-
-
 PARTIAL_AGE = 3600   # segundos: uma pasta .partial mais velha que isto é de um trabalho interrompido
+
+
+def score_measures(data: bytes) -> int:
+    """Quantos compassos tem um Guitar Pro 7 (os MasterBar do `Content/score.gpif`). Recusa o que não é um GP7
+    inteiro (um zip quebrado, sem a partitura ou com o XML estragado): gravado, tomaria o lugar da partitura da música.
+    """
+    refused = PackageError("Isso não é um Guitar Pro 7 que o TrackLab grave.")
+    if not data.startswith(b"PK") or len(data) > SCORE_LIMIT:
+        raise refused
+    # O XML lido em fluxo, sem montar a árvore (o do Highway Star tem 8,7 MB: 170 ms assim, 260 ms com a árvore).
+    path, count = [], 0
+
+    def start(name, _attributes):
+        nonlocal count
+        if not path and name != "GPIF":
+            raise ValueError("não é um GPIF")
+        if name == "MasterBar" and path == ["GPIF", "MasterBars"]:
+            count += 1
+        path.append(name)
+
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = start
+    parser.EndElementHandler = lambda _name: path.pop()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            info = archive.getinfo("Content/score.gpif")
+            if info.file_size > SCORE_LIMIT or archive.testzip() is not None:
+                raise refused
+            parser.Parse(archive.read(info), True)
+    except (zipfile.BadZipFile, KeyError, expat.ExpatError, EOFError, OSError, ValueError):
+        raise refused from None
+    if not count:
+        raise refused
+    return count
 
 
 def _sweep_partials(folder: Path) -> None:
@@ -146,6 +180,7 @@ class SongPackage:
             data["synth"] = {
                 "key": key, "soundfont": receipt.get("soundfont"), "tempoSHA256": receipt.get("tempoSHA256"),
                 "scoreSHA256": receipt.get("scoreSHA256"), "version": receipt.get("version"),
+                "soundfontSHA256": receipt.get("soundfontSHA256"),
                 "created": receipt.get("created", now_iso()), "seconds": receipt.get("seconds"),
                 "tracks": {index: {"file": f"synth/{key}/{info['file']}", "name": info.get("name"),
                                    "percussion": bool(info.get("percussion")), "program": info.get("program")}
@@ -156,9 +191,8 @@ class SongPackage:
     def save_score(self, data: bytes) -> dict:
         """A partitura editada (o Guitar Pro 7 que a página da TAB grava): vai para `score/edited.gp`; a anterior para
         `score/history/` (as últimas `SCORE_HISTORY`). O original do Songsterr fica em `score/original.gp` e o manifesto
-        passa a apontar para a editada."""
-        if not data.startswith(b"PK") or len(data) > SCORE_LIMIT:
-            raise PackageError("Isso não é um Guitar Pro 7 que o TrackLab grave.")
+        passa a apontar para a editada, com os compassos dela (pôr ou apagar um compasso muda a conta)."""
+        measures = score_measures(data)
         with _LOCK:
             target = self.file(SCORE_EDITED)
             if target.is_file():
@@ -178,6 +212,7 @@ class SongPackage:
                 entry.setdefault("original", entry.get("file"))
                 entry["file"] = SCORE_EDITED
                 entry["sha256"] = sha256_file(target)
+                entry["measures"] = measures
                 entry["edited"] = now_iso()
                 manifest["score"] = entry
 

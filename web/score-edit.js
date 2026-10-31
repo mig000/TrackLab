@@ -833,9 +833,15 @@
     return true;
   }
 
+  // Onde a música acaba (tiques): o fim do último compasso.
+  function songEnd(staff) {
+    const last = staff.bars[staff.bars.length - 1].masterBar;
+    return last.start + last.calculateDuration();
+  }
+
   // A nota (a batida dela, com o acorde) passa a soar de `start` a `end` (tiques). A anterior que passar do começo novo
-  // encurta; o fim novo para no começo da seguinte. Devolve true, ou o motivo ("grace", "overlap", "short",
-  // "figure", "missing").
+  // encurta; o fim novo para no começo da seguinte e não passa do fim da música (a última nota, levada para depois dele,
+  // sumia no compasso refeito). Devolve true, ou o motivo ("grace", "overlap", "short", "end", "figure", "missing").
   function retime(at, note, start, end) {
     const staff = note.beat.voice.bar.staff;
     const v = note.beat.voice.index;
@@ -849,6 +855,7 @@
     end = Math.round(end);
     if (start < 0) return "overlap";
     if (next && end > next.start) end = next.start;
+    if (end > songEnd(staff) + 0.5) return "end";
     if (end - start < MIN_TICKS) return "short";
     if (previous && start <= previous.start) return "overlap";
     const changed = [ev];
@@ -928,13 +935,15 @@
     return ev ? { start: ev.start, end: ev.end } : null;
   }
 
-  // A nota de uma pista pelo tique em que começa e pela corda (1 é a mais aguda): a que a Fita aponta.
-  function findNote(score, track, tick, string) {
+  // A nota de uma pista pelo tique em que começa e pela corda (1 é a mais aguda): a que a Fita aponta. Com `voice`, só
+  // nessa voz (a voz 1 e a 2 podem ter nota no mesmo tique e na mesma corda).
+  function findNote(score, track, tick, string, voice) {
     const part = score.tracks[track];
     if (!part) return null;
     for (const staff of part.staves) {
       if (!staff.tuning || !staff.tuning.length) continue;
-      const note = notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - tick) < 1 && tabString(n) === string);
+      const note = notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - tick) < 1 && tabString(n) === string
+        && (voice === undefined || voice === null || n.beat.voice.index === voice));
       if (note) return note;
     }
     return null;
@@ -980,22 +989,33 @@
     return out;
   }
 
-  // O recorte das notas: o trecho do começo da primeira ao fim da última (com as ligadas), cada batida com todas as notas
-  // dela (o acorde inteiro) e as pausas no meio. Só valores simples: vai ao app e serve noutra música.
-  function copy(notes) {
-    if (!notes.length) return null;
+  // As notas que o recorte de `notes` leva: as da pauta da primeira (de qualquer voz). Recortar só deixa pausa nelas.
+  function copied(notes) {
+    if (!notes.length) return [];
     const staff = notes[0].beat.voice.bar.staff;
-    const events = timeline(staff, notes[0].beat.voice.index);
-    const chosen = events.filter((e) => notes.some((n) => e.beat === n.beat || e.tail.includes(n.beat)));
+    return notes.filter((n) => n.beat.voice.bar.staff === staff);
+  }
+
+  // O recorte das notas: o trecho do começo da primeira ao fim da última (com as ligadas), cada batida com todas as notas
+  // dela (o acorde inteiro) e as pausas no meio, em cada voz que tem nota escolhida (com duas, cada batida diz a voz,
+  // `voice`, e `voices` lista as do recorte). Só valores simples: vai ao app e serve noutra música.
+  function copy(notes) {
+    const mine = copied(notes);
+    if (!mine.length) return null;
+    const staff = mine[0].beat.voice.bar.staff;
+    const voices = [...new Set(mine.map((n) => n.beat.voice.index))].sort((a, b) => a - b);
+    const lines = voices.map((v) => ({ v, events: timeline(staff, v) }));
+    const chosen = lines.flatMap(({ events }) => events.filter((e) => mine.some((n) => e.beat === n.beat || e.tail.includes(n.beat))));
     if (!chosen.length) return null;
     const start = Math.min(...chosen.map((e) => e.start));
     const end = Math.max(...chosen.map((e) => e.end));
     const clip = { length: end - start, events: [] };
+    if (voices.length > 1) clip.voices = voices;
     const beatData = (beat) => Object.assign(plain(beat), {
       whammy: beat.whammyBarPoints ? beat.whammyBarPoints.map((p) => [p.offset, p.value]) : null });
     const notesData = (beat) => beat.notes.map((n) => Object.assign(plain(n), {
       bend: n.bendPoints ? n.bendPoints.map((p) => [p.offset, p.value]) : null }));
-    for (const ev of events) {
+    for (const { v, events } of lines) for (const ev of events) {
       if (ev.start < start || ev.start >= end) continue;
       const item = {
         offset: ev.start - start,
@@ -1003,6 +1023,7 @@
         beat: beatData(ev.beat),
         notes: notesData(ev.beat),
       };
+      if (clip.voices) item.voice = v;
       // Uma nota ligada leva as partes como estão (cada uma com a duração, o bend dela e o vibrato da ligada): colada,
       // soa igual; antes saía uma nota só, sem o que as ligadas tinham, e com a subida do bend esticada.
       if (ev.tail.length) {
@@ -1032,16 +1053,28 @@
     return beat;
   }
 
-  // Cola o recorte a partir do tique `start` da pauta, por cima do que estava: o que começa no trecho sai, o que vem de
-  // antes encurta até ele, e os compassos são refeitos com figuras, pausas e ligaduras. Devolve true ou o motivo
-  // ("end": passa do fim da música; "grace", "figure" como o retime).
+  // Cola o recorte a partir do tique `start` da pauta, por cima do que estava, na voz `v` (um recorte de duas vozes vai
+  // cada uma na sua): o que começa no trecho sai, o que vem de antes encurta até ele, e os compassos são refeitos com
+  // figuras, pausas e ligaduras. Devolve true ou o motivo ("end": passa do fim da música; "grace", "figure" como o
+  // retime).
   function paste(at, staff, start, clip, v = 0) {
     if (!clip || !clip.events) return "missing";
+    if (Array.isArray(clip.voices) && clip.voices.length > 1) {
+      for (const voice of clip.voices) {
+        const result = pasteVoice(at, staff, start, { length: clip.length,
+          events: clip.events.filter((item) => item.voice === voice) }, voice);
+        if (result !== true) return result;
+      }
+      return true;
+    }
+    return pasteVoice(at, staff, start, clip, v);
+  }
+
+  function pasteVoice(at, staff, start, clip, v) {
     start = Math.round(start);
     const end = start + Math.round(clip.length);
     const bars = staff.bars;
-    const songEnd = bars[bars.length - 1].masterBar.start + bars[bars.length - 1].masterBar.calculateDuration();
-    if (end > songEnd + 0.5) return "end";
+    if (end > songEnd(staff) + 0.5) return "end";
     const events = timeline(staff, v);
     let low = start;
     let high = end;
@@ -1497,6 +1530,7 @@
     deleteBar,
     setTimeSignature,
     copy,
+    copied,
     paste,
     resolveBeat,
     caretOf,

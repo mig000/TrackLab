@@ -728,4 +728,63 @@ test("copiar e colar uma nota ligada leva as partes como estão: o bend no mesmo
   assert.ok(tail.isTieDestination && tail.vibrato);
 });
 
+test("a última nota não passa do fim da música: mover, alongar e o passo da grade recusam sem mudar nada", () => {
+  let score = load();
+  const staff = () => score.tracks[0].staves[0];
+  const shape = () => edit.timeline(staff(), 0).map((e) => [e.start, e.end, e.beat.notes.map((n) => [n.string, n.fret])]);
+  const before = shape();
+  const last = () => edit.notesOf(staff()).at(-1);
+  const bar = staff().bars.at(-1).masterBar;
+  const end = bar.start + bar.calculateDuration();
+  const span = edit.span(last());
+  assert.equal(span.end, end, "a fixture acaba na última nota");
+  // Antes, o retime dizia true e a nota sumia no compasso refeito (16 notas viravam 15).
+  assert.equal(edit.retime(alphaTab, last(), span.start + 120, span.end + 120), "end");
+  assert.equal(edit.nudge(alphaTab, last(), 1, 240), "end");
+  assert.equal(edit.setLength(alphaTab, last(), end - span.start + 480), "end");
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(shape(), before);
+  assert.equal(edit.notesOf(staff()).length, 16);
+  // Para trás, e encurtando, dá.
+  assert.equal(edit.nudge(alphaTab, last(), -1, 240), true);
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(edit.span(last()), { start: span.start - 240, end: span.end - 240 });
+});
+
+test("duas vozes: copiar leva as duas, colar põe cada uma na sua, e um recorte de uma voz cola na voz pedida", () => {
+  let score = load();
+  const staff = () => score.tracks[0].staves[0];
+  assert.equal(edit.insertAt(alphaTab, staff(), 1440, 1, 3, 1), true);
+  score = edit.refinish(alphaTab, score);
+  const notes = edit.notesOf(staff());
+  const a = notes.find((n) => n.beat.voice.index === 0 && Math.abs(n.beat.absolutePlaybackStart - 960) < 1);
+  const b = notes.find((n) => n.beat.voice.index === 1);
+  assert.deepEqual(edit.span(b), { start: 1440, end: 3840 });
+  // Antes, o recorte levava só a voz da primeira nota (a da voz 2 ficava de fora, e o Recortar a apagava).
+  const clip = JSON.parse(JSON.stringify(edit.copy([a, b])));
+  assert.deepEqual(clip.voices, [0, 1]);
+  assert.equal(clip.length, 2880);
+  assert.deepEqual(clip.events.filter((e) => e.voice === 1).map((e) => [e.offset, e.length]), [[480, 2400]]);
+  assert.equal(clip.events.filter((e) => e.voice === 0).length, 3);
+  // Colado no compasso 2: a voz 1 e a voz 2 cada uma na sua, no mesmo lugar uma da outra.
+  assert.equal(edit.paste(alphaTab, staff(), 3840 + 960, clip), true);
+  score = reread(edit.refinish(alphaTab, score));
+  barsAreWhole(score);
+  const second = edit.notesOf(staff()).filter((n) => n.beat.voice.index === 1 && !n.isTieDestination);
+  assert.deepEqual(second.map((n) => [n.beat.absolutePlaybackStart, n.fret]), [[1440, 3], [5280, 3]]);
+  assert.equal(at(score, 4800).fret, a.fret);
+  // Um recorte só da voz 1, colado na voz 2 (a nota escolhida é da voz 2): a voz 1 fica como estava.
+  const one = JSON.parse(JSON.stringify(edit.copy([edit.notesOf(staff()).find((n) => n.beat.voice.index === 0)])));
+  assert.equal(one.voices, undefined);
+  const voiceOne = edit.timeline(staff(), 0).map((e) => [e.start, e.end]);
+  assert.equal(edit.paste(alphaTab, staff(), 1440, one, 1), true);
+  score = reread(edit.refinish(alphaTab, score));
+  assert.deepEqual(edit.timeline(staff(), 0).map((e) => [e.start, e.end]), voiceOne);
+  assert.deepEqual(edit.timeline(staff(), 1).map((e) => [e.start, e.end])[0], [1440, 2400]);
+  // A nota de cada voz achada pela voz: no mesmo tique e na mesma corda, a da voz pedida.
+  const v2 = edit.notesOf(staff()).find((n) => n.beat.voice.index === 1);
+  const found = edit.findNote(score, 0, v2.beat.absolutePlaybackStart, edit.tabString(v2), 1);
+  assert.equal(found, v2);
+});
+
 console.log(`${passed} verificações passaram`);

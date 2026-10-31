@@ -125,7 +125,9 @@ def separate(source: Path, output: Path, *, key: str, model: int = 31, progress:
     job_hash = None
     try:
         _emit(progress, "Enviando o áudio ao MVSEP…", 0.02)
-        fields = {"api_token": key, "sep_type": str(model), "output_format": OUTPUT_FORMAT, "is_demo": "0",
+        # Cancelada antes do envio: nada sai e a cota fica (depois do envio, o MVSEP já conta a conversão).
+        _check(cancel)
+        fields ={"api_token": key, "sep_type": str(model), "output_format": OUTPUT_FORMAT, "is_demo": "0",
                   **spec["options"]}
         try:
             with source.open("rb") as audio:

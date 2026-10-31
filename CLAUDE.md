@@ -38,7 +38,12 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   pelo app, que conhece as barras); no resumo, cada trecho leva também `start`, `seconds` e `bpm` pelo mapa de tempo.
 - `multitracks.py`: o índice da biblioteca de multitracks (`TRACKLAB_MULTITRACKS`, `~/TrackLab/config.json` →
   `multitracks`, ou `/Volumes/HD Externo WD/Multitracks`): pastas com song.ini (Clone Hero / Rock Band), arquivos
-  .mogg e pastas de faixas soltas, cada faixa com o instrumento pelo nome do arquivo; SQLite com FTS5 (sem acento,
+  .mogg e pastas de faixas soltas, cada faixa com o instrumento pelo nome do arquivo (`kind_of`/`kinds_of`: o nome
+  exato do Clone Hero; numa pasta de faixas soltas o começo comum dos nomes, o artista e o título, não conta; misturada
+  com guitarra é guitarra, para o "Sem guitarra" calar toda; fora isso, a palavra mais perto do fim, com os compostos
+  inteiros: "(03 - Bass Drum)" é bateria e "Tom Petty - … (06 - Vocals)" é voz; a primeira regra que casasse fazia 25
+  bumbos dos rips do Guitar Hero virarem baixo e a voz do Tom Petty bateria; a importação refaz o instrumento pelos
+  nomes, então um índice velho não erra); SQLite com FTS5 (sem acento,
   pelo começo das palavras) em `~/TrackLab/multitracks.sqlite`, refeito inteiro por `POST multitracks/scan` (na
   fila: ~6 min no HD frio, ~40 s com cache; 4.459 músicas em 28/10). A busca do Songsterr marca o resultado que está
   na biblioteca (mesmo título e artista, sem acento nem parênteses).
@@ -58,7 +63,7 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   pelo Demucs e o .mogg entra depois como a outra separação. Highway Star (13 canais): certo nos 13, 33 s pela API, no mesmo lugar do vídeo que a Clone Hero (−2,7289 s contra
   −2,7286 s); no seletor, "Multitrack .mogg" (`StemSet.label` pelo `library`). `media/mvsep.py` (do `mvsep_worker.py` do BackingLab 2): 63 (BS Roformer SW,
   as seis faixas numa conversão, sem Demucs), 31 (MVSep Guitar, o mesmo SW só na guitarra) e 101 (solo e base), WAV 16
-  bits, sem reenvio automático; no 31 e no 101 o resto da banda é o Demucs local sobre original − guitarras (no 31 a
+  bits, sem reenvio automático (cancelada antes do envio, nada sai e a cota fica); no 31 e no 101 o resto da banda é o Demucs local sobre original − guitarras (no 31 a
   guitarra leva o que o Demucs achou de guitarra no resto). A chave vem do app no
   cabeçalho `X-MVSEP-Key` de `POST songs/{id}/stems/mvsep`; a cota do dia fica em `~/TrackLab/mvsep.json`
   (`GET mvsep`). Nunca separa duas vezes a mesma música com o mesmo modelo.
@@ -74,8 +79,10 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   como o "segurar" das ligadas do solo do Sunshine, o vibrato não soava); com o FluidSynth instalado, ele
   (`web/tools/gp-midi.cjs` + mido). O SoundFont é o de `TRACKLAB_SOUNDFONT`, `config.json` → `soundfont`, ou o
   primeiro de `~/TrackLab/Sons` (lá está o GeneralUser GS 1.471; os testes usam o Sonivox do alphaTab, Apache 2.0). Cada pista vira `synth/<chave>/t<pista>.flac` no tamanho do áudio do vídeo, a partir de onde o tique 0 cai;
-  um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont e versão; o `GET songs/{id}`
-  marca `synth.stale` quando o mapa, a partitura ou a versão (`version` no manifesto) mudou depois, ou quando falta um
+  um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont (o SHA-256 do conteúdo,
+  `font_sha`, lembrado pelo caminho, tamanho e data) e versão; o `GET songs/{id}`
+  marca `synth.stale` quando o mapa, a partitura, o SoundFont escolhido agora (`soundfontSHA256` no manifesto; uma de
+  antes dele compara o nome) ou a versão (`version` no manifesto) mudou depois, ou quando falta um
   arquivo dela (o app abre a música sem ele, refaz ao abrir e oferece "Atualizar a TAB sintetizada"). A importação do
   Songsterr grava a ligada depois de um bend com um Hold no alto (62 no Highway Star, 6 no Sunshine): o mesmo som que sem
   ele (conferido no MIDI), mas o desenho mostra o pontilhado. Fica assim nas ligadas sem vibrato (o pontilhado mostra
@@ -83,7 +90,9 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
 - Espectro (`media/spectrum.py`, `GET songs/{id}/spectrum?stem=guitar`): a receita da Lente do TabLab (mono 22 050 Hz,
   Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
-  `peaks/spectrum-<faixa>-v<VERSION>.u8` (a v1 pegava a raia de baixo e a nota subia até um semitom na imagem) (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos.
+  `peaks/spectrum-<faixa>-v<VERSION>.u8` (a v1 pegava a raia de baixo e a nota subia até um semitom na imagem) (5 min de guitarra: 2,7 s, 5 MB). As medidas vão nos cabeçalhos. Um cálculo por faixa (uma trava por arquivo, gravado
+  com nome temporário único): o espectro e os sons pedidos juntos esperam o mesmo cálculo (antes, o segundo a gravar
+  não achava o temporário e dava erro 500).
 - Sons da faixa (`media/sounds.py`, `GET songs/{id}/sounds?stem=guitar`), para a suspeita de som sem nota escrita: os
   ataques fortes (o fluxo espectral nas linhas da FFT curta, do Dó central para cima, contra a mediana de ±0,5 s mais 2
   desvios; o ataque aparece meia janela antes e é corrigido em 24 ms) e a altura de cada um (a soma harmônica até o 5º
@@ -97,14 +106,18 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   `lens-core.js` original no mesmo sinal (mesmo resultado); 30 notas reais em 0,24 s.
 - Partitura editada (`PUT songs/{id}/score`, o Guitar Pro 7 no corpo): `score/edited.gp`, as anteriores em
   `score/history/` (100); o manifesto aponta para a editada e guarda `original`. A TAB sintetizada guarda o SHA da
-  partitura e fica `stale` quando ela muda.
+  partitura e fica `stale` quando ela muda. Só entra um Guitar Pro 7 inteiro (`score_measures`: o zip, o
+  `Content/score.gpif` e o XML lido em fluxo, com ao menos um `MasterBar`), e a contagem de compassos do manifesto vem
+  dele (pôr ou apagar um compasso mudava a música e não a conta; o Para hoje compara os conferidos com ela). A
+  gravação roda numa thread (o XML do Highway Star tem 8,7 MB: 0,2 s). Os 114 GP dos pacotes do Miguel passam (30/10).
 - `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
 - `media/`: probe / convert / peaks / separate copiados do TabLab. `separate` (Demucs 6s) cai para a CPU se o MPS
   recusar uma operação e registra o motivo no recibo.
 - `models.py`: pesos baixados de uma revisão fixa e conferidos por SHA-256 (`~/TrackLab/Modelos`).
-- `jobs.py` (do TabLab: um worker, eventos em disco e por SSE), `api.py` (FastAPI; o Ajuste usa
+- `jobs.py` (do TabLab: um worker, eventos em disco e por SSE; uma importação cancelada no meio da separação termina
+  cancelada, com a música já no repertório), `api.py` (FastAPI; o Ajuste usa
   `POST songs/{id}/tempo-map/edit` com um gesto de `anchor_edit` e `PUT songs/{id}/tempo-map` para o Desfazer),
   `cli.py` (`tracklab serve --port 0 --parent-pid N` imprime `TRACKLAB_PORT=<n>`; o motor é do app e sai com ele).
 - O lock universal fixa torch 2.2.2 / numpy 1.26 (o demucs 4.1.0 exige isso no macOS x86_64); separar por
@@ -151,12 +164,18 @@ JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma c�
 `state.copy` e reaproveitada como o "antes" da mudança seguinte: o alphaTab não mexe nela ao ler). Apagar a nota de onde
 sai uma ligadura faz a seguinte atacar (antes o finish a prendia à nota anterior da corda, na casa dela). As gravações vão
 ao motor uma de cada vez, na ordem (`scoreSave`). Antes da cópia, as ligações entre notas (ligadura, ligado, slide) ficam de mão dupla e só entre notas da partitura (`tidyLinks`: desligar um Legato deixava a nota seguinte apontando para a origem, a leitura da cópia quebrava e nada mais desenhava nem gravava); uma mudança que falha volta inteira. 1,5 s depois
-da última mudança, a página manda o Guitar Pro 7 (`Gp7Exporter`) e as notas novas.
+da última mudança, a página manda o Guitar Pro 7 (`Gp7Exporter`) e as notas novas; `flush()` manda já (o app pede ao
+fechar a música, ao sair da edição e do app: antes, trocar de música até 1,5 s depois de uma mudança a perdia). A ponte
+da página com o app (colar, recortar, pausa, o flush) tem o teste dela: `node web/tests/check-page.cjs` roda o
+`score.js` numa caixa do node, sem desenhar.
 
 ## App (`mac/`)
 SwiftPM sem Xcode (`./build.sh` → build/TrackLab.app, `./test.sh`), alvo macOS 15, Swift 6 em modo 5. Estado das
 views por `@Local` (= SwiftUI.State). `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
-lê a porta do stdout (`TRACKLAB_URL` aponta para outro motor). `StemEngine`: o original e as seis faixas num
+lê a porta do stdout (`PortReader`, em TrackLabCore: só uma linha inteira vale; `TRACKLAB_URL` aponta para outro
+motor). Fechar a música grava antes o que estava a caminho (`saveEverything`: a edição da página, a TAB, os trechos) e
+a música seguinte espera (`SongModel.closing`); ao sair, o app espera essas gravações até 5 s
+(`applicationShouldTerminate`). `StemEngine`: o original e as seis faixas num
 AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6 e ajuste fino de ±50 cents, propriedades calculadas: com o `@Observable`, prender o
 valor no `didSet` chamava o `didSet` de novo até estourar a pilha); o metrônomo (K) é uma faixa de cliques
 (`Metronome.samples`, nas batidas do mapa, o 1 mais forte) gerada no app e trocada com `setClick` quando o mapa muda;
@@ -227,7 +246,8 @@ casa sugerida em Pôr nota (`caretPitch` na página); a Lente contorna em vermel
 ligados. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem nota 87, não soa 1, ataque 42, vibrato 25. A
 calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Com o espectro à
 vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
-notas, pista ou mapa; a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
+notas, pista ou mapa (a chave da curva leva o começo e o fim da nota em segundos; um pedido que falha solta as notas e
+espera 5 s, três vezes no máximo; um espectro que falha é pedido de novo na próxima vez); a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,
 com o espectro) vão de uma a outra: escolhem a nota, levam a agulha e dizem o que o som tem; o monitor de teclas da
 edição (`TabEditKeys`) fica na tela da música. Sunshine (lead): 56 de 1.657 notas, 45 com a afinação descontada.
 Afinação da gravação (`RecordingTuning`): a mediana do desvio do meio das notas paradas (sem bend escrito, fora de
@@ -249,7 +269,8 @@ Lente fazia em segundos, aqui reescreve o ritmo do Guitar Pro (`edit.retime`): a
 (cada batida com notas é um intervalo; uma cadeia de ligaduras, um só), o intervalo muda e os compassos afetados são
 refeitos com figuras (simples, pontuadas e, se preciso, tercinas), pausas nos espaços e notas ligadas no que passa da
 barra de compasso (a batida original fica no primeiro pedaço, com as articulações; os seguintes são cópias ligadas). A
-anterior que passar do começo novo encurta; o fim para no começo da seguinte; apojaturas recusam. Na edição, arrastar o número
+anterior que passar do começo novo encurta; o fim para no começo da seguinte e não passa do fim da música ("end": a
+última nota levada para depois dele sumia no compasso refeito); apojaturas recusam. Na edição, arrastar o número
 de uma nota na TAB para os lados move a nota (pega e solta: um contorno tracejado mostra onde ela cai, "c. 24 · tempo
 3 + 1/16"); "Durações" (D) põe uma barra embaixo de cada nota (`#durations` na página): o meio move, as pontas mudam o começo ou o fim, tudo na
 grade escolhida (1/8, 1/16, 1/32, tercinas; `gridTicks` guardado; com ⌥, 1/32); ⌥← ⌥→ e o arrasto lateral da Lente
@@ -288,23 +309,27 @@ na grade (`placeCaret`, pelas âncoras): no meio de uma nota longa, a nota nova 
 continua ligado com o que a parte dele tinha, o vibrato e o resto do bend, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
 fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. Ouvir uma nota: o clique numa nota (na
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
-(`StemEngine.audition`: a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
+(`StemEngine.audition`: sem o loop, que tocaria o começo dele no resto de uma nota que o atravessa; a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
 e a agulha volta ao começo; tocando, não interrompe; o
 seek do clique vai antes da escolha, senão calaria a nota; um clique noutra nota enquanto uma toca encerra a primeira
 parada, sem virar o estudo tocando até o fim); o botão direito numa nota da TAB (também fora da edição),
-numa faixa da Lente (`RightClickCatcher`, um monitor local de `rightMouseDown`) e a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada num AVAudioUnitSampler num motor só
+numa faixa da Lente (`RightClickCatcher`, um monitor local de `rightMouseDown`) e a nota recém-posta tocam sintetizadas (`NoteSynth`: o SoundFont da TAB sintetizada, achado como o motor acha, também com `TRACKLAB_HOME`, num AVAudioUnitSampler num motor só
 dele, o programa da pista pelo manifesto, o bend e o vibrato escritos pelo pitch bend de ±12 semitons, no tom e na
 velocidade do estudo). Copiar e colar (⌘C ⌘X ⌘V na edição, ou os botões da coluna): o recorte são as batidas inteiras
 das notas escolhidas (o acorde, as pausas do meio), do começo da primeira ao fim da última, em valores simples
 (`edit.copy`: as propriedades de número, sim e não e texto de cada batida e nota, mais os pontos de bend e de alavanca;
 sem endereço nem figura); vai para a área de transferência do macOS como `local.tracklab.tab-clip` (cola noutra música e
-depois de reabrir o app). Colar (`edit.paste`) entra a partir da nota escolhida ou do cursor de inserção, por cima do que
-estava: o que começa no trecho sai, o que vem de antes encurta até ele (com as ligadas e o que elas têm), e os compassos
+depois de reabrir o app); com notas das duas vozes, o recorte leva as duas (`voices`, e cada batida a `voice` dela) e
+Recortar só deixa pausa no que foi para ele (`copied`; antes o recorte levava a voz da primeira e a outra se perdia).
+Colar (`edit.paste`) entra a partir da nota escolhida (na voz dela) ou do cursor de inserção (no tique dele e na voz
+escolhida), por cima do que estava, um recorte de duas vozes cada uma na sua: o que começa no trecho sai, o que vem de antes encurta até ele (com as ligadas e o que elas têm), e os compassos
 são refeitos com figuras, pausas e ligaduras; não passa do fim da música. Uma nota ligada vai com as partes como estão (`parts`: o tamanho e as
 articulações de cada uma; antes, o bend se esticava pela cadeia colada e o vibrato da ligada se perdia). Recortar copia
 e deixa pausa. As coladas ficam escolhidas.
 Voz 2: as mudanças de ritmo (figura, pausa, arrastar, ⌥← ⌥→, colar, nota nova) valem na voz da nota (`timeline` e
-`rebuildBar` levam a voz; uma voz além da 1 sem nota no compasso fica com uma batida vazia, sem pausas à vista); no
+`rebuildBar` levam a voz; uma voz além da 1 sem nota no compasso fica com uma batida vazia, sem pausas à vista; a
+escolha volta à nota pela voz também, `findNote` com `voice`, e duas notas no mesmo tique em vozes diferentes são duas
+batidas no `eachBeat`); no
 cursor de inserção, Voz 1 / Voz 2 escolhe onde a nota nova entra (na 2, sempre no tique do clique, com as pausas da voz 2
 em volta); a linha da nota diz "voz 2". Compassos (a seção Compasso da coluna, no compasso da nota ou do cursor):
 Antes e Depois põem um compasso vazio (`edit.insertBar`, com a fórmula do vizinho, em todas as pistas), Apagar tira
@@ -358,7 +383,8 @@ ligaduras das cordas são refeitas em ordem a cada cópia (`tidyLinks`: a ligada
 voz e segue a casa dela). As teclas do TabLab (0–9 casa, ↑↓ corda, ⌥↑↓ meio tom,
 ←→ nota, ⌥←→ um passo da grade no tempo, D durações, ⌫ apaga, H S B V M X N G A R P), num monitor de teclado que só vale na edição; ⌘Z desfaz a TAB na edição e o
 mapa fora dela. A TAB sintetizada é feita em segundo plano ao abrir a música (e refeita ao sair do Ajuste ou da edição,
-se o mapa ou a partitura mudaram); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo
+se o mapa ou a partitura mudaram: saindo da edição, a última mudança é gravada antes de perguntar; se a partitura mudou
+durante a síntese, ela é refeita uma vez); as chaves Áudio e TAB do mixer ligam e calam cada grupo inteiro, X troca um pelo
 outro. No cabeçalho, "Com" marca quantas outras pistas quiser embaixo da principal (`scoreOthers`, `others([…])` na
 página; a largura vem do masterBar, então todas seguem a Fita); na Lente cada uma tem a sua cor (`otherColors`) e todas
 são medidas. "Página" (⌥⌘P, `scorePage` guardado) desenha a TAB em páginas (`LayoutMode.Page`): sem as larguras da
@@ -371,8 +397,10 @@ Aparência: do sistema, clara (papel: a Lente com a paleta de tinta `paperStops`
 escuro e o fundo da Fita creme) ou escura. Fontes › Multitracks › "Procurar a TAB" abre a busca do Songsterr com o
 nome da multitrack; a música importada vem sem o Demucs e com as faixas dela (`importMultitrack(path:)`), a não ser
 num .mogg. No mixer, a linha
-TAB tem uma faixa por pista sintetizada (ids `tab:<pista>`, caladas ao chegar), que soa por cima do original ou das
-faixas; um solo vale para tudo (cala o original também). A WKWebView da partitura (`ScoreWebView`) não aceita o foco
+TAB tem uma faixa por pista sintetizada (ids `tab:<pista>`, a 80 % ao chegar, com o grupo TAB desligado), que soa por cima do original ou das
+faixas; um solo vale para tudo (cala o original também). Os atalhos de mixagem (`MixPreset.apply`) mexem só nas faixas
+da separação e tiram os solos: antes devolviam só elas, as pistas da TAB perdiam a entrada e ficavam em volume zero (a
+TAB e o X não soavam com uma separação ativa). A WKWebView da partitura (`ScoreWebView`) não aceita o foco
 do teclado: com ele, engolia espaço, setas e letras depois de um clique na TAB e os atalhos do transporte paravam; um
 clique na TAB ou na Fita também tira o foco de um campo de texto (a busca). Com mais de uma separação guardada, o A/B
 abre pronto para a seguinte na escada.
@@ -386,7 +414,9 @@ meta. A busca da barra lateral é sem acento, pelo começo das palavras (`Librar
 Biblioteca de trechos (Fase 3b): "Trechos" na barra lateral (`SectionsView`) junta os trechos de todas as músicas
 (`SectionLibrary`: busca por nome, tipo, etiquetas, música, artista e afinação; filtros por tipo, etiqueta e favorito;
 ordens tocados há pouco, esquecidos, perto da meta, por música); um clique abre a música com o loop do trecho, e o menu
-muda tipo, etiquetas e favorito ali mesmo. Na música, "+ Do loop" guarda o loop como trecho (clique) ou como lick,
+muda tipo, etiquetas e favorito ali mesmo. Os trechos mudam na tela já e vão ao motor um pedido por vez, cada um
+com a lista mais nova (`sectionsSave`, também na música aberta; o id do trecho novo é do app, `StudySection.newID`):
+antes, duas mudanças antes da resposta partiam da mesma lista velha e a segunda desfazia a primeira. Na música, "+ Do loop" guarda o loop como trecho (clique) ou como lick,
 solo, riff… (seta); o menu de cada trecho ganhou Tipo, Etiquetas… e Favorito. A cópia independente de um lick (GP do
 trecho e áudio das faixas, para sobreviver à música) ficou para depois. "Fontes › Multitracks"
 consulta o índice.

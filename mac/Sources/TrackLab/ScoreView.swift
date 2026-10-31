@@ -90,6 +90,16 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         }
     }
 
+    /// A edição que a página ainda não mandou (ela grava 1,5 s depois da última mudança), já: o Guitar Pro, para o app
+    /// gravar antes de fechar a música, sair da edição ou do app. nil se não há nada pendente (ou a página não
+    /// carregou).
+    func flush() async -> Data? {
+        guard ready, let text = try? await webView.callAsyncJavaScript(
+            "return window.tracklab ? window.tracklab.flush() : null;", arguments: [:], contentWorld: .page) as? String
+        else { return nil }
+        return Data(base64Encoded: text)
+    }
+
     func close() {
         timer?.invalidate()
         timer = nil

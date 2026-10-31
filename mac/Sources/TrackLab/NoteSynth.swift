@@ -27,23 +27,28 @@ final class NoteSynth {
         engine.connect(sampler, to: engine.mainMixerNode, format: nil)
     }
 
-    /// O SoundFont na ordem do motor: `TRACKLAB_SOUNDFONT`, o `soundfont` de ~/TrackLab/config.json ou o primeiro de
-    /// ~/TrackLab/Sons.
+    /// O SoundFont na ordem do motor (`media/synth.py`, `soundfont`): `TRACKLAB_SOUNDFONT`, o `soundfont` do
+    /// config.json da biblioteca ou o primeiro de Sons, na biblioteca de `TRACKLAB_HOME` (a do motor, que herda o
+    /// ambiente do app) ou ~/TrackLab; o escolhido que não existe é nenhum, como no motor.
     static func soundFont() -> URL? {
         let fm = FileManager.default
-        if let path = ProcessInfo.processInfo.environment["TRACKLAB_SOUNDFONT"], fm.fileExists(atPath: path) {
-            return URL(fileURLWithPath: path)
-        }
-        let home = fm.homeDirectoryForCurrentUser.appending(path: "TrackLab")
-        if let data = try? Data(contentsOf: home.appending(path: "config.json")),
+        let environment = ProcessInfo.processInfo.environment
+        func expanded(_ path: String) -> URL { URL(fileURLWithPath: (path as NSString).expandingTildeInPath) }
+        let home = environment["TRACKLAB_HOME"].flatMap { $0.isEmpty ? nil : expanded($0) }
+            ?? fm.homeDirectoryForCurrentUser.appending(path: "TrackLab")
+        var chosen = environment["TRACKLAB_SOUNDFONT"].flatMap { $0.isEmpty ? nil : $0 }
+        if chosen == nil, let data = try? Data(contentsOf: home.appending(path: "config.json")),
            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let path = config["soundfont"] as? String {
-            let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-            if fm.fileExists(atPath: url.path) { return url }
+           let path = config["soundfont"] as? String, !path.isEmpty {
+            chosen = path
+        }
+        if let chosen {
+            let url = expanded(chosen)
+            return fm.fileExists(atPath: url.path) ? url : nil
         }
         let folder = home.appending(path: "Sons")
         let files = (try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return files.filter { ["sf2", "sf3"].contains($0.pathExtension.lowercased()) }
+        return files.filter { ["sf2", "sf3"].contains($0.pathExtension.lowercased()) && !$0.lastPathComponent.hasPrefix(".") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
             .first
     }

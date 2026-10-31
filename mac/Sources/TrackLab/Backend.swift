@@ -393,27 +393,3 @@ final class Backend {
         }
     }
 }
-
-/// Lê `TRACKLAB_PORT=<n>` do stdout do motor, que chega em pedaços numa thread qualquer.
-private final class PortReader: @unchecked Sendable {
-    private let lock = NSLock()
-    private var buffer = ""
-    private var found: Int?
-
-    var port: Int? {
-        lock.lock()
-        defer { lock.unlock() }
-        return found
-    }
-
-    func feed(_ data: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard found == nil else { return }
-        buffer += String(decoding: data, as: UTF8.self)
-        for line in buffer.split(separator: "\n") where line.hasPrefix("TRACKLAB_PORT=") {
-            found = Int(line.dropFirst("TRACKLAB_PORT=".count).trimmingCharacters(in: .whitespaces))
-        }
-        if buffer.count > 10_000 { buffer = String(buffer.suffix(1_000)) }
-    }
-}

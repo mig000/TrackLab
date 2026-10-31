@@ -30,11 +30,17 @@ DEFAULT_ROOT = Path("/Volumes/HD Externo WD/Multitracks")
 AUDIO = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".aif", ".aiff", ".m4a"}
 SEARCH_LIMIT = 50
 
-# O instrumento de uma faixa pelo nome do arquivo; a primeira regra que casa vale. No Clone Hero, `rhythm` é o baixo
-# ou a guitarra base e `song` é o resto da banda.
+# O instrumento de uma faixa pelo nome do arquivo. O nome exato do Clone Hero vale primeiro (`song` é o resto da banda,
+# `rhythm` o baixo ou a guitarra base). Depois, numa pasta de faixas soltas, o começo comum dos nomes (o artista e o
+# título) não conta: "While My Guitar Gently Weeps Vocals" é a voz. Uma faixa que mistura a guitarra com outra coisa
+# ("guitar+synths", "Backing Guitar-Backing Vocals") é guitarra, para o "Sem guitarra" calar toda a guitarra; fora isso,
+# vale a palavra de instrumento mais perto do fim, onde as faixas soltas põem o instrumento ("Tom Petty - American Girl
+# (06 - Vocals)" é a voz, não os tons da bateria). Os nomes compostos contam inteiros ("Bass Drum" é bateria, "Bass
+# Guitar" e "Synth Bass" baixo).
+EXACT = {"song": "backing", "rhythm": "rhythm"}
 KINDS = [
-    ("backing", r"^song$"),
-    ("rhythm", r"^rhythm$"),
+    ("drums", r"bass ?drum|kick ?drum"),
+    ("bass", r"bass ?guitar|synth ?bass|bass ?synth"),
     ("bass", r"\bbass\b|\bbaixo\b"),
     ("guitar", r"guitar|gtr|\bguitarra"),
     ("drums", r"drum|kick|snare|hi.?hat|\btoms?\b|overhead|cymbal|percussion|tambourine|conga"),
@@ -66,19 +72,45 @@ def database() -> Path:
     return home.home() / "multitracks.sqlite"
 
 
-def kind_of(filename: str) -> str:
-    """O instrumento de uma faixa pelo nome do arquivo (sem extensão, sem número na frente)."""
+def _plain(filename: str) -> str:
     stem = re.sub(r"^[\d\s._-]+", "", Path(filename).stem.lower())
-    stem = re.sub(r"_\d+$", "", stem)
-    for kind, pattern in KINDS:
-        if re.search(pattern, stem):
-            return kind
-    return "other"
+    return re.sub(r"_\d+$", "", stem)
+
+
+def _kind(label: str) -> str | None:
+    if label in EXACT:
+        return EXACT[label]
+    found = [(kind, m.start(), m.end()) for kind, pattern in KINDS for m in re.finditer(pattern, label)]
+    if not found:
+        return None
+    compounds = [(start, end) for kind, start, end in found if end - start > 6 and kind in ("bass", "drums")]
+    if any(kind == "guitar" and not any(a <= start and end <= b for a, b in compounds) for kind, start, end in found):
+        return "guitar"
+    # Mais perto do fim; empatado, o nome composto.
+    return max(found, key=lambda item: (item[2], item[2] - item[1]))[0]
+
+
+def kind_of(filename: str, shared: str = "") -> str:
+    """O instrumento de uma faixa pelo nome do arquivo (sem extensão, sem número na frente); `shared`, o começo comum
+    dos nomes da pasta (`kinds_of`), não conta se o resto do nome diz o instrumento."""
+    stem = _plain(filename)
+    if shared and stem.startswith(shared):
+        found = _kind(stem[len(shared):].strip(" -_.()[]"))
+        if found:
+            return found
+    return _kind(stem) or "other"
+
+
+def kinds_of(files: list[str]) -> list[str]:
+    """O instrumento de cada faixa de uma pasta: o começo comum dos nomes (até o fim de uma palavra) é o artista e o
+    título, e só o resto diz o instrumento."""
+    plain = [_plain(f) for f in files]
+    shared = re.sub(r"\w*$", "", os.path.commonprefix(plain)) if len(plain) >= 2 else ""
+    return [kind_of(f, shared) for f in files]
 
 
 _NOISE = re.compile(r"\s*[\(\[][^\)\]]*(multi.?track|stems?|wav|mp3|flac|cover|isolated|tracks?|remaster\w*)"
                     r"[^\)\]]*[\)\]]\s*", re.IGNORECASE)
-
 
 def clean_name(text: str) -> str:
     """O nome de uma pasta ou arquivo sem o número da faixa e sem "(Multitrack)", "[WAV]" e parecidos."""
@@ -167,7 +199,7 @@ def _song(path: Path, folder: Path, artist, title, album, year, kind: str, colle
     return {"path": str(path.relative_to(folder)), "artist": artist, "title": title,
             "album": (album or "").strip() or None,
             "year": str(year).strip() if year else None, "format": kind, "collection": collection,
-            "stems": [{"file": f, "kind": kind_of(f)} for f in audio]}
+            "stems": [{"file": f, "kind": k} for f, k in zip(audio, kinds_of(audio))]}
 
 
 # MARK: - O índice
@@ -280,5 +312,5 @@ def _row(row: sqlite3.Row) -> dict:
             "kinds": sorted({stem["kind"] for stem in stems})}
 
 
-__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "by_path", "kind_of", "clean_name",
+__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "by_path", "kind_of", "kinds_of", "clean_name",
            "split_name"]

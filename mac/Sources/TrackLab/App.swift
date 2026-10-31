@@ -78,6 +78,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// Antes de sair, a música grava o que estava a caminho (a edição da TAB que a página ainda não mandou, os
+    /// trechos): o motor sai com o app, então espera essas gravações (alguns décimos de segundo; no máximo 5 s).
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            Task { @MainActor in
+                await SongModel.finishAll()
+                self.replyOnce(sender)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(5))
+                self.replyOnce(sender)
+            }
+        }
+        return .terminateLater
+    }
+
+    private var replied = false
+
+    @MainActor private func replyOnce(_ sender: NSApplication) {
+        guard !replied else { return }
+        replied = true
+        sender.reply(toApplicationShouldTerminate: true)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         MainActor.assumeIsolated { Backend.shared.stop() }
     }
@@ -185,6 +209,7 @@ struct RootView: View {
         let library = library
         model.onStudyChange = { Task { await library.refresh() } }
         song = model
+        SongModel.opened = model
         Task { await model.load() }
     }
 }

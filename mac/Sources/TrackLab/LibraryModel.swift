@@ -119,23 +119,35 @@ final class LibraryModel {
         selection = item.songID
     }
 
+    /// As gravações dos trechos da biblioteca, uma por vez (como as da música aberta, `SongModel.save`).
+    @ObservationIgnored private var sectionsSave: Task<Void, Never>?
+    @ObservationIgnored private var sectionsRevision = 0
+
     /// Muda um trecho direto da biblioteca (tipo, etiquetas, favorito): a música manda a lista inteira de volta, e o
-    /// motor mantém o treino de cada trecho pelo id.
+    /// motor mantém o treino de cada trecho pelo id. A lista muda na tela já e a mudança seguinte parte dela (antes,
+    /// duas mudanças antes do motor responder partiam da lista velha e a segunda desfazia a primeira).
     func edit(_ item: SectionItem, _ change: (inout StudySection) -> Void) {
-        guard let song = songs.first(where: { $0.id == item.songID }) else { return }
+        guard let index = songs.firstIndex(where: { $0.id == item.songID }) else { return }
+        let song = songs[index]
         let list = song.sections.map { section -> StudySection in
             guard section.id == item.section.id else { return section }
             var copy = section
             change(&copy)
             return copy
         }
-        Task {
+        songs[index] = song.with(sections: list)
+        sectionsRevision += 1
+        let revision = sectionsRevision
+        let previous = sectionsSave
+        sectionsSave = Task {
+            await previous?.value
             do {
                 _ = try await Backend.shared.putSections(song.id, list)
-                await refresh()
             } catch {
                 loadError = error.localizedDescription
             }
+            // O resumo do motor (os segundos e o andamento de cada trecho) quando nenhuma mudança está a caminho.
+            if revision == sectionsRevision { await refresh() }
         }
     }
 

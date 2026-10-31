@@ -12,7 +12,8 @@ from conftest import guitar_track
 from test_songsterr import FakeSource
 from test_stems import fake_run
 from tracklab import multitracks, songsterr, stems
-from tracklab.errors import MediaError
+from tracklab.errors import JobCancelled, MediaError
+from tracklab.jobs import Cancel
 from tracklab.media import align, mvsep
 from tracklab.media import separate as demucs
 
@@ -214,3 +215,18 @@ def test_the_six_tracks_of_the_sw_come_straight_from_mvsep(song):
     guitar, _ = soundfile.read(str(song.file(result["files"]["guitar"])), dtype="float32")
     assert np.allclose(guitar, video * 0.5, atol=2e-3)
     assert mvsep.usage()["usedToday"] == 1
+
+
+def test_cancelled_before_the_upload_sends_nothing_and_keeps_the_quota(song):
+    """Cancelada enquanto o envio se prepara: nenhum pedido sai e a cota do dia fica (depois do envio, o MVSEP já conta
+    a conversão)."""
+    server, cancel = FakeMVSEP(song.file(song.manifest["audio"]["file"])), Cancel()
+
+    def progress(stage, message, fraction):
+        if "Enviando" in message:
+            cancel.requested = True
+
+    with pytest.raises(JobCancelled):
+        stems.separate_mvsep(song, key=KEY, model=31, session=server, demucs_run=fake_run([]), cancel=cancel,
+                             progress=progress, pause=lambda _: None)
+    assert server.posts == [] and mvsep.usage()["usedToday"] == 0

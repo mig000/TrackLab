@@ -18,7 +18,8 @@
 // Do app para a página: load({gp, track, points, others, page}), track(n), others([n…]), page(sim), tempo(points),
 // clock(s, playing, rate, delay),
 // span(segundos), adjusting(sim), loop(a, b) / loop(null), view(fração do cursor, pino do loop ou null),
-// theme("light" | "dark"), zoom(escala).
+// theme("light" | "dark"), zoom(escala), flush() (a gravação que espera os 1,5 s, já: devolve o Guitar Pro em base64,
+// ou null).
 // Da página para o app (webkit.messageHandlers.tracklab): ready, loaded {tracks, bars, barTicks, sections},
 // rendered {bars, ms},
 // seek {seconds}, shift {seconds} (quanto a onda andou no arrasto com ⇧), shiftEnd {seconds} (o total, ao soltar),
@@ -1075,12 +1076,12 @@
   // Onde cada nota escolhida está (pista, tique, corda), para achá-las de novo depois de um compasso refeito.
   function wheresOf(notes) {
     return notes.map((n) => ({ track: n.beat.voice.bar.staff.track.index, tick: n.beat.absolutePlaybackStart,
-      string: edit.tabString(n) }));
+      string: edit.tabString(n), voice: n.beat.voice.index }));
   }
 
   // A escolha de novo pelos lugares (a primeira é a principal); as que sumiram ficam de fora.
   function chooseWheres(wheres) {
-    const found = wheres.map((w) => edit.findNote(state.score, w.track, w.tick, w.string)).filter(Boolean);
+    const found = wheres.map((w) => edit.findNote(state.score, w.track, w.tick, w.string, w.voice)).filter(Boolean);
     if (!found.length) {
       choose(null);
       return;
@@ -1267,18 +1268,35 @@
   function scheduleSave() {
     window.clearTimeout(state.saveTimer);
     state.saveTimer = window.setTimeout(() => {
+      state.saveTimer = null;
       try {
-        const bytes = edit.exportGp(alphaTab, state.score);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += 0x8000) {
-          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-        }
-        post({ type: "save", gp: btoa(binary) });
+        post({ type: "save", gp: exportBase64() });
         post({ type: "notes", notes: core.trackNotes(state.score) });
       } catch (error) {
         report(error);
       }
     }, SAVE_MS);
+  }
+
+  // O Guitar Pro 7 da partitura de agora, em base64.
+  function exportBase64() {
+    const bytes = edit.exportGp(alphaTab, state.score);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary);
+  }
+
+  // A gravação que ainda espera os 1,5 s, já (o app vai fechar a música, sair da edição ou do app): o Guitar Pro em
+  // base64, que o app grava; null se não há nada pendente. Antes, trocar de música logo depois de uma edição perdia
+  // a edição (a página deixava de falar com o app antes de mandar).
+  function flushSave() {
+    if (!state.saveTimer) return null;
+    window.clearTimeout(state.saveTimer);
+    state.saveTimer = null;
+    post({ type: "notes", notes: core.trackNotes(state.score) });
+    return exportBase64();
   }
 
   function runEdit(op, value) {
@@ -1373,7 +1391,12 @@
         const clip = edit.copy(notes);
         if (!clip) return;
         post({ type: "clip", clip, beats: clip.events.length, cut: op === "cut" });
-        if (op === "cut") runEdit("rest");
+        if (op === "cut") {
+          // Só vira pausa o que foi para o recorte (a pauta da principal, as duas vozes); o resto da escolha fica.
+          const taken = edit.copied(notes);
+          if (taken.length < notes.length) state.group = taken.map((n) => edit.pathOf(n));
+          runEdit("rest");
+        }
         return;
       }
       case "single":
@@ -1483,8 +1506,7 @@
           eachBeat(notes, false, 0, (n) => edit.toRest(alphaTab, n), next ? wheresOf([next]) : []);
           return;
         }
-        const where = next ? { track: next.beat.voice.bar.staff.track.index, string: edit.tabString(next),
-          tick: next.beat.absolutePlaybackStart } : null;
+        const where = next ? wheresOf([next])[0] : null;
         let reason = null;
         change(() => {
           const result = edit.toRest(alphaTab, note);
@@ -1495,7 +1517,7 @@
           post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para pôr a pausa." });
           return;
         }
-        const found = where ? edit.findNote(state.score, where.track, where.tick, where.string) : null;
+        const found = where ? edit.findNote(state.score, where.track, where.tick, where.string, where.voice) : null;
         choose(found ? edit.pathOf(found) : null);
         drawSelection();
         postSelection();
@@ -1547,16 +1569,20 @@
     rewriteSelected(note, start, () => edit.retime(alphaTab, note, start, end));
   }
 
-  // Cola o recorte (do app) a partir da nota escolhida (o começo dela) ou do cursor de inserção, por cima do que
-  // estava; as notas coladas ficam escolhidas.
+  // Cola o recorte (do app) a partir da nota escolhida (o começo dela, na voz dela) ou do cursor de inserção (no tique
+  // dele, se está no meio de uma nota ou pausa, e na voz que ele escolheu), por cima do que estava; as notas coladas
+  // ficam escolhidas.
   function pasteAt(clip) {
     let staff = null;
     let start = null;
+    let voice = 0;
     if (state.caret) {
       const beat = edit.resolveBeat(state.score, state.caret);
       if (beat) {
         staff = beat.voice.bar.staff;
-        start = beat.absolutePlaybackStart;
+        const tick = state.caret.length > 6 ? state.caret[6] : null;
+        start = Number.isFinite(tick) ? tick : beat.absolutePlaybackStart;
+        voice = state.caret.length > 7 ? state.caret[7] || 0 : beat.voice.index;
       }
     } else {
       const note = selectedNote();
@@ -1564,6 +1590,7 @@
       if (span) {
         staff = note.beat.voice.bar.staff;
         start = span.start;
+        voice = note.beat.voice.index;
       }
     }
     if (!staff || !clip || !Array.isArray(clip.events)) {
@@ -1573,16 +1600,18 @@
     const track = staff.track.index;
     const strings = staff.tuning.length;
     const wheres = [];
+    const several = Array.isArray(clip.voices) && clip.voices.length > 1;
     for (const item of clip.events) {
       for (const n of item.notes) {
         if (n.string >= 1 && n.string <= strings) {
-          wheres.push({ track, tick: start + Math.round(item.offset), string: strings - n.string + 1 });
+          wheres.push({ track, tick: start + Math.round(item.offset), string: strings - n.string + 1,
+            voice: several ? item.voice : voice });
         }
       }
     }
     let reason = null;
     change(() => {
-      const result = edit.paste(alphaTab, staff, start, clip);
+      const result = edit.paste(alphaTab, staff, start, clip, voice);
       if (result !== true) reason = result;
       return result === true;
     });
@@ -1626,10 +1655,11 @@
         if (tick !== null) {
           // No meio de uma nota longa ou de uma pausa: a nota nova entra no tique (a longa se divide).
           const staff = beat.voice.bar.staff;
-          const where = { track: staff.track.index, tick, string: count - string + 1 };
+          const voice = state.caret[7] || 0;
+          const where = { track: staff.track.index, tick, string: count - string + 1, voice };
           let reason = null;
           change(() => {
-            const result = edit.insertAt(alphaTab, staff, tick, string, value, state.caret[7] || 0);
+            const result = edit.insertAt(alphaTab, staff, tick, string, value, voice);
             if (result !== true) reason = result;
             return result === true;
           });
@@ -1698,18 +1728,23 @@
     for (const n of notes) {
       const span = edit.span(n);
       if (!span) continue;
-      const where = { track: n.beat.voice.bar.staff.track.index, tick: span.start, string: edit.tabString(n) };
-      if (!beats.some((b) => b.track === where.track && Math.abs(b.tick - where.tick) < 1)) beats.push(where);
+      const where = { track: n.beat.voice.bar.staff.track.index, tick: span.start, string: edit.tabString(n),
+        voice: n.beat.voice.index };
+      // Uma batida por voz: a voz 1 e a 2 no mesmo tique são duas batidas.
+      if (!beats.some((b) => b.track === where.track && b.voice === where.voice && Math.abs(b.tick - where.tick) < 1)) {
+        beats.push(where);
+      }
     }
     beats.sort((a, b) => (later ? b.tick - a.tick : a.tick - b.tick));
     let reason = null;
     change(() => {
       for (const where of beats) {
-        let target = edit.findNote(state.score, where.track, where.tick, where.string);
+        let target = edit.findNote(state.score, where.track, where.tick, where.string, where.voice);
         if (!target) {
           // A nota da cabeça de uma ligadura noutra corda do acorde: qualquer nota da batida serve.
           const staff = state.score.tracks[where.track].staves.find((s) => s.tuning && s.tuning.length);
-          target = staff && edit.notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - where.tick) < 1);
+          target = staff && edit.notesOf(staff).find((n) => Math.abs(n.beat.absolutePlaybackStart - where.tick) < 1
+            && n.beat.voice.index === where.voice);
         }
         if (!target) {
           reason = "missing";
@@ -1730,7 +1765,7 @@
       postSelection();
       return;
     }
-    chooseWheres(after || wheres.map((w) => ({ track: w.track, tick: w.tick + delta, string: w.string })));
+    chooseWheres(after || wheres.map((w) => ({ ...w, tick: w.tick + delta })));
     drawSelection();
     postSelection();
   }
@@ -1770,7 +1805,7 @@
   // Uma mudança no ritmo (o compasso refeito): o motivo vira aviso, e a nota é achada de novo pelo tique `tick` e pela
   // corda.
   function rewriteSelected(note, tick, apply) {
-    const where = { track: note.beat.voice.bar.staff.track.index, string: edit.tabString(note), tick };
+    const where = { ...wheresOf([note])[0], tick };
     let reason = null;
     change(() => {
       const result = apply();
@@ -1781,7 +1816,7 @@
       post({ type: "notice", text: RETIME_REASONS[reason] || "Não deu para mudar o tempo da nota." });
       return;
     }
-    const found = edit.findNote(state.score, where.track, where.tick, where.string);
+    const found = edit.findNote(state.score, where.track, where.tick, where.string, where.voice);
     choose(found ? edit.pathOf(found) : state.selected);
     drawSelection();
     postSelection();
@@ -2014,6 +2049,7 @@
   sheet.addEventListener("pointercancel", endNoteDrag);
 
   window.tracklab = {
+    flush: flushSave,
     load(payload) {
       try {
         state.score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(decode(payload.gp), new alphaTab.Settings());

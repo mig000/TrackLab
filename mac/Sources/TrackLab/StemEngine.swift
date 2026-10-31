@@ -248,9 +248,11 @@ final class StemEngine {
         startPlayers()
     }
 
-    private func startPlayers() {
+    /// `looping` false: toca solto mesmo com um loop marcado (a nota clicada, que atravessa o fim do loop, tocaria o
+    /// começo dele no resto).
+    private func startPlayers(looping: Bool = true) {
         guard loaded, !tracks.isEmpty, !isPlaying else { return }
-        plan = PlaybackPlan(start: anchorTime, loop: loop, duration: duration)
+        plan = PlaybackPlan(start: anchorTime, loop: looping ? loop : nil, duration: duration)
         let segments = plan.segments
         guard !segments.isEmpty else { return }
         planLength = segments.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
@@ -304,7 +306,7 @@ final class StemEngine {
         auditioning = solo
         auditionActive = true
         applyMix()
-        play()
+        startPlayers(looping: false)
         guard isPlaying else {
             endAudition()
             return

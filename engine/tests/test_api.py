@@ -1,7 +1,9 @@
 """A API do motor: importar pela fila, ver o pacote, a onda, o mapa e os arquivos; nada fora do pacote."""
 
 import json
+import threading
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -218,3 +220,62 @@ def test_the_edited_score_is_saved_beside_the_original(client):
     found = package.find(song_id)
     assert found.file("score/original.gp").is_file() and len(list(found.file("score/history").glob("*.gp"))) == 1
     assert client.get(f"/api/songs/{song_id}/files/score/edited.gp").content == gp
+    # Um Guitar Pro com outro número de compassos (pôr ou apagar um na edição): a conta da música acompanha.
+    fixtures = Path(__file__).resolve().parents[2] / "web" / "tests" / "fixtures"
+    assert client.put(f"/api/songs/{song_id}/score", content=(fixtures / "notacao.gp").read_bytes()).json()["score"][
+        "measures"] == 24
+    assert client.get("/api/songs").json()["songs"][0]["measures"] == 24
+
+
+def test_cancelling_the_import_during_the_separation_ends_cancelled(tmp_path, monkeypatch):
+    """A música já importada fica no repertório, mas a tarefa termina cancelada, não "concluída com aviso"."""
+    monkeypatch.setattr(demucs, "separator_version", lambda model=demucs.MODEL: "v")
+    entered, release = threading.Event(), threading.Event()
+
+    def separate(source, output, *, progress=None, cancel=None, device=None):
+        entered.set()
+        release.wait(5)
+        cancel.check()
+        raise AssertionError("não devia continuar")
+
+    jobs = JobManager(tmp_path / "jobs-home")
+    app = create_app(jobs, source=FakeSource([guitar_track(2)], points=[0.0, 2.0, 4.0]), separate_run=separate)
+    with TestClient(app) as client:
+        job_id = client.post("/api/songs/import", json={"url": "27"}).json()["id"]
+        assert entered.wait(5)
+        assert client.post(f"/api/jobs/{job_id}/cancel").status_code in (200, 202)
+        release.set()
+        job = wait(client, job_id)
+        assert job["status"] == "cancelled", job
+        assert len(client.get("/api/songs").json()["songs"]) == 1
+    jobs.close()
+
+
+def test_two_spectrum_requests_at_once_share_one_computation(client, monkeypatch):
+    """O espectro e os sons pedidos juntos (ou a aparência trocada no meio do primeiro cálculo): um cálculo só, e os
+    dois pedidos recebem o mesmo resultado; antes, o segundo a gravar não achava o temporário e dava erro 500."""
+    from tracklab.media import spectrum
+
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    real, calls = spectrum.compute, []
+
+    def compute(path):
+        calls.append(path)
+        time.sleep(0.3)
+        return real(path)
+
+    monkeypatch.setattr(spectrum, "compute", compute)
+    results = [None, None]
+
+    def ask(index, url):
+        results[index] = client.get(url)
+
+    threads = [threading.Thread(target=ask, args=(0, f"/api/songs/{song_id}/spectrum")),
+               threading.Thread(target=ask, args=(1, f"/api/songs/{song_id}/sounds"))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert [r.status_code for r in results] == [200, 200] and len(calls) == 1
+    assert not list(Path(package.find(song_id).file("peaks")).glob("*partial*"))

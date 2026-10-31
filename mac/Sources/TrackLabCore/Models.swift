@@ -41,6 +41,13 @@ public struct SongSummary: Codable, Identifiable, Hashable, Sendable {
         self.warnings = warnings
     }
 
+    /// O mesmo resumo com outros trechos (a biblioteca mostra a mudança antes de o motor responder).
+    public func with(sections: [StudySection]) -> SongSummary {
+        SongSummary(id: id, title: title, artist: artist, folder: folder, hasAudio: hasAudio, stems: stems,
+                    activeStems: activeStems, updated: updated, status: status, sections: sections, tuning: tuning,
+                    measures: measures, checked: checked, warnings: warnings)
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, title, artist, folder, hasAudio, stems, activeStems, updated, status, sections, tuning, measures,
              checked, warnings

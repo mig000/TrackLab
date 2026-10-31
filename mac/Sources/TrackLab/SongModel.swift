@@ -60,6 +60,7 @@ final class SongModel {
     /// Por que a síntese automática (ao abrir) não saiu; fica na linha TAB do mixer, sem aviso no cabeçalho.
     private(set) var synthMessage: String?
     private var synthChanged = false
+    @ObservationIgnored private var synthRetried = false
     /// A multitrack da biblioteca que é esta música (para "Faixas da multitrack").
     private(set) var multitrack: MultitrackSong?
     private(set) var mvsepUsage: MVSEPUsage?
@@ -73,8 +74,16 @@ final class SongModel {
             guard editingTab != oldValue else { return }
             if editingTab { adjusting = false }
             bridge.setEditing(editingTab)
-            if !editingTab, synthOutdated { Task { await synthesize(quiet: true) } }
+            if !editingTab { Task { await finishScoreEdits() } }
         }
+    }
+
+    /// Saindo da edição: a última mudança gravada já (sem esperar os 1,5 s da página) e, se a partitura mudou, a TAB
+    /// sintetizada refeita. Antes, concluir logo depois de uma mudança deixava a síntese da partitura de antes.
+    private func finishScoreEdits() async {
+        if let data = await bridge.flush() { saveScore(data) }
+        await scoreSave?.value
+        if !editingTab, !adjusting, synthOutdated { await synthesize(quiet: true) }
     }
     private(set) var tabSelection: TabSelection?
     /// O cursor de inserção da edição (uma corda vazia de uma batida), ou nil.
@@ -285,13 +294,40 @@ final class SongModel {
         }
     }
 
+    /// A música aberta (o app grava a TAB dela antes de sair; presa aqui, ela sobrevive à janela fechada, que também
+    /// encerra o app) e o fechamento da última que fechou (a música seguinte espera: reaberta logo, ela leria o Guitar
+    /// Pro de antes da gravação).
+    static var opened: SongModel?
+    private static var closing: Task<Void, Never>?
+
+    /// Fecha a música: o som para já; a edição que a página ainda não mandou é gravada antes de a página deixar de
+    /// falar com o app (antes, trocar de música até 1,5 s depois de uma mudança perdia a mudança).
     func close() {
         engine.stop()
-        bridge.close()
+        let previous = Self.closing
+        Self.closing = Task {
+            await previous?.value
+            await saveEverything()
+            bridge.close()
+        }
+    }
+
+    /// Tudo o que está a caminho do motor: a edição pendente na página, a gravação da TAB e a dos trechos.
+    func saveEverything() async {
+        if let data = await bridge.flush() { saveScore(data) }
+        await scoreSave?.value
+        await sectionsSave?.value
+    }
+
+    /// Antes de o app sair: a música aberta e as que fecharam gravam o que tinham.
+    static func finishAll() async {
+        await opened?.saveEverything()
+        await closing?.value
     }
 
     func load() async {
         phase = .loading
+        await Self.closing?.value
         do {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
@@ -397,11 +433,13 @@ final class SongModel {
 
     // MARK: - Espectro
 
-    /// A chave da curva de uma nota: a pista, o tique, a corda, a altura, a duração e o segundo (o mapa novo ou a
-    /// nota editada pedem de novo: a busca é em volta da altura escrita).
+    /// A chave da curva de uma nota: a pista, o tique, a corda, a altura, a duração e o começo e o fim em segundos (o
+    /// mapa novo ou a nota editada pedem de novo: a busca é em volta da altura escrita, no trecho do áudio da nota; um
+    /// ajuste que mudasse só o fim deixava a curva do trecho de antes).
     func curveKey(_ note: ScoreNote, track: Int) -> String {
         "\(detail?.activeStems ?? ""):\(track):\(Int(note.tick)):\(note.string):\(note.pitch):\(Int(note.duration)):"
-            + "\(Int((grid.seconds(at: note.tick) * 100).rounded()))"
+            + "\(Int((grid.seconds(at: note.tick) * 100).rounded())):"
+            + "\(Int((grid.seconds(at: note.tick + note.duration) * 100).rounded()))"
     }
 
     /// A faixa da separação ativa onde a pista soa (`Stem.pitchSource`: o baixo no baixo, a base na Base…), para a
@@ -417,7 +455,7 @@ final class SongModel {
 
     /// Pede ao motor as curvas das notas que aparecem e ainda não têm (de fora do desenho: a Fita chama no quadro).
     func askCurves(_ notes: [ScoreNote], track: Int) {
-        guard pitchStem(track: track).measured else { return }
+        guard pitchStem(track: track).measured, Date() >= curvesRetryAt else { return }
         let batch = Array(notes.filter { !curvesAsked.contains(curveKey($0, track: track)) }.prefix(120))
         guard !batch.isEmpty else { return }
         batch.forEach { curvesAsked.insert(curveKey($0, track: track)) }
@@ -426,8 +464,14 @@ final class SongModel {
         }
     }
 
-    /// As curvas de `batch` (já marcadas como pedidas), guardadas como `SoundNote`.
-    private func fetchCurves(_ batch: [ScoreNote], track: Int) async {
+    /// Até quando não pedir curvas, depois de um pedido que falhou (a Fita pede a cada quadro).
+    @ObservationIgnored private var curvesRetryAt = Date.distantPast
+
+    /// As curvas de `batch` (já marcadas como pedidas), guardadas como `SoundNote`. Se o motor falha, as notas deixam
+    /// de estar pedidas (voltam a ser pedidas daqui a pouco; antes ficavam sem curva até reabrir a música) e devolve
+    /// false. Uma nota que o motor não mede (mais de 8 s) não volta na resposta e não é pedida de novo.
+    @discardableResult
+    private func fetchCurves(_ batch: [ScoreNote], track: Int) async -> Bool {
         let list = batch.map { note in
             (key: curveKey(note, track: track), start: grid.seconds(at: note.tick),
              end: grid.seconds(at: note.tick + note.duration), pitch: note.pitch)
@@ -447,7 +491,11 @@ final class SongModel {
         let chords = Set(others.keys)
         guard let curves = try? await Backend.shared.pitchCurves(id, notes: list, others: others,
                                                                 stem: pitchStem(track: track).stem)
-        else { return }
+        else {
+            for item in list { curvesAsked.remove(item.key) }
+            curvesRetryAt = Date().addingTimeInterval(5)
+            return false
+        }
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
@@ -456,6 +504,7 @@ final class SongModel {
             soundNotes[item.key] = raw.sound(tuning: tuning)
         }
         pitchCurvesVersion += 1
+        return true
     }
 
     /// A curva como veio do motor (na altura da gravação) e o que a nota precisa para virar `SoundNote`.
@@ -505,12 +554,17 @@ final class SongModel {
             defer { measuring = false }
             for track in shownTracks
             where scoreNotes.indices.contains(track) && pitchStem(track: track).measured {
+                var failures = 0
                 while !Task.isCancelled {
                     let batch = Array(scoreNotes[track].filter { !self.curvesAsked.contains(self.curveKey($0, track: track)) }
                         .prefix(120))
                     guard !batch.isEmpty else { break }
                     batch.forEach { self.curvesAsked.insert(self.curveKey($0, track: track)) }
-                    await fetchCurves(batch, track: track)
+                    if await fetchCurves(batch, track: track) { continue }
+                    // O motor falhou: tenta de novo daqui a 5 s, três vezes no máximo.
+                    failures += 1
+                    guard failures < 3 else { break }
+                    try? await Task.sleep(for: .seconds(5))
                 }
             }
             if !Task.isCancelled { updateTuning() }
@@ -551,6 +605,9 @@ final class SongModel {
             spectrumMessage = nil
         } catch {
             spectrumMessage = error.localizedDescription
+            // Pede de novo na próxima vez (a Lente ligada outra vez, outra pista), se nenhum pedido mais novo tomou o
+            // lugar: antes a chave ficava e o espectro não vinha até reabrir a música.
+            if spectrumKey == key { spectrumKey = nil }
         }
         await loadSounds(stem: stem)
     }
@@ -744,22 +801,37 @@ final class SongModel {
         save(sections.filter { $0.id != section.id })
     }
 
+    /// As gravações dos trechos, uma por vez e cada uma com a lista mais nova: a lista muda na tela já, e a mudança
+    /// seguinte parte dela (antes, duas mudanças antes da resposta do motor partiam da mesma lista velha e a segunda
+    /// desfazia a primeira).
+    @ObservationIgnored private var sectionsSave: Task<Void, Never>?
+    @ObservationIgnored private var sectionsRevision = 0
+
     private func save(_ list: [StudySection], select range: (Double, Double)? = nil) {
         // Os compassos de cada trecho, pelas barras da partitura (a biblioteca de trechos mostra; o motor não as tem).
         let bars = grid.barTicks
         let counted = list.map { section -> StudySection in
             var copy = section
+            if copy.id == nil { copy.id = StudySection.newID() }
             let inside = bars.filter { $0 >= section.from - 1 && $0 < section.to - 1 }.count
             if inside > 0 { copy.bars = inside }
             return copy
         }
-        Task {
+        sections = counted
+        if let range, let made = counted.first(where: { $0.from == range.0 && $0.to == range.1 }) { activate(made) }
+        sectionsRevision += 1
+        let revision = sectionsRevision
+        let previous = sectionsSave
+        sectionsSave = Task {
+            await previous?.value
             do {
-                sections = try await Backend.shared.putSections(id, counted)
-                if let range, let made = sections.first(where: { $0.from == range.0 && $0.to == range.1 }) { activate(made) }
+                let saved = try await Backend.shared.putSections(id, counted)
+                // A lista do motor (com o treino de cada trecho), se nenhuma mudança mais nova está a caminho.
+                if revision == sectionsRevision { sections = saved }
                 onStudyChange?()
             } catch {
                 notice = error.localizedDescription
+                if revision == sectionsRevision, let fresh = try? await Backend.shared.song(id) { sections = fresh.sections }
             }
         }
     }
@@ -1658,6 +1730,14 @@ final class SongModel {
                 synthChanged = false
                 try loadAudio(fresh, keepMix: true)
                 if wasPlaying { engine.play() }
+                // A partitura ou o mapa mudou durante a síntese (uma edição concluída enquanto ela rodava): outra
+                // vez, uma só, com o que está gravado agora.
+                if fresh.synth?.stale == true, !editingTab, !adjusting, !synthRetried {
+                    synthRetried = true
+                    Task { await synthesize(quiet: true) }
+                } else {
+                    synthRetried = false
+                }
                 return
             }
         } catch {

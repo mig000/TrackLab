@@ -110,6 +110,25 @@ def test_each_track_lands_on_the_video_audio_and_goes_stale_with_a_new_map(tmp_p
     assert stems.synth_state(song)["stale"] is True
     track_file.write_bytes(kept)
     assert stems.synth_state(song)["stale"] is False
+    # O SoundFont escolhido agora é outro (pelo conteúdo, mesmo com o nome e o tamanho iguais): velha, e refeita.
+    monkeypatch.setenv("TRACKLAB_SOUNDFONT", str(font))
+    assert stems.synth_state(song)["stale"] is False
+    other = tmp_path / "Outro.sf2"
+    other.write_bytes(b"riff-outro")
+    monkeypatch.setenv("TRACKLAB_SOUNDFONT", str(other))
+    assert stems.synth_state(song)["stale"] is True
+    monkeypatch.setenv("TRACKLAB_SOUNDFONT", str(font))
+    font.write_bytes(b"RIFF")
+    assert stems.synth_state(song)["stale"] is True
+    swapped = stems.synthesize_tab(song, font=font, engine="fluidsynth")
+    assert swapped["reused"] is False and stems.synth_state(song)["stale"] is False
+    # Uma síntese de antes de o manifesto guardar o SHA do SoundFont compara o nome.
+    song.update(lambda data: data["synth"].pop("soundfontSHA256"))
+    assert stems.synth_state(song)["stale"] is False
+    monkeypatch.setenv("TRACKLAB_SOUNDFONT", str(other))
+    assert stems.synth_state(song)["stale"] is True
+    monkeypatch.setenv("TRACKLAB_SOUNDFONT", str(font))
+    result = swapped
     song.save_tempo_map({"schemaVersion": 1, "source": "reference", "points": bars(2.0, start=2.0)})
     assert stems.synth_state(song)["stale"] is True
     again = stems.synthesize_tab(song, font=font, engine="fluidsynth")

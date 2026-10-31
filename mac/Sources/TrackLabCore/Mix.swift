@@ -61,9 +61,15 @@ public enum MixPreset: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// A mixagem do atalho; os volumes que o usuário já mexeu ficam.
+    /// A mixagem do atalho nas faixas da separação (`stems`); os volumes que o usuário já mexeu ficam, e as outras
+    /// entradas também (as pistas da TAB sintetizada, `tab:…`, com volume e mudo; antes saíam do dicionário e a TAB
+    /// ficava calada). Um solo em qualquer uma sai: o atalho diz o que se ouve.
     public func apply(to mix: [String: StemMix], stems: [String]) -> [String: StemMix] {
-        var result: [String: StemMix] = [:]
+        var result = mix.mapValues { entry -> StemMix in
+            var entry = entry
+            entry.solo = false
+            return entry
+        }
         for id in stems {
             var entry = mix[id] ?? StemMix()
             entry.solo = false
@@ -80,7 +86,8 @@ public enum MixPreset: String, CaseIterable, Identifiable, Sendable {
 
     /// O atalho que a mixagem atual é, se for um.
     public static func matching(_ mix: [String: StemMix], stems: [String]) -> MixPreset? {
-        allCases.first { $0.apply(to: mix, stems: stems) == mix.filter { stems.contains($0.key) } }
+        let mine = mix.filter { stems.contains($0.key) }
+        return allCases.first { $0.apply(to: mine, stems: stems) == mine }
     }
 }
 

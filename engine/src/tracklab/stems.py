@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import multitracks
-from .errors import PackageError
+from .errors import PackageError, TrackLabError
 from .media import mogg as mogg_media
 from .media import multitrack as multitrack_media
 from .media import mvsep
@@ -116,11 +116,11 @@ def multitrack_tracks(entry: dict, base: Path) -> list[tuple[Path, str]]:
     ini = multitracks._read_ini(base / "song.ini") if entry.get("format") == "clonehero" else {}
     rhythm = "rhythm" if entry.get("format") != "clonehero" or _number(ini.get("diff_rhythm")) >= 0 else "bass"
     tracks = []
-    for stem in entry.get("stems", []):
-        name = stem["file"]
+    names = [stem["file"] for stem in entry.get("stems", [])]
+    # O instrumento pelos nomes, não pelo índice: um índice feito antes de uma correção ainda erraria.
+    for name, kind in zip(names, multitracks.kinds_of(names)):
         if SKIPPED.search(Path(name).stem):
             continue
-        kind = stem.get("kind") or multitracks.kind_of(name)
         key = rhythm if kind == "rhythm" else MULTITRACK_STEMS.get(kind, "other")
         tracks.append((base / name, key))
     return tracks
@@ -154,17 +154,18 @@ def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, ca
         raise PackageError("Esta música não tem partitura e mapa de tempo para sintetizar.")
     font = Path(font or synth_media.soundfont())
     tempo_file = package.file(entry["file"])
-    tempo_sha = sha256_file(tempo_file)
-    key = "tab-" + sha256_text("|".join((score.get("sha256") or "", tempo_sha, font.name, str(font.stat().st_size),
-                                         synth_media.PROCEDURE)))[:8]
+    tempo_sha, sound_sha = sha256_file(tempo_file), font_sha(font)
+    key = "tab-" + sha256_text("|".join((score.get("sha256") or "", tempo_sha, sound_sha, synth_media.PROCEDURE)))[:8]
     done = manifest.get("synth")
     if done and done.get("key") == key and all(package.file(t["file"]).is_file() for t in done["tracks"].values()):
-        # A chave já junta partitura, mapa e versão: a síntese é desta partitura, deste mapa e deste procedimento. Uma
-        # feita antes de o manifesto guardar os três ganha os três aqui (sem eles ela pareceria velha para sempre).
+        # A chave já junta partitura, mapa, SoundFont e versão: a síntese é desta partitura, deste mapa, deste som e
+        # deste procedimento. Uma feita antes de o manifesto guardar os quatro ganha os quatro aqui (sem eles ela
+        # pareceria velha para sempre).
         if (done.get("tempoSHA256") != tempo_sha or done.get("scoreSHA256") != score.get("sha256")
-                or done.get("version") != synth_media.PROCEDURE):
+                or done.get("version") != synth_media.PROCEDURE or done.get("soundfontSHA256") != sound_sha):
             def record(data: dict) -> None:
-                data["synth"].update(tempoSHA256=tempo_sha, scoreSHA256=score.get("sha256"), version=synth_media.PROCEDURE)
+                data["synth"].update(tempoSHA256=tempo_sha, scoreSHA256=score.get("sha256"), version=synth_media.PROCEDURE,
+                                     soundfont=font.name, soundfontSHA256=sound_sha)
 
             done = package.update(record)["synth"]
         if progress is not None:
@@ -177,14 +178,15 @@ def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, ca
                                          progress=progress, cancel=cancel, font=font, engine=engine)
         receipt["tempoSHA256"] = tempo_sha
         receipt["scoreSHA256"] = score.get("sha256")
+        receipt["soundfontSHA256"] = sound_sha
         return receipt
 
     return {**package.add_synth(key, build)["synth"], "reused": False}
 
 
 def synth_state(package: SongPackage) -> dict | None:
-    """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo, a partitura ou o procedimento (uma síntese de
-    uma versão anterior do TrackLab) mudou depois dela, ou quando falta um arquivo dela."""
+    """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo, a partitura, o SoundFont escolhido ou o
+    procedimento (uma síntese de uma versão anterior do TrackLab) mudou depois dela, ou quando falta um arquivo dela."""
     manifest = package.manifest
     done, entry = manifest.get("synth"), manifest.get("tempoMap")
     if not done:
@@ -192,8 +194,32 @@ def synth_state(package: SongPackage) -> dict | None:
     current = sha256_file(package.file(entry["file"])) if entry and package.file(entry["file"]).is_file() else None
     score = (manifest.get("score") or {}).get("sha256")
     return {**done, "stale": current != done.get("tempoSHA256") or (score is not None and score != done.get("scoreSHA256"))
-            or done.get("version") != synth_media.PROCEDURE
+            or done.get("version") != synth_media.PROCEDURE or _other_font(done)
             or not all(package.file(t["file"]).is_file() for t in done.get("tracks", {}).values())}
+
+
+_FONT_SHA: dict[tuple, str] = {}
+
+
+def font_sha(font: Path) -> str:
+    """O SHA-256 do SoundFont, lembrado pelo caminho, tamanho e data (o GeneralUser tem 30 MB e o GET de cada música
+    pergunta): o mesmo nome com outro conteúdo é outro som."""
+    info = Path(font).stat()
+    key = (str(Path(font).resolve()), info.st_size, info.st_mtime_ns)
+    if key not in _FONT_SHA:
+        _FONT_SHA[key] = sha256_file(font)
+    return _FONT_SHA[key]
+
+
+def _other_font(done: dict) -> bool:
+    """Se o SoundFont escolhido agora não é o da síntese (uma de antes de o manifesto guardar o SHA compara o nome)."""
+    try:
+        font = synth_media.soundfont()
+    except (TrackLabError, OSError):
+        return False   # sem SoundFont não há como refazer; a de antes continua valendo
+    if done.get("soundfontSHA256"):
+        return font_sha(font) != done["soundfontSHA256"]
+    return bool(done.get("soundfont")) and font.name != done["soundfont"]
 
 
 def _publish(package: SongPackage, key: str, build, progress, stage: str, *, activate: bool) -> dict:

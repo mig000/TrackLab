@@ -80,3 +80,26 @@ def test_names_and_kinds():
     assert [multitracks.kind_of(n) for n in ("Lead Vocals.wav", "Organ, Electric Piano.wav", "drums_3.ogg",
                                              "Strings, French Horns.wav", "keys.ogg")] == [
         "vocals", "keys", "drums", "other", "keys"]
+
+
+def test_the_instrument_is_the_word_at_the_end_and_the_title_does_not_count():
+    """Os nomes da biblioteca do Miguel (28/10): os rips do Guitar Hero põem "(03 - Bass Drum)" e "Tom Petty - …
+    (06 - Vocals …)"; a primeira regra que casasse fazia do bumbo o baixo e da voz a bateria (o "Tom" dos tons)."""
+    kind = multitracks.kind_of
+    assert kind("Dire Straits - Sultans Of Swing (03 - Bass Drum).wav") == "drums"
+    assert kind("Tom Petty - Runnin' Down A Dream (06 - Vocals + Additional Instruments).mp3") == "vocals"
+    assert kind("Tom Petty - Runnin' Down A Dream (01 - Guitar).mp3") == "guitar"
+    assert kind("Bass Guitar.wav") == "bass" and kind("Big_Cat_Rhythm_Bass Guitar.wav") == "bass"
+    assert kind("I Like It - SynthBass.wav") == "bass" and kind("01. Bass Synth 1182.wav") == "bass"
+    assert kind("Another Brick In The Wall Part 2-Drums-(Percussion).mp3") == "drums"
+    # Misturada com a guitarra é guitarra: o "Sem guitarra" cala toda a guitarra.
+    assert kind("guitar+synths_layer.wav") == "guitar" and kind("Backing Guitar-Backing Vocals.wav") == "guitar"
+    assert multitracks.kinds_of(["Taylor Swift - Love Story (Song).wav", "Taylor Swift - Love Story (Guitar).wav"]) == [
+        "backing", "guitar"]
+    # O começo comum dos nomes da pasta (o artista e o título) não conta.
+    files = ["While My Guitar Gently Weeps Vocals.wav", "While My Guitar Gently Weeps Drums.wav",
+             "While My Guitar Gently Weeps Lead Guitar.wav", "While My Guitar Gently Weeps Bass.wav"]
+    assert multitracks.kinds_of(files) == ["vocals", "drums", "guitar", "bass"]
+    assert multitracks.kinds_of(["guitar 2.mp3", "guitar 3.mp3"]) == ["guitar", "guitar"]
+    assert multitracks.kinds_of(["drums_1.ogg", "drums_2.ogg", "song.ogg", "rhythm.ogg"]) == [
+        "drums", "drums", "backing", "rhythm"]

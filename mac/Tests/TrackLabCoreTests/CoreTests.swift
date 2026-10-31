@@ -78,6 +78,40 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(MixPreset.matching(MixPreset.full.apply(to: only, stems: stems), stems: stems) == .full)
 }
 
+@Test func atalhosNaoCalamATabSintetizada() {
+    // Antes, o atalho devolvia só as faixas da separação: a TAB sintetizada perdia a entrada e ficava em volume zero.
+    let initial = ["guitar": StemMix(), "bass": StemMix(), "tab:0": StemMix(volume: 0.6), "tab:1": StemMix(volume: 0.8, muted: true)]
+    let none = MixPreset.noGuitar.apply(to: initial, stems: ["guitar", "bass"])
+    #expect(none["tab:0"] == StemMix(volume: 0.6) && none["tab:1"] == StemMix(volume: 0.8, muted: true))
+    #expect(mixGains(none)["tab:0"] == 0.6 && none["guitar"]?.muted == true)
+    #expect(MixPreset.matching(none, stems: ["guitar", "bass"]) == .noGuitar)
+    // Um solo numa pista da TAB sai com o atalho (senão o atalho não mudaria o que se ouve); o volume dela fica.
+    var soloed = none
+    soloed["tab:0"]?.solo = true
+    let full = MixPreset.full.apply(to: soloed, stems: ["guitar", "bass"])
+    #expect(full["tab:0"] == StemMix(volume: 0.6) && !full.values.contains { $0.solo })
+}
+
+@Test func portaSoComALinhaInteira() {
+    // Cada corte possível de "TRACKLAB_PORT=35121\n", também entre os dígitos: até o fim de linha, nada.
+    let line = Array("aviso qualquer\nTRACKLAB_PORT=35121\n".utf8)
+    for cut in 1..<line.count {
+        let reader = PortReader()
+        reader.feed(Data(line[..<cut]))
+        #expect(reader.port == nil || cut == line.count)
+        reader.feed(Data(line[cut...]))
+        #expect(reader.port == 35121)
+    }
+    let odd = PortReader()
+    odd.feed(Data("TRACKLAB_PORT=99999\nTRACKLAB_PORT=8000\n".utf8))
+    #expect(odd.port == 8000)
+}
+
+@Test func trechoNovoGanhaIdNoFormatoDoMotor() {
+    let id = StudySection.newID()
+    #expect(id.hasPrefix("sec-") && id.count == 16 && id != StudySection.newID())
+}
+
 @Test func planoSemLoop() {
     let plan = PlaybackPlan(start: 10, loop: nil, duration: 60)
     #expect(plan.segments == [10...60])

@@ -96,6 +96,12 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
         self.bars = bars
     }
 
+    /// Um id novo, no formato do motor ("sec-" e 12 hexadecimais): o app dá o id ao trecho novo, então a mudança
+    /// seguinte já o acha (antes ele esperava o motor responder).
+    public static func newID() -> String {
+        "sec-" + (0..<6).map { _ in String(format: "%02x", UInt8.random(in: 0...255)) }.joined()
+    }
+
     enum CodingKeys: String, CodingKey {
         case id, name, from, to, goal, best, practiced, kind, tags, favorite, bars, start, seconds, bpm
     }
