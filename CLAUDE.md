@@ -241,11 +241,17 @@ pela casa e o bend escrito sai dela, o começo não é pré-bend (a subida perdi
 viravam "pré e bend"); numa nota que chega de outra casa (`approached`), a entrada fica fora da medida até o primeiro
 quadro a meio semitom da altura escrita, se ele chega nos primeiros 250 ms (ou três quartos de uma nota curta), e numa
 que sai por slide sem bend escrito (`slidesOut`), o que vem depois do último quadro a um quarto de semitom dela nos
-últimos 250 ms (o começo da subida até meio semitom já seria um bend de ¼); três alturas acima da
+últimos 250 ms (o começo da subida até meio semitom já seria um bend de ¼); o começo que ainda é a nota anterior (o
+rastreador fica nela até o ataque desta dominar: no reference.gp, 50 a 150 ms dois a quatro semitons acima, que viravam
+"bend de 1 tom", "pré e bend" ou "pré e volta") fica fora: a nota começa a um semitom ou mais da altura escrita (do
+pré-bend, se escrito) e cai a meio semitom dela em até 40 ms, a 30 semitons por segundo ou mais, nos primeiros 200 ms
+(ou na primeira metade de uma nota curta), a não ser que comece dentro do bend escrito dela; três alturas acima da
 casa dizem o tipo: o ataque (o grave dos primeiros 100 ms ou um quinto da nota; pré-bend de meio tom para cima), o alto
 (com vibrato, a curva de 200 ms menos a meia oscilação; sem ele, a de 40 ms, que alcança o bend que só chega no fim da
 nota, sem os primeiros 50 ms) e o fim (a curva de 40 ms no último sétimo); um salto de ¾ de semitom no último quarto da
-nota (entre dois quadros com altura, seguidos ou com até 7 vazios no meio) já é a nota seguinte e fica fora da medida; as alturas no semitom
+nota (entre dois quadros com altura, seguidos ou com até 7 vazios no meio, ou com quantos forem quando cai na altura da
+seguinte; ou um semitom em até 24 ms, a troca que o rastreador espalha por dois ou três quadros) já é a nota seguinte e
+fica fora da medida; as alturas no semitom
 inteiro mais perto, ¼ de tom até 0,85 semitom (o limite da Lente do TabLab), ¾, 1¼… só a 0,1 semitom deles, até 3 tons
 (`quarterTones(rise:)`); a volta mede quando começa, quando acaba e até onde vai. Um movimento precisa deslizar na curva
 crua: um salto direto entre dois quadros seguidos é degrau (ligado, pull-off, o rastreador trocando de som) e não é
@@ -264,7 +270,9 @@ pré-bend escrito não soa, `.noPrebend`; o som volta e a escrita não, `.releas
 `.noRelease`; o pré-bend escrito parado soa como a nota mais alta e está certo; o tempo de chegada não acusa, porque o
 Songsterr escreve toda subida "ao longo da nota") ou no trinado
 (`disagreements`); a nota não soa (no corpo dela, menos de um quinto dos pontos com altura); o ataque a mais de 60 ms
-do começo escrito; o vibrato não escrito (vem desligado: no Sunshine eram 22 das 75 da primeira versão); e o som sem
+do começo escrito; o vibrato não escrito (vem desligado: no Sunshine eram 22 das 75 da primeira versão; o ataque e o
+som sem nota também vêm desligados desde 31/10, porque mais poluíam a lista do que ajudavam: a escolha guardada passa a
+`suspectKinds2`, a de antes sem os dois); e o som sem
 nota escrita (`HeardSound.unwritten`: um som forte da faixa, até 18 dB abaixo do mais forte em volta, sem nota de
 nenhuma pista que comece a até 120 ms na mesma altura, com um semitom de folga ou a oitava, nem nota dessa altura
 soando ali). Notas de acorde não acusam altura, bend, vibrato nem silêncio. Na coluna, Suspeitas tem o filtro por tipo
@@ -302,7 +310,9 @@ slide ou ligado de uma ou duas casas abaixo (o som entra subindo e fica na escri
 2 nos licks e nenhuma no reference; notas suspeitas 418 → 370 nas músicas, 103 → 63 nos licks, 32 → 19 no reference
 (as ligações sozinhas: 412, 75, 25); de altura 359 → 311, 77 → 37, 23 → 9; bend de meio tom ou mais não escrito,
 confirmado, 36 → 25, 19 → 6, 9 → 3; os bends escritos ficam como estavam (o `bend-curves.cjs` grava a chegada e a saída de
-cada nota). Na
+cada nota). Com o começo da nota anterior e o fim da seguinte fora da medida (31/10, à noite): o reference.gp de 19
+para 14 notas suspeitas, tipo e alturas do bend escrito 8 → 12 de 21 (os ¼ de tom que saíam "1", "pré e bend" ou "pré e
+volta"), os licks 63 → 61, as músicas iguais (370). Na
 linha do som da coluna, o bend em palavras (`BendForm.spoken`: "sobe 1 e volta a ½"); no gráfico do editor, tracejado,
 o que o som sugere (o que o F escreveria; numa nota sem bend escrito, uma linha "O som sugere"). A linha do som e o
 gráfico leem `pitchCurvesVersion` (antes podiam ficar com a medida de antes de a afinação da gravação ser refeita). Com o espectro à

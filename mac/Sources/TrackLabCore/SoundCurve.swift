@@ -223,6 +223,38 @@ public struct SoundNote: Sendable {
                 values.removeSubrange(..<first)
             }
         }
+        // O começo que ainda é a nota anterior: o rastreador fica nela até o ataque desta dominar (no reference.gp, 50 a
+        // 150 ms dois a quatro semitons acima, que viravam "bend de 1 tom", "pré e bend" ou "pré e volta"). A nota começa
+        // a um semitom ou mais da altura escrita (do pré-bend, se escrito) e cai a meio semitom dela em até 40 ms, a 30
+        // semitons por segundo ou mais (nenhuma mão solta um bend tão depressa; o rastreador espalha a troca por dois ou
+        // três quadros), nos primeiros 200 ms (ou na primeira metade de uma nota curta): o que vem antes fica fora. Não
+        // quando a nota começa dentro do bend escrito dela (é o bend, com o começo perdido: no Highway Star, um bend de 1
+        // tom que sobe, volta e sobe de novo perdia a primeira subida).
+        if let pitch {
+            let target = pitch + (written.first?.value ?? 0) / 2
+            let top = pitch + (written.map(\.value).max() ?? 0) / 2
+            var far: Int?
+            var cut: Int?
+            for i in values.indices where times[i] <= start + min(0.2, 0.5 * length) {
+                guard let value = values[i] else { continue }
+                let distance = abs(value - target)
+                if far == nil, top > pitch, distance > 0.5, value >= pitch - 0.5, value <= top + 0.5 {
+                    break
+                } else if distance >= 1 {
+                    far = i
+                } else if distance <= 0.5 {
+                    if let far, let before = values[far], times[i] - times[far] <= 0.04,
+                       abs(before - target) - distance >= 30 * (times[i] - times[far]) {
+                        cut = i
+                    }
+                    break
+                }
+            }
+            if let cut, values[cut...].compactMap({ $0 }).count >= 6 {
+                times.removeSubrange(..<cut)
+                values.removeSubrange(..<cut)
+            }
+        }
         let valid = values.compactMap { $0 }
         guard valid.count >= 6, Double(valid.count) >= 0.4 * Double(values.count) else { return nil }
         var head: [Double] = []
@@ -233,19 +265,28 @@ public struct SoundNote: Sendable {
         let fallback = Int(low.rounded())
         let trill = trills ? trillOf(times: times, values: values, base: fallback, pitch: pitch) : nil
         // Um salto no último quarto da nota (¾ de semitom ou mais entre dois quadros com altura, seguidos ou com até 7
-        // vazios no meio): dali em diante já é a nota seguinte (um ligado, o rastreador ouvindo a próxima) e fica fora da
-        // medida do bend. Antes o salto entrava no alto (no Highway Star, c. 171, um bend de 1 tom saía 1½ ou 2).
+        // vazios no meio, ou com quantos forem quando cai na altura da seguinte; ou um semitom em até 24 ms, a troca que
+        // o rastreador espalha por dois ou três quadros): dali em diante já é a nota seguinte (um ligado, o rastreador
+        // ouvindo a próxima) e fica fora da medida do bend. Antes o salto entrava no alto (no Highway Star, c. 171, um
+        // bend de 1 tom saía 1½ ou 2; no reference.gp, um ¼ saía 1).
         if trill == nil {
             var previous: Int?
+            var older: Int?
             var cut: Int?
             for i in values.indices {
                 guard let value = values[i] else { continue }
-                if let p = previous, let before = values[p], times[i] >= start + 0.75 * length, i - p <= 8,
-                   abs(value - before) >= 0.75 {
-                    cut = p + 1
-                    break
+                if times[i] >= start + 0.75 * length, let p = previous, let before = values[p] {
+                    if abs(value - before) >= 0.75,
+                       i - p <= 8 || next.map({ abs(value - Double($0)) <= 0.5 && abs(before - Double($0)) >= 0.75 }) == true {
+                        cut = p + 1
+                        break
+                    }
+                    if let o = older, let earlier = values[o], abs(value - earlier) >= 1, times[i] - times[o] <= 0.024 {
+                        cut = o + 1
+                        break
+                    }
                 }
-                previous = i
+                (older, previous) = (previous, i)
             }
             if let cut, values[..<cut].compactMap({ $0 }).count >= 6 {
                 times.removeSubrange(cut...)
@@ -543,8 +584,9 @@ public enum SuspectKind: String, CaseIterable, Codable, Hashable, Sendable {
         }
     }
 
-    /// Os que vêm ligados: o vibrato fica de fora (muita TAB não o escreve, e ele encheria a lista).
-    public static let standard: Set<SuspectKind> = Set(allCases).subtracting([.vibrato])
+    /// Os que vêm ligados: o vibrato fica de fora (muita TAB não o escreve, e ele encheria a lista), e o ataque e o som
+    /// sem nota também (31/10: mais poluíam a lista do que ajudavam, na opinião do Miguel).
+    public static let standard: Set<SuspectKind> = Set(allCases).subtracting([.vibrato, .attack, .unwritten])
 }
 
 /// Um som que a faixa tem (o motor acha os ataques e a altura de cada um, `GET songs/{id}/sounds`): o segundo, a

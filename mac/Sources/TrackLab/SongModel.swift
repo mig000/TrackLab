@@ -1163,12 +1163,17 @@ final class SongModel {
         let kind: SuspectKind
     }
 
-    /// Os tipos de suspeita ligados no filtro da coluna (guardados); o vibrato vem desligado.
+    /// Os tipos de suspeita ligados no filtro da coluna (guardados); o vibrato, o ataque e o som sem nota vêm
+    /// desligados. A escolha de antes (`suspectKinds`, quando os dois vinham ligados) passa sem eles, uma vez.
     var suspectKinds: Set<SuspectKind> = {
-        let saved = UserDefaults.standard.stringArray(forKey: "suspectKinds")
-        return saved.map { Set($0.compactMap(SuspectKind.init(rawValue:))) } ?? SuspectKind.standard
+        let defaults = UserDefaults.standard
+        if let saved = defaults.stringArray(forKey: "suspectKinds2") {
+            return Set(saved.compactMap(SuspectKind.init(rawValue:)))
+        }
+        let old = defaults.stringArray(forKey: "suspectKinds").map { Set($0.compactMap(SuspectKind.init(rawValue:))) }
+        return old?.subtracting([.attack, .unwritten]) ?? SuspectKind.standard
     }() {
-        didSet { UserDefaults.standard.set(suspectKinds.map(\.rawValue).sorted(), forKey: "suspectKinds") }
+        didSet { UserDefaults.standard.set(suspectKinds.map(\.rawValue).sorted(), forKey: "suspectKinds2") }
     }
 
     /// Todas as suspeitas da pista, de todos os tipos, em ordem de tempo (o filtro escolhe as que aparecem).

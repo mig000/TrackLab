@@ -484,8 +484,8 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(wobble.checks(with: plain, start: 1, end: 2) == [.vibrato])
     let written = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, vibrato: 1)
     #expect(wobble.checks(with: written, start: 1, end: 2).isEmpty)
-    #expect(SoundDisagreement.attack(90).kind == .attack && SuspectKind.standard.contains(.unwritten)
-        && !SuspectKind.standard.contains(.vibrato))
+    #expect(SoundDisagreement.attack(90).kind == .attack && !SuspectKind.standard.contains(.unwritten)
+        && !SuspectKind.standard.contains(.attack) && !SuspectKind.standard.contains(.vibrato))
 }
 
 @Test func somSemNotaEscrita() {
@@ -765,6 +765,21 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // nota anterior, um ligado que o Songsterr não escreve): a casa é a escrita, não a de baixo.
     let dip = soundCurve(1, 1.3) { $0 < 1.1 ? 58 : 60 }
     #expect(try #require(SoundNote(curve: dip, start: 1, end: 1.3, pitch: 60).fit).base == 60)
+}
+
+@Test func notaVizinhaNoComecoENoFim() throws {
+    // Os primeiros 100 ms ainda ouvem a nota anterior, dois semitons acima, e a troca se espalha por dois quadros (nenhum
+    // salto de ¾ de semitom sozinho): fica fora, e o bend de ¼ escrito que o som não faz não vira "pré e volta".
+    let quarter = [ScoreNote.BendPoint(offset: 0, value: 0), ScoreNote.BendPoint(offset: 15, value: 1)]
+    let previous = soundCurve(1, 1.5) { $0 < 1.1 ? 62.2 : $0 < 1.112 ? 61.2 : 60.1 }
+    let opened = try #require(SoundNote(curve: previous, start: 1, end: 1.5, pitch: 60, written: quarter).fit)
+    #expect(opened.base == 60 && opened.form == nil)
+    // O ¼ de tom e, nos últimos 80 ms, a troca para a nota seguinte em dois quadros: o alto é o ¼, não a seguinte.
+    let following = soundCurve(1, 1.5) { t in
+        t < 1.1 ? 60 + (t - 1) * 5 : t < 1.42 ? 60.5 : t < 1.428 ? 61.1 : t < 1.436 ? 61.7 : 62
+    }
+    let ended = try #require(SoundNote(curve: following, start: 1, end: 1.5, pitch: 60, next: 62, written: quarter).fit)
+    #expect(ended.form?.kind == .bend && ended.form?.top == 1)
 }
 
 @Test func suspeitasDeBendPeloTipo() {
