@@ -279,7 +279,35 @@ soando ali). Notas de acorde não acusam altura, bend, vibrato nem silêncio. Na
 com quantas há de cada um (`suspectKinds`, guardado); Tab numa nota a escolhe, num som sem nota põe o cursor de
 inserção no tique dele (na grade), na corda em que a altura cai mais perto da casa da nota escrita mais próxima, com a
 casa sugerida em Pôr nota (`caretPitch` na página); a Lente contorna em vermelho as notas e os sons sem nota dos tipos
-ligados. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem nota 87, não soa 1, ataque 42, vibrato 25. A
+ligados. O corretor (31/10; `TrackLabCore/Reading.swift`, `Corrector.swift`, `ReadingCards.swift`): o processo invertido,
+o detector decide e o Miguel confere onde tiver dúvida. "Corrigir pelo som" (⇧F na edição, Editar › Corrigir a TAB pelo
+som, ⌥⌘F; o botão em Leituras) escreve, num passo só do Desfazer, a correção de cada nota fora de acorde da pista
+principal (só o loop, se há um): `SoundNote.correction` parte da escrita e troca só o que o som discorda com segurança
+(a altura até um semitom, com o bend e o vibrato do som; o bend pelo tipo e alturas, e o tempo de um bend escrito igual
+fica; o vibrato que o som tem e a escrita não) e só se a nota chega perto do som (`closeness`, de 0 a 1: a raiz da média
+dos quadrados da diferença entre a forma da leitura e a curva de 40 ms do som, ou a de 200 ms menos a meia oscilação com
+vibrato, na janela que o encaixe mediu, `CurveFit.window`; um semitom de diferença média é 0; o vibrato que discorda
+tira 0,1): a forma muda se ganha 15 pontos e fica em 50 % ou mais, o vibrato sozinho se fica em 75 % ou mais. O trinado
+não muda sozinho (no White Room, dezenas no mesmo riff: o rastreador alternando com outra coisa); fica entre as
+leituras. Sem as curvas, liga a Lente, mede e corrige quando a medida termina (com o que chegou). A página aplica o lote
+(`edit("fitMany", [{track, tick, string, pitch, bend, vibrato, trill, trillSpeed}])`, o `edit.fit` de cada nota, as que
+não acha ficam de fora) e responde `fitted`. As corrigidas ficam em `SongModel.corrections` (pista:tique:corda → como
+estavam e como ficaram; sai a que não está mais como ficou: desfeita, mudada de novo), com contorno verde tracejado na
+Lente e a contagem no canto e na coluna. Na edição, a nota escolhida mostra em Leituras até quatro cartões desenhados
+(`SoundNote.readings`: a do som, a escrita, a de antes do corretor e variações: ¼ a mais ou a menos, sem a volta, sem
+bend, a casa de cima, o vibrato trocado; em ordem de `closeness`, sempre com a escrita e a original): à esquerda a TAB
+(a casa, a seta do bend com a altura, a volta tracejada, o vibrato, o tr), à direita a forma da leitura em âmbar sobre os
+pontos do som, embaixo quão perto do som; um clique ou ⌥1–⌥4 escolhe (o `fit` da página), o alto-falante ouve
+sintetizada (`playSynth`). Com várias notas, os cartões são o trecho noutras posições do braço (até três cordas acima ou
+abaixo onde todas cabem, a afinação de cada corda pelas notas da pista; o "string" da página). Medida
+(`TRACKLAB_CORRECTOR_BENCH=<arquivo> mac/test.sh --filter medicaoDoCorretor`, com `original` em cada nota, a TAB do
+Songsterr de antes da edição): das 24 notas que o Miguel corrigiu no Sunshine (19 vibratos postos, bends do solo, uma
+altura), o corretor faz 16 iguais, 3 diferentes (os bends do solo, c. 59–61) e deixa 5; muda 180 notas das 3.152 das
+três músicas fora de acorde (altura 79, bend 58, vibrato 66), 32 das 685 dos licks e 13 das 198 do reference (as duas
+últimas são TABs revisadas: a precisão de verdade vem do GOAT, que um agente está montando). Visto no app (Highway Star,
+com backup e restauração): 21 corrigidas, as suspeitas 138 → 119; um bend rápido com o começo perdido ainda sai "pré ½
+e bend" (c. 250), e o cartão "Original" o volta num clique. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem
+nota 87, não soa 1, ataque 42, vibrato 25. A
 calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Medição da detecção
 de bend (31/10; `node web/tools/bend-curves.cjs <motor> <arquivo>` extrai as curvas das guitarras do repertório e
 `TRACKLAB_BEND_BENCH=<arquivo> mac/test.sh --filter medicaoDosBends` mede): 2.117 notas fora de acorde das três

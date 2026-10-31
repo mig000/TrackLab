@@ -19,6 +19,11 @@ const root = path.join(process.env.HOME, "TrackLab/Repertorio");
     const points = JSON.parse(fs.readFileSync(path.join(root, folder, m.tempoMap.file))).points;
     const files = (m.stems[m.activeStems] || {}).files || {};
     const lists = core.trackNotes(score);
+    // A TAB de antes da edição (score/original.gp, a do Songsterr): cada nota leva `original` pela mesma batida e corda,
+    // para a medição do corretor (medicaoDoCorretor) comparar com o que o Miguel corrigiu.
+    const first = path.join(root, folder, "score", "original.gp");
+    const originals = m.score.file !== "score/original.gp" && fs.existsSync(first)
+      ? core.trackNotes(a.importer.ScoreLoader.loadScoreFromBytes(new Uint8Array(fs.readFileSync(first)), new a.Settings())) : [];
     const song = { id: m.id, name: folder, tracks: [] };
     for (const [index, raw] of lists.entries()) {
       const name = score.tracks[index].name.toLowerCase();
@@ -32,6 +37,8 @@ const root = path.join(process.env.HOME, "TrackLab/Repertorio");
         const next = notes.find((o) => o.string === n.string && o.tick >= n.tick + n.duration - 1);
         n.next = next ? { pitch: next.pitch, gap: next.tick - (n.tick + n.duration) } : null;
         n.key = `${index}:${n.tick}:${n.string}`;
+        const o = (originals[index] || []).find((x) => x[0] === n.tick && x[3] === n.string);
+        if (o) n.original = { pitch: o[2], vibrato: o[5], trill: o[6] || null, bend: o.slice(8) };
       }
       for (let i = 0; i < notes.length; i += 200) {
         const batch = notes.slice(i, i + 200).filter((n) => n.end > n.start && n.end - n.start <= 8);

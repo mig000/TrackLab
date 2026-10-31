@@ -51,6 +51,9 @@ struct TrackLabApp: App {
                     .keyboardShortcut("z")
                 Button("Refazer") { NotificationCenter.default.post(name: .redoTempo, object: nil) }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
+                Divider()
+                Button("Corrigir a TAB pelo som") { NotificationCenter.default.post(name: .correctBySound, object: nil) }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
             }
         }
         Settings { SettingsView() }
@@ -67,6 +70,7 @@ extension Notification.Name {
     static let togglePage = Notification.Name("TrackLab.togglePage")
     static let toggleLens = Notification.Name("TrackLab.toggleLens")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
+    static let correctBySound = Notification.Name("TrackLab.correctBySound")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

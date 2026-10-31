@@ -171,4 +171,27 @@ test("o bend do editor da coluna vale para todas as notas escolhidas; fora do fo
   assert.equal(selection.note.carried, 0);
 });
 
+test("o corretor manda várias notas de uma vez: um passo só do Desfazer, e as que não acha ficam de fora", () => {
+  const p = page(load());
+  const list = edit.notesOf(staffOf(p));
+  const strings = staffOf(p).tuning.length;
+  const at = (n) => ({ track: 0, tick: n.beat.absolutePlaybackStart, string: strings - n.string + 1 });
+  const undo = p.state.undo.length;
+  const second = list[1].realValue;
+  p.tracklab.edit("fitMany", [
+    { ...at(list[0]), pitch: list[0].realValue, bend: [[0, 0], [15, 4]], vibrato: true, trill: null },
+    { ...at(list[1]), pitch: second + 1, bend: null, vibrato: false, trill: null },
+    { track: 0, tick: 999999, string: 1, pitch: 60, bend: null, vibrato: false, trill: null },
+  ]);
+  const after = edit.notesOf(staffOf(p));
+  assert.deepEqual(after[0].bendPoints.map((b) => [b.offset, b.value]), [[0, 0], [15, 4]]);
+  assert.ok(after[0].vibrato);
+  assert.equal(after[1].realValue, second + 1);
+  assert.equal(p.state.undo.length, undo + 1, "um passo só");
+  const reply = p.posted.filter((m) => m.type === "fitted").pop();
+  assert.deepEqual([reply.count, reply.asked], [2, 3]);
+  p.tracklab.edit("undo");
+  assert.ok(!edit.notesOf(staffOf(p))[0].hasBend);
+});
+
 console.log(`${passed} verificações passaram`);

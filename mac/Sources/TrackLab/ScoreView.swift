@@ -48,6 +48,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                        _ change: BarChange?) -> Void)?
     var onSave: ((Data) -> Void)?
     var onNotes: (([[ScoreNote]]) -> Void)?
+    /// O corretor aplicou um lote (`fitMany`): quantas notas mudaram de quantas pedidas.
+    var onFitted: ((_ count: Int, _ asked: Int) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
     var onShift: ((Double) -> Void)?
     var onShiftEnd: ((Double) -> Void)?
@@ -349,6 +351,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 }
             case "notice":
                 if let text = body["text"] as? String { onNotice?(text) }
+            case "fitted":
+                onFitted?((body["count"] as? NSNumber)?.intValue ?? 0, (body["asked"] as? NSNumber)?.intValue ?? 0)
             case "error":
                 onError?(body["message"] as? String ?? "A página da partitura avisou um erro.")
             default:

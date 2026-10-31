@@ -61,6 +61,10 @@ struct SongView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .correctBySound)) { _ in
+            if !model.editingTab { model.editingTab = true }
+            model.correctBySound()
+        }
         // ⌥⌘M (Visualizar): esconde o mixer e a Fita (com o espectro) ganha a altura.
         .onReceive(NotificationCenter.default.publisher(for: .toggleMixer)) { _ in showMixer.toggle() }
         // ⌘+ e ⌘− (Visualizar): o mesmo zoom do controle deslizante, um terço da escala por vez.

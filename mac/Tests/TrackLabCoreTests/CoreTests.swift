@@ -782,6 +782,32 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(ended.form?.kind == .bend && ended.form?.top == 1)
 }
 
+@Test func leiturasECorretor() throws {
+    // O som sobe um tom aos 50 ms e segura; a TAB escreve a nota sem bend.
+    let curve = soundCurve(1, 1.5) { $0 < 1.05 ? 60 : min(62, 60 + ($0 - 1.05) * 40) }
+    let sound = SoundNote(curve: curve, start: 1, end: 1.5, pitch: 60)
+    let plain = ScoreNote(tick: 0, duration: 480, pitch: 60, string: 3, fret: 5)
+    let fix = try #require(sound.correction(for: plain, start: 1, end: 1.5))
+    #expect(fix.pitch == 60 && fix.form?.kind == .bend && fix.form?.top == 4 && !fix.vibrato)
+    // Os cartões: o do som primeiro e mais perto; a escrita sempre à vista, longe do som.
+    let cards = sound.readings(for: plain, start: 1, end: 1.5)
+    #expect(cards.count <= 4 && cards.first?.reading.kind == .sound && cards.first.map { $0.closeness > 0.8 } == true)
+    let written = try #require(cards.first { $0.reading.kind == .written })
+    #expect(written.closeness < 0.3 && written.reading.name == "Como está")
+    // Depois de corrigida, a escrita é a do som ("Como está") e a de antes aparece como "Original".
+    let fixedNote = ScoreNote(tick: 0, duration: 480, pitch: 60, string: 3, fret: 5,
+                              bend: fix.bend.map { ScoreNote.BendPoint(offset: $0[0], value: $0[1]) })
+    let after = sound.readings(for: fixedNote, start: 1, end: 1.5, original: NoteReading(note: plain))
+    #expect(after.first?.reading.name == "Como está" && after.contains { $0.reading.kind == .original })
+    #expect(sound.correction(for: fixedNote, start: 1, end: 1.5) == nil)
+    // Uma mudança que não aproxima a nota do som não vale: o som sem altura clara, só pontos soltos.
+    let noisy = soundCurve(1, 1.5) { t in Int(t * 1000) % 3 == 0 ? 63 : 60 }
+    #expect(SoundNote(curve: noisy, start: 1, end: 1.5, pitch: 60).correction(for: plain, start: 1, end: 1.5) == nil)
+    // Nota de acorde não muda.
+    let chord = SoundNote(curve: curve, start: 1, end: 1.5, pitch: 60, chord: true)
+    #expect(chord.correction(for: plain, start: 1, end: 1.5) == nil)
+}
+
 @Test func suspeitasDeBendPeloTipo() {
     func sound(_ f: @escaping (Double) -> Double) -> SoundNote {
         SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: (0...125).map { f(1 + Double($0) * 0.008) }),

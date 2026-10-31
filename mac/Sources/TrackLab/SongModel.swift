@@ -92,7 +92,7 @@ final class SongModel {
     private(set) var tabBar: TabBarInfo?
     private(set) var canUndoTab = false
     private(set) var canRedoTab = false
-    private(set) var tabMessage: String?
+    var tabMessage: String?
 
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
     var adjusting = false {
@@ -180,6 +180,9 @@ final class SongModel {
     /// aos poucos, pedidas pelas notas que aparecem.
     @ObservationIgnored private(set) var soundNotes: [String: SoundNote] = [:]
     @ObservationIgnored private var curvesAsked: Set<String> = []
+
+    /// A curva da nota já foi pedida ao motor (chegou, ou o motor não a mede).
+    func curveAsked(_ note: ScoreNote, track: Int) -> Bool { curvesAsked.contains(curveKey(note, track: track)) }
     /// Muda quando chega uma curva: a Fita desenha de novo.
     private(set) var pitchCurvesVersion = 0
     /// A janela de alturas do espectro na Fita (desliza até a das notas do trecho).
@@ -188,9 +191,15 @@ final class SongModel {
     private(set) var scoreNotes: [[ScoreNote]] = [] {
         didSet {
             notesVersion += 1
+            pruneCorrections()
             measureLater()
         }
     }
+    /// As notas que o corretor mudou (`correctionKey`: pista, tique e corda) e como estavam e ficaram, para a marca na
+    /// Lente, o "Original" entre as leituras e a contagem (Corretor.swift).
+    var corrections: [String: (before: NoteReading, after: NoteReading)] = [:]
+    /// Corrigir assim que as curvas da pista chegarem (a Lente estava fechada ou ainda medindo).
+    @ObservationIgnored var correctWhenMeasured = false
     /// Muda com as notas e com o mapa (as chaves das curvas levam o tempo da nota): a lista de suspeitas se refaz.
     @ObservationIgnored private var notesVersion = 0
     @ObservationIgnored private var suspectCache: (key: [Int], list: [Suspect])?
@@ -288,6 +297,7 @@ final class SongModel {
         }
         bridge.onSave = { [weak self] data in self?.saveScore(data) }
         bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
+        bridge.onFitted = { [weak self] count, asked in self?.fitted(count: count, asked: asked) }
         bridge.onShiftEnd = { [weak self] seconds in
             self?.soundShift = 0
             self?.alignBeat(shiftedBy: seconds)
@@ -555,7 +565,7 @@ final class SongModel {
 
     /// No espectro, as curvas da pista inteira (e da segunda), em lotes, um pouco depois da última mudança (notas,
     /// pista, mapa): as suspeitas valem para a música toda, não só para a tela.
-    private func measureLater() {
+    func measureLater() {
         measureTask?.cancel()
         guard lensVisible else { return }
         measureTask = Task { [weak self] in
@@ -578,7 +588,13 @@ final class SongModel {
                     try? await Task.sleep(for: .seconds(5))
                 }
             }
-            if !Task.isCancelled { updateTuning() }
+            if !Task.isCancelled {
+                updateTuning()
+                if correctWhenMeasured {
+                    correctWhenMeasured = false
+                    correctBySound(afterMeasuring: true)
+                }
+            }
         }
     }
 
@@ -1146,7 +1162,7 @@ final class SongModel {
     }
 
     /// A nota escolhida, na lista da pista (com a curva, se já chegou).
-    private func selectedScoreNote() -> (note: ScoreNote, track: Int)? {
+    func selectedScoreNote() -> (note: ScoreNote, track: Int)? {
         guard let selection = tabSelection, scoreNotes.indices.contains(selection.track) else { return nil }
         return scoreNotes[selection.track].first { selection.matches($0, track: selection.track) }
             .map { ($0, selection.track) }
@@ -1388,17 +1404,8 @@ final class SongModel {
         if synth {
             let written = scoreNotes.indices.contains(track)
                 ? scoreNotes[track].first { abs($0.tick - tick) < 1 && $0.string == string } : nil
-            let info = detail?.synth?.tracks[String(track)]
-            let name = (scoreTracks.first { $0.index == track }?.name ?? "").lowercased()
-            let program = info?.program ?? (name.contains("bass") || name.contains("baixo") ? 33 : 29)
-            do {
-                try NoteSynth.shared.play(pitch: pitch, seconds: (end - start) / Double(max(engine.rate, 0.1)),
-                                          program: program, percussion: info?.percussion ?? false,
-                                          transpose: Double(engine.semitones) + Double(engine.cents) / 100,
-                                          shape: written.map { note in { note.shape(fraction: $0, elapsed: $1) } })
-            } catch {
-                tabMessage = error.localizedDescription
-            }
+            playSynth(pitch: pitch, seconds: end - start, track: track,
+                      shape: written.map { note in { note.shape(fraction: $0, elapsed: $1) } })
             return
         }
         let view = viewStart(now: engine.currentTime)
@@ -1595,6 +1602,21 @@ final class SongModel {
         let bend: Any = fit.guitarPro.map { $0.map { [$0.offset, $0.value] } } ?? NSNull()
         bridge.edit("fit", ["pitch": fit.base, "bend": bend, "vibrato": fit.vibrato])
         tabMessage = "Encaixou no som: " + parts.joined(separator: ", ") + " · ⌘Z desfaz"
+    }
+
+    /// Toca uma nota sintetizada no instrumento da pista (o da TAB sintetizada), no tom e na velocidade do estudo:
+    /// `seconds` do áudio, `shape(fração, segundos)` semitons a mais a cada instante (o bend e o vibrato).
+    func playSynth(pitch: Int, seconds: Double, track: Int, shape: ((Double, Double) -> Double)?) {
+        let info = detail?.synth?.tracks[String(track)]
+        let name = (scoreTracks.first { $0.index == track }?.name ?? "").lowercased()
+        let program = info?.program ?? (name.contains("bass") || name.contains("baixo") ? 33 : 29)
+        do {
+            try NoteSynth.shared.play(pitch: pitch, seconds: seconds / Double(max(engine.rate, 0.1)),
+                                      program: program, percussion: info?.percussion ?? false,
+                                      transpose: Double(engine.semitones) + Double(engine.cents) / 100, shape: shape)
+        } catch {
+            tabMessage = error.localizedDescription
+        }
     }
 
     static func pitchName(_ midi: Int) -> String {

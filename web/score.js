@@ -1355,6 +1355,23 @@
       pasteAt(value);
       return;
     }
+    if (op === "fitMany") {
+      // O corretor (Corrigir pelo som) e as leituras de um trecho: várias notas pela pista, tique e corda, cada uma com
+      // o que o F escreveria nela (`edit.fit`), num passo só do Desfazer. As que não acham ou não cabem (fora do braço)
+      // ficam como estão; o app sabe quantas mudaram.
+      const items = Array.isArray(value) ? value : [];
+      const found = items.map((item) => [edit.findNote(state.score, item.track, item.tick, item.string), item])
+        .filter(([note]) => note);
+      let done = 0;
+      change(() => {
+        for (const [note, item] of found) {
+          if (edit.fit(alphaTab, note, item)) done += 1;
+        }
+        return done > 0;
+      });
+      post({ type: "fitted", count: done, asked: items.length });
+      return;
+    }
     if (op === "bar") {
       barEdit(value);
       return;

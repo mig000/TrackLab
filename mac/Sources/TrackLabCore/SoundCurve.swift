@@ -35,10 +35,14 @@ public struct CurveFit: Hashable, Sendable {
     /// O movimento do bend foi visto deslizando (quadros entre a partida e a chegada); sem eles, com quadros vazios no
     /// meio, pode ser um bend rápido que o rastreador perdeu ou um ligado: o F escreve, as suspeitas não acusam sozinhas.
     public let certain: Bool
+    /// Os segundos da curva que o encaixe mediu (sem o começo que ainda é a nota anterior, a entrada de outra casa e o
+    /// fim que já é a seguinte): onde as leituras são comparadas com o som.
+    public let window: ClosedRange<Double>?
 
     public init(base: Int, low: Double, rise: Double, quarterTones: Int, form: BendForm?, vibrato: Bool, trill: Trill?,
-                depth: Double, certain: Bool = true) {
+                depth: Double, certain: Bool = true, window: ClosedRange<Double>? = nil) {
         self.certain = certain
+        self.window = window
         self.base = base
         self.low = low
         self.rise = rise
@@ -293,6 +297,7 @@ public struct SoundNote: Sendable {
                 values.removeSubrange(cut...)
             }
         }
+        let measured = times.first.flatMap { first in times.last.map { first...$0 } }
         let level = trend(values, width: max(3, Int((0.2 / curve.hop).rounded())))
         let quick = trend(values, width: max(3, Int((0.04 / curve.hop).rounded())))
         // O vibrato: o que sobra em volta da tendência, em meias voltas que passam de 0,12 semitom.
@@ -344,7 +349,7 @@ public struct SoundNote: Sendable {
         let ref = Double(base)
         guard trill == nil else {
             return CurveFit(base: base, low: low, rise: 0, quarterTones: 0, form: nil, vibrato: false, trill: trill,
-                            depth: depth)
+                            depth: depth, window: measured)
         }
         // As três alturas do bend, acima da casa: no ataque (o pré-bend), no alto (sem a meia oscilação do vibrato, que
         // na guitarra só sobe) e no fim (até onde volta).
@@ -491,7 +496,7 @@ public struct SoundNote: Sendable {
         let quarters = form.map { max($0.kind.usesPre ? $0.pre : 0, $0.kind.usesTop ? $0.top : 0) } ?? 0
         return CurveFit(base: base, low: form?.kind.usesPre == true ? ref : low, rise: form == nil ? 0 : max(0, rise),
                         quarterTones: quarters, form: form, vibrato: vibrato, trill: nil, depth: depth,
-                        certain: form == nil || certain)
+                        certain: form == nil || certain, window: measured)
     }
 
     /// O trinado: a curva alterna entre dois níveis a ao menos 0,7 semitom, cruzando o meio a cada 35 a 200 ms, em

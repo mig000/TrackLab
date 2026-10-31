@@ -88,6 +88,8 @@ struct TabEditPanel: View {
                 VStack(alignment: .leading, spacing: 14) {
                     noteSection(selection)
                     Divider()
+                    ReadingCards(model: model)
+                    Divider()
                     durationSection(selection)
                     Divider()
                     BendEditor(model: model, selection: selection)
@@ -652,6 +654,15 @@ struct TabEditKeys: NSViewRepresentable {
             }
             guard let character = event.charactersIgnoringModifiers?.lowercased().first else { return false }
             if let digit = character.wholeNumberValue {
+                // ⌥1–⌥4: a leitura do cartão (ou a posição, com várias notas).
+                if option, (1...4).contains(digit) {
+                    if let positions = model.selectedPositions() {
+                        if positions.indices.contains(digit - 1) { model.choosePosition(positions[digit - 1].id) }
+                    } else {
+                        model.chooseReading(digit - 1)
+                    }
+                    return true
+                }
                 let now = event.timestamp
                 if let last = lastDigit, now - last.at < 0.6, last.value * 10 + digit <= 24 {
                     model.tabEdit("fret", last.value * 10 + digit)
@@ -675,7 +686,7 @@ struct TabEditKeys: NSViewRepresentable {
             case "a": model.cycleTechnique(["accent", "heavy-accent"])
             case "r": model.toggleTechnique("let-ring")
             case "p": model.cycleTechnique(["pick-down", "pick-up"])
-            case "f": model.fitToSound()
+            case "f": flags.contains(.shift) ? model.correctBySound() : model.fitToSound()
             case "o": model.listenSelection()
             case "t": model.setFigure(triplet: !(model.tabSelection?.triplet ?? false))
             // O − = e . pelo caractere também (outros teclados, e o que chega sem a tecla física).

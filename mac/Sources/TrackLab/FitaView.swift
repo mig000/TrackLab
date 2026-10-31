@@ -344,6 +344,7 @@ struct FitaView: View {
             var attacks = Path()
             var dots = Path()
             var suspect = Path()
+            var corrected = Path()
             var timing = Path()
             var chosen: (shape: Path, line: Path?)?
             for note in notes {
@@ -386,6 +387,10 @@ struct FitaView: View {
                     context.draw(Text("\(slide > 0 ? "+" : "−")\(abs(slide)) × \(SongModel.grids.first { $0.ticks == model.gridTicks }?.name ?? "")")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(color), at: CGPoint(x: x1 + dx + 6, y: centers[0].y), anchor: .leading)
+                }
+                // Corrigida pelo som (o corretor): contorno verde tracejado.
+                if track == model.scoreTrack, model.isCorrected(note, track: track) {
+                    corrected.addPath(band)
                 }
                 // Suspeita (o som discorda da escrita): contorno vermelho e um ponto sobre o ataque.
                 if sound != nil, track == model.scoreTrack, flagged.contains(note) {
@@ -445,6 +450,8 @@ struct FitaView: View {
             }
             context.fill(attacks, with: .color(color))
             context.fill(timing, with: .color(ink.opacity(0.75)))
+            context.stroke(corrected, with: .color(ReadingTile.teal.opacity(0.95)),
+                           style: StrokeStyle(lineWidth: 1.6, lineJoin: .round, dash: [4, 2]))
             let red = Color(red: 1, green: 0.36, blue: 0.36)
             context.stroke(suspect, with: .color(red), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
             let orange = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 138 / 255, blue: 61 / 255)
@@ -493,6 +500,10 @@ struct FitaView: View {
         var info: [Text] = []
         if abs(cents) >= 5 {
             info.append(Text("gravação \(cents > 0 ? "+" : "−")\(abs(cents)) cents").foregroundStyle(.secondary))
+        }
+        let fixed = model.correctedCount(track: model.scoreTrack)
+        if fixed > 0 {
+            info.append(Text("\(fixed) corrigida\(fixed == 1 ? "" : "s") pelo som").foregroundStyle(ReadingTile.teal))
         }
         if suspects > 0 {
             info.append(Text("\(suspects) suspeita\(suspects == 1 ? "" : "s")"
