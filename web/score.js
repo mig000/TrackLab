@@ -1278,8 +1278,14 @@
     }, SAVE_MS);
   }
 
-  // O Guitar Pro 7 da partitura de agora, em base64.
+  // O Guitar Pro 7 da partitura de agora, em base64. Um bend de mais de quatro pontos (de outro editor) é reduzido aos
+  // quatro que mais pesam, com aviso: o Guitar Pro 7 não o guarda, e o exportador o jogava fora.
   function exportBase64() {
+    const reduced = edit.gpSafe(alphaTab, state.score);
+    if (reduced) {
+      post({ type: "notice", text: `${reduced} ${reduced === 1 ? "bend tinha" : "bends tinham"} mais de quatro pontos e ` +
+        "ficaram com os quatro que o Guitar Pro 7 guarda." });
+    }
     const bytes = edit.exportGp(alphaTab, state.score);
     let binary = "";
     for (let i = 0; i < bytes.length; i += 0x8000) {
@@ -1444,6 +1450,17 @@
       case "fret":
         change(() => edit.setFret(note, value));
         return;
+      case "bend": {
+        // O editor de bend da coluna: os mesmos pontos em todas as escolhidas; vazio tira.
+        const points = value && Array.isArray(value.points) ? value.points : null;
+        let refused = false;
+        change(() => {
+          refused = !points || !notes.every((n) => edit.setBendPoints(alphaTab, n, points));
+          return !refused;
+        });
+        if (refused) post({ type: "notice", text: "Esse bend não cabe no Guitar Pro 7 (até quatro pontos, de 0 a 3 tons)." });
+        return;
+      }
       case "string":
         // +1 sobe para a corda mais aguda: no alphaTab, a corda de número maior. Com várias, todas andam o mesmo.
         change(() => {

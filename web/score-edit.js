@@ -109,12 +109,13 @@
       return null;
     }
     if (first > 0) {
-      return last < first ? "prebend-release" : "prebend";
+      return last < first ? "prebend-release" : last > first ? "prebend-bend" : "prebend";
     }
     if (last < peak) {
       return "bend-release";
     }
-    return { 2: "bend-half", 4: "bend-full", 6: "bend-1.5", 8: "bend-2" }[peak] || "bend-full";
+    // Uma altura sem botão (¼, ¾, 2½…) não é a de um preset: antes aparecia como "1".
+    return { 2: "bend-half", 4: "bend-full", 6: "bend-1.5", 8: "bend-2" }[peak] || "bend";
   }
 
   // Liga ou desliga uma articulação; no mesmo grupo, ligar troca a que estava. Nota morta não tem bend, vibrato nem
@@ -671,6 +672,35 @@
     note.bendType = points.every((p) => p[1] === first) ? (tied ? m.BendType.Hold : m.BendType.Prebend)
       : first > 0 ? (last < first ? m.BendType.PrebendRelease : m.BendType.PrebendBend)
       : last === 0 ? m.BendType.BendRelease : m.BendType.Bend;
+  }
+
+  // O bend do editor da coluna (`BendForm` no app): os pontos [deslocamento 0–60, quartos de tom 0–12], de dois a
+  // quatro, em ordem dentro da nota (o Guitar Pro 7 guarda até quatro); vazio tira o bend. As ligadas seguintes que só
+  // seguravam o alto de antes ficam livres, como no toggle. Devolve false se os pontos não cabem no formato.
+  function setBendPoints(at, note, points) {
+    if (!Array.isArray(points)) return false;
+    const clean = points.map((p) => (Array.isArray(p) ? [Number(p[0]), Number(p[1])] : [NaN, NaN]));
+    if (clean.length === 1 || clean.length > 4) return false;
+    if (clean.some(([x, y]) => !(x >= 0 && x <= 60) || !(y >= 0 && y <= 12))) return false;
+    if (clean.some(([x], i) => i > 0 && x < clean[i - 1][0])) return false;
+    setBend(at, note, clean, note.isTieDestination);
+    if (clean.length) note.isDead = false;
+    freeFollowers(at, note);
+    return true;
+  }
+
+  // Os bends de mais de quatro pontos (de outro editor) reduzidos aos quatro que mais pesam, antes de gravar: o
+  // exportador do Guitar Pro 7 os jogava fora em silêncio. Devolve quantos.
+  function gpSafe(at, score) {
+    let count = 0;
+    for (const track of score.tracks) for (const staff of track.staves) for (const bar of staff.bars) {
+      for (const voice of bar.voices) for (const beat of voice.beats) for (const note of beat.notes) {
+        if (!note.bendPoints || note.bendPoints.length <= 4) continue;
+        setBend(at, note, bendPart(note.bendPoints.map((p) => [p.offset, p.value]), 0, 1), note.isTieDestination);
+        count += 1;
+      }
+    }
+    return count;
   }
 
   // Os pontos do bend de uma nota ligada: os dela, ou o alto em que a anterior deixou a corda (uma ligada sem pontos
@@ -1501,7 +1531,13 @@
     const sounding = span(note);
     const length = sounding ? sounding.end - sounding.start : note.beat.playbackDuration;
     const rhythm = rhythmOf(length);
+    // O bend da própria nota (o editor da coluna), a altura que uma ligada traz da anterior, e o tempo dela mesma (os
+    // pontos do bend vão de 0 a 60 ao longo da batida, não da cadeia ligada).
+    const before = note.isTieDestination && note.tieOrigin ? bendOf(note.tieOrigin) : [];
     return { track: staff.track.index, string: tabString(note), fret: note.fret,
+      bend: (note.bendPoints || []).map((p) => [p.offset, p.value]),
+      carried: before.length ? before[before.length - 1][1] : 0,
+      ownTick: note.beat.absolutePlaybackStart, ownLength: note.beat.playbackDuration,
       pitch: note.realValue, tick: sounding ? sounding.start : note.beat.absolutePlaybackStart,
       techniques: techniquesOf(at, note),
       voice: note.beat.voice.index + 1,
@@ -1516,6 +1552,8 @@
     MIN_TICKS,
     describe,
     exportGp,
+    gpSafe,
+    setBendPoints,
     findNote,
     fit,
     moveString,

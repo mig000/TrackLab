@@ -152,4 +152,23 @@ test("a gravação pendente sai já quando o app pede (fechar a música, sair da
   assert.equal(p.tracklab.flush(), null);
 });
 
+test("o bend do editor da coluna vale para todas as notas escolhidas; fora do formato, aviso e nada muda", () => {
+  const p = page(load());
+  const list = edit.notesOf(staffOf(p));
+  p.choose(edit.pathOf(list[0]));
+  p.state.group = [edit.pathOf(list[0]), edit.pathOf(list[1])];
+  p.tracklab.edit("bend", { points: [[0, 2], [15, 4]] });
+  const after = edit.notesOf(staffOf(p));
+  for (const n of after.slice(0, 2)) assert.deepEqual(n.bendPoints.map((b) => [b.offset, b.value]), [[0, 2], [15, 4]]);
+  assert.ok(!after[2].hasBend);
+  const notices = p.posted.filter((m) => m.type === "notice").length;
+  p.tracklab.edit("bend", { points: [[0, 0], [15, 4], [30, 0], [45, 4], [60, 4]] });
+  assert.equal(p.posted.filter((m) => m.type === "notice").length, notices + 1);
+  assert.deepEqual(edit.notesOf(staffOf(p))[0].bendPoints.map((b) => [b.offset, b.value]), [[0, 2], [15, 4]]);
+  // A coluna recebe o bend da nota escolhida.
+  const selection = p.posted.filter((m) => m.type === "selection").pop();
+  assert.deepEqual(selection.note.bend, [[0, 2], [15, 4]]);
+  assert.equal(selection.note.carried, 0);
+});
+
 console.log(`${passed} verificações passaram`);

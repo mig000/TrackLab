@@ -13,7 +13,8 @@ import TrackLabCore
 ///     − =           a figura da metade / do dobro             .  T  ponto / tercina          ⇧⌫  vira pausa
 ///     ⇧← ⇧→         escolhe mais uma nota para trás / para a frente (⇧ clique: até ali; ⌘ clique: põe ou tira)
 ///     O, ⌥Espaço    ouvir: o trecho escolhido vira o loop e toca (o ⌥Espaço é o atalho global do ChatGPT)
-///     H ligado   S slide   B bend   V vibrato   M palm mute   X nota morta   N harmônico   G fantasma
+///     H ligado   S slide   B bend (a altura; ⇧B o tipo)   V vibrato   M palm mute   X nota morta   N harmônico
+///     G fantasma
 ///     A acento   R let ring   P palhetada   F encaixa no som (a altura, o bend e o vibrato da curva)
 ///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
 struct TabEditPanel: View {
@@ -49,16 +50,6 @@ struct TabEditPanel: View {
             Item(key: "slide-in-above", label: "↘ Entra", help: "Entra deslizando de cima", icon: .slide(.inAbove)),
             Item(key: "slide-out-up", label: "Sai ↗", help: "Sai deslizando para cima", icon: .slide(.outUp)),
             Item(key: "slide-out-down", label: "Sai ↘", help: "Sai deslizando para baixo", icon: .slide(.outDown)),
-        ]),
-        ("Bend", [
-            Item(key: "bend-half", label: "½", help: "Bend de meio tom (B; de novo, os seguintes)", shortcut: "B",
-                 icon: .bend(.bend, "½")),
-            Item(key: "bend-full", label: "1", help: "Bend de um tom, full (B de novo)", icon: .bend(.bend, "full")),
-            Item(key: "bend-1.5", label: "1½", help: "Bend de um tom e meio", icon: .bend(.bend, "1½")),
-            Item(key: "bend-2", label: "2", help: "Bend de dois tons", icon: .bend(.bend, "2")),
-            Item(key: "bend-release", label: "↑↓", help: "Bend e volta", icon: .bend(.release, "full")),
-            Item(key: "prebend", label: "Pré", help: "Pré-bend (a corda já sobe antes de tocar)", icon: .bend(.prebend, "full")),
-            Item(key: "prebend-release", label: "Pré↓", help: "Pré-bend e volta", icon: .bend(.prebendRelease, "full")),
         ]),
         ("Vibrato e mão direita", [
             Item(key: "vibrato", label: "∿", help: "Vibrato (V)", shortcut: "V",
@@ -98,6 +89,8 @@ struct TabEditPanel: View {
                     noteSection(selection)
                     Divider()
                     durationSection(selection)
+                    Divider()
+                    BendEditor(model: model, selection: selection)
                     Divider()
                     articulations(selection)
                     Divider()
@@ -554,7 +547,7 @@ struct TabEditPanel: View {
 }
 
 /// A tecla de um comando, pequena, ao lado dele.
-private struct KeyHint: View {
+struct KeyHint: View {
     let text: String
 
     init(_ text: String) { self.text = text }
@@ -673,7 +666,7 @@ struct TabEditKeys: NSViewRepresentable {
             case "h": model.toggleTechnique("hammer")
             case "l": model.toggleTechnique("tie")
             case "s": model.cycleTechnique(["slide-legato", "slide-shift"])
-            case "b": model.cycleTechnique(["bend-half", "bend-full", "bend-1.5", "bend-2", "bend-release"])
+            case "b": flags.contains(.shift) ? model.cycleBendKind() : model.cycleBendHeight()
             case "v": model.cycleTechnique(["vibrato", "wide-vibrato"])
             case "m": model.toggleTechnique("palm-mute")
             case "x": model.toggleTechnique("dead")

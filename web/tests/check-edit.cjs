@@ -787,4 +787,65 @@ test("duas vozes: copiar leva as duas, colar põe cada uma na sua, e um recorte 
   assert.equal(found, v2);
 });
 
+test("editor de bend: cada tipo, alturas de ¼ a 3 tons e o tempo, iguais depois do Guitar Pro 7", () => {
+  // Os pontos que o editor da coluna manda (BendForm no app: os mesmos casos de CoreTests.swift).
+  const cases = [
+    ["Bend", [[0, 0], [15, 1]]], ["Bend", [[0, 0], [15, 3]]], ["Bend", [[0, 0], [60, 4]]], ["Bend", [[30, 0], [45, 12]]],
+    ["BendRelease", [[0, 0], [15, 4], [45, 4], [60, 0]]], ["BendRelease", [[0, 0], [30, 6], [30, 6], [60, 4]]],
+    ["BendRelease", [[30, 0], [40, 4], [50, 4], [60, 2]]], ["Prebend", [[0, 3], [60, 3]]],
+    ["PrebendBend", [[0, 2], [15, 4]]], ["PrebendBend", [[20, 2], [40, 4]]], ["PrebendRelease", [[0, 4], [15, 0]]],
+    ["PrebendRelease", [[30, 4], [60, 2]]],
+  ];
+  const names = Object.fromEntries(Object.entries(alphaTab.model.BendType).filter(([, v]) => typeof v === "number").map(([k, v]) => [v, k]));
+  let score = load();
+  const notes = () => edit.notesOf(score.tracks[0].staves[0]);
+  cases.forEach(([, points], i) => assert.equal(edit.setBendPoints(alphaTab, notes()[i], points), true));
+  score = reread(edit.refinish(alphaTab, score));
+  cases.forEach(([type, points], i) => {
+    const note = notes()[i];
+    assert.deepEqual(note.bendPoints.map((p) => [Math.round(p.offset * 10) / 10, p.value]), points, `${type} ${i}`);
+    assert.equal(names[note.bendType], type, `tipo ${i}`);
+    assert.deepEqual(edit.describe(alphaTab, note).bend, note.bendPoints.map((p) => [p.offset, p.value]));
+  });
+  // Vazio tira; fora do formato, recusa sem mudar nada.
+  const first = notes()[0];
+  for (const bad of [[[0, 0]], [[0, 0], [15, 4], [30, 0], [45, 4], [60, 4]], [[30, 0], [15, 4]], [[0, 0], [15, 13]],
+    [[0, 0], [70, 4]], "x"]) {
+    assert.equal(edit.setBendPoints(alphaTab, first, bad), false, JSON.stringify(bad));
+  }
+  assert.equal(first.bendPoints.length, 2);
+  assert.equal(edit.setBendPoints(alphaTab, first, []), true);
+  assert.ok(!first.hasBend && !edit.describe(alphaTab, first).bend.length);
+});
+
+test("editor de bend: a ligada traz a altura, a volta dela é Release, e um bend de cinco pontos não some ao gravar", () => {
+  let score = load();
+  assert.equal(edit.toRest(alphaTab, at(score, 960)), true);
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.setLength(alphaTab, at(score, 0), 1920), true);
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.setBendPoints(alphaTab, at(score, 0), [[0, 0], [15, 6]]), true);
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.split(alphaTab, at(score, 0), 960), true);
+  score = edit.refinish(alphaTab, score);
+  const tail = at(score, 960);
+  const info = edit.describe(alphaTab, tail);
+  assert.ok(tail.isTieDestination && info.carried === 6 && info.bend.length === 0);
+  assert.deepEqual([info.ownTick, info.ownLength], [960, 960]);
+  // A volta na ligada: parte da altura que vem dela.
+  assert.equal(edit.setBendPoints(alphaTab, tail, [[0, 6], [30, 0]]), true);
+  score = reread(edit.refinish(alphaTab, score));
+  const names = Object.fromEntries(Object.entries(alphaTab.model.BendType).filter(([, v]) => typeof v === "number").map(([k, v]) => [v, k]));
+  assert.equal(names[at(score, 960).bendType], "Release");
+  // Cinco pontos (de outro editor): o exportador do Guitar Pro 7 jogava o bend fora; agora fica com os quatro que pesam.
+  const note = at(score, 1920);
+  note.bendPoints = [];
+  for (const [x, y] of [[0, 0], [15, 4], [30, 0], [45, 4], [60, 4]]) note.addBendPoint(new alphaTab.model.BendPoint(x, y));
+  assert.equal(edit.gpSafe(alphaTab, score), 1);
+  assert.ok(note.bendPoints.length <= 4 && note.bendPoints.length >= 2);
+  const again = reread(score);
+  assert.ok(at(again, 1920).hasBend, "o bend chega ao Guitar Pro");
+  assert.equal(edit.gpSafe(alphaTab, score), 0);
+});
+
 console.log(`${passed} verificações passaram`);

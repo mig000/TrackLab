@@ -1061,6 +1061,59 @@ final class SongModel {
         if current + 1 < keys.count { toggleTechnique(keys[current + 1]) } else { toggleTechnique(keys[current]) }
     }
 
+    // MARK: - Bend (o editor da coluna)
+
+    /// O bend nas notas escolhidas: os pontos da forma (nil tira). A página confere se cabem no Guitar Pro 7.
+    func setBend(_ form: BendForm?) {
+        tabEdit("bend", ["points": form?.valid().points ?? []])
+    }
+
+    /// B: a altura do bend da nota (½, 1, 1½, 2 e tira, como a tecla fazia); sem bend, um bend de ½ rápido.
+    func cycleBendHeight() {
+        guard let selection = tabSelection else { return }
+        guard var form = selection.bendForm else {
+            setBend(BendForm.make(.bend, carried: selection.carried).with(height: 2))
+            return
+        }
+        // A Volta parte da altura que vem ligada: B nela só tira.
+        let current = form.kind.usesTop ? form.top : form.pre
+        guard form.kind != .release, let next = [2, 4, 6, 8].first(where: { $0 > current }) else {
+            setBend(nil)
+            return
+        }
+        form = form.with(height: next)
+        setBend(form)
+    }
+
+    /// ⇧B: o tipo seguinte (Bend, Bend e volta, Pré-bend, Pré e bend, Pré e volta e, numa ligada que traz um bend, a
+    /// Volta), com as alturas que dá para aproveitar.
+    func cycleBendKind() {
+        guard let selection = tabSelection else { return }
+        var kinds: [BendForm.Kind] = [.bend, .bendRelease, .prebend, .prebendBend, .prebendRelease]
+        if selection.carried > 0 { kinds.append(.release) }
+        let current = selection.bendForm
+        let next = current.flatMap { kinds.firstIndex(of: $0.kind) }.map { kinds[($0 + 1) % kinds.count] } ?? .bend
+        setBend(BendForm.make(next, from: current, carried: selection.carried))
+    }
+
+    /// O som da nota escolhida no tempo dela, para o gráfico do bend: (fração 0–1 da batida, quartos de tom acima da
+    /// altura escrita), da curva medida pela Lente (já com a afinação da gravação descontada). Vazio sem medida.
+    func selectedBendSound() -> [(fraction: Double, quarterTones: Double)] {
+        guard let selection = tabSelection, let tick = selection.ownTick, let own = selection.ownLength, own > 0,
+              let (note, track) = selectedScoreNote(), let sound = soundNotes[curveKey(note, track: track)] else { return [] }
+        let start = grid.seconds(at: tick)
+        let end = grid.seconds(at: tick + own)
+        guard end > start else { return [] }
+        var out: [(fraction: Double, quarterTones: Double)] = []
+        for (index, value) in sound.quick.enumerated() {
+            guard let value else { continue }
+            let t = sound.curve.from + Double(index) * sound.curve.hop
+            guard t >= start, t <= end else { continue }
+            out.append(((t - start) / (end - start), (value - Double(selection.pitch)) * 2))
+        }
+        return out
+    }
+
     // MARK: - Notas no espectro (a Lente do TabLab)
 
     /// Um clique numa faixa do espectro: liga a edição e escolhe a nota na TAB.

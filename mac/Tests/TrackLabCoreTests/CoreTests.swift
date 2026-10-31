@@ -625,3 +625,64 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(CurveFit.Trill(low: 60, high: 62, gap: 0.125).speed(beatSeconds: 0.5) == 16)
     #expect(CurveFit.Trill(low: 60, high: 62, gap: 0.04).speed(beatSeconds: 0.5) == 64)
 }
+
+@Test func bendDasMusicasPeloTipo() {
+    // As formas que o Songsterr importou (Sunshine, White Room, Highway Star) e as do editor de antes.
+    let along = BendForm(points: [[0, 0], [60, 4]])
+    #expect(along?.kind == .bend && along?.top == 4 && along?.timing == .along)
+    #expect(BendForm(points: [[0, 0], [60, 1]])?.top == 1)                      // ¼ de tom (White Room)
+    let release = BendForm(points: [[0, 0], [30, 4], [30, 4], [60, 0]])
+    #expect(release?.kind == .bendRelease && release?.top == 4 && release?.end == 0 && release?.timing == .along)
+    #expect(BendForm(points: [[0, 0], [20, 4], [40, 4], [60, 0]])?.kind == .bendRelease)
+    // A volta sozinha numa ligada que traz o bend (Release) e a mesma forma fora de uma ligada (Pré e volta).
+    #expect(BendForm(points: [[0, 4], [60, 0]], continued: true)?.kind == .release)
+    #expect(BendForm(points: [[0, 4], [60, 0]])?.kind == .prebendRelease)
+    #expect(BendForm(points: [[0, 3], [60, 3]])?.kind == .prebend && BendForm(points: [[0, 3], [60, 3]])?.pre == 3)
+    // Uma ligada que só segura o alto (Hold) não tem bend dela; dois movimentos não são de um tipo só.
+    #expect(BendForm(points: [[0, 4], [60, 4]], continued: true) == nil)
+    #expect(BendForm(points: [[0, 0], [15, 4], [30, 0], [45, 4]]) == nil)
+    #expect(BendForm(points: []) == nil)
+    // Pré e bend com o patamar escrito como origem atrasada (como o Guitar Pro 7 guarda).
+    let late = BendForm(points: [[20, 2], [40, 4]])
+    #expect(late?.kind == .prebendBend && late?.pre == 2 && late?.top == 4 && late?.start == 20 && late?.arrive == 40)
+}
+
+@Test func bendDoEditorNoFormatoDoGuitarPro() {
+    // Cada tipo, rápido, em pontos que o Guitar Pro 7 guarda (até quatro, um patamar só).
+    #expect(BendForm.make(.bend).points == [[0, 0], [15, 4]])
+    #expect(BendForm.make(.bendRelease).points == [[0, 0], [15, 4], [45, 4], [60, 0]])
+    #expect(BendForm.make(.release, carried: 6).points == [[0, 6], [15, 0]])
+    #expect(BendForm.make(.prebend).points == [[0, 4], [60, 4]])
+    #expect(BendForm.make(.prebendBend).points == [[0, 2], [15, 4]])
+    #expect(BendForm.make(.prebendRelease).points == [[0, 4], [15, 0]])
+    for kind in BendForm.Kind.allCases {
+        let form = BendForm.make(kind, carried: 4)
+        #expect(form.points.count <= 4)
+        #expect(BendForm(points: form.points, continued: kind == .release) == form, "\(kind) lido de volta")
+        for timing in BendForm.Timing.allCases where kind != .prebend {
+            #expect(BendForm(points: form.timed(timing).points, continued: kind == .release)?.timing == timing)
+        }
+    }
+    // As alturas de antes ficam ao trocar de tipo; o pré e bend sobe acima do pré.
+    let high = BendForm.make(.bend).with(height: 6)
+    #expect(BendForm.make(.bendRelease, from: high).top == 6 && BendForm.make(.prebend, from: high).pre == 6)
+    #expect(BendForm.make(.prebendBend, from: BendForm.make(.prebend).with(height: 3)).pre == 3)
+    #expect(BendForm.make(.prebendBend, from: BendForm.make(.prebend).with(height: 3)).top == 5)
+}
+
+@Test func bendDentroDoFormato() {
+    var form = BendForm.make(.prebendBend)
+    form.pre = 12
+    #expect(form.valid().pre == 11 && form.valid().top == 12)       // sobe acima do pré, até 3 tons
+    form = BendForm.make(.bendRelease)
+    form.end = 9
+    #expect(form.valid().end == 3)                                   // a volta fica abaixo do alto
+    form.arrive = 0
+    form.hold = -5
+    form.back = 0
+    let fixed = form.valid()
+    #expect(fixed.start < fixed.arrive && fixed.arrive <= fixed.hold && fixed.hold < fixed.back && fixed.back <= 60)
+    #expect(BendForm.make(.bend).with(height: 40).top == 12 && BendForm.make(.bend).with(height: 0).top == 1)
+    #expect(BendForm.make(.bend).timed(.late).value(at: 37.5) == 2)
+    #expect([1, 2, 3, 4, 5, 6, 10, 12].map(BendForm.name) == ["¼", "½", "¾", "1", "1¼", "1½", "2½", "3"])
+}

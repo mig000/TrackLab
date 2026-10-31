@@ -399,11 +399,18 @@ public struct TabSelection: Hashable, Sendable {
     public let span: String?
     /// A voz da nota (1 ou 2).
     public let voice: Int
+    /// O bend da própria nota ([deslocamento 0–60, quartos de tom]), a altura que uma ligada traz da nota de antes (0
+    /// sem) e o tempo da batida dela (o bend vai de 0 a 60 ao longo dela, não da cadeia ligada).
+    public let bend: [[Double]]
+    public let carried: Int
+    public let ownTick: Double?
+    public let ownLength: Double?
 
     public init(track: Int, string: Int, fret: Int, pitch: Int, tick: Double? = nil, techniques: [String],
                 place: String? = nil, figure: String? = nil, strings: [Int?] = [], length: Double? = nil,
                 base: Int? = nil, dotted: Bool = false, triplet: Bool = false, count: Int = 1,
-                range: ClosedRange<Double>? = nil, span: String? = nil, voice: Int = 1) {
+                range: ClosedRange<Double>? = nil, span: String? = nil, voice: Int = 1, bend: [[Double]] = [],
+                carried: Int = 0, ownTick: Double? = nil, ownLength: Double? = nil) {
         self.track = track
         self.string = string
         self.fret = fret
@@ -421,7 +428,14 @@ public struct TabSelection: Hashable, Sendable {
         self.range = range
         self.span = span
         self.voice = voice
+        self.bend = bend
+        self.carried = carried
+        self.ownTick = ownTick
+        self.ownLength = ownLength
     }
+
+    /// O bend escrito da nota no editor da coluna (nil sem bend próprio, ou numa forma de dois movimentos).
+    public var bendForm: BendForm? { BendForm(points: bend, continued: carried > 0) }
 
     /// A duração em tiques de uma figura: a base, com ponto (1,5×) ou em tercina (⅔).
     public static func ticks(base: Int, dotted: Bool, triplet: Bool) -> Int {
@@ -451,7 +465,11 @@ public struct TabSelection: Hashable, Sendable {
                             let to = (page["to"] as? NSNumber)?.doubleValue, to > from else { return nil }
                       return from...to
                   }(),
-                  span: page["span"] as? String, voice: int("voice") ?? 1)
+                  span: page["span"] as? String, voice: int("voice") ?? 1,
+                  bend: (page["bend"] as? [[NSNumber]] ?? []).map { $0.map(\.doubleValue) },
+                  carried: Int(((page["carried"] as? NSNumber)?.doubleValue ?? 0).rounded()),
+                  ownTick: (page["ownTick"] as? NSNumber)?.doubleValue,
+                  ownLength: (page["ownLength"] as? NSNumber)?.doubleValue)
     }
 
     /// O nome da altura (Dó 4 = MIDI 60), para o rótulo da paleta.

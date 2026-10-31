@@ -158,7 +158,8 @@ Edição da TAB (`score-edit.js`, testado em `web/tests/check-edit.cjs`): como a
 Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia detalhe na volta ao .gp). Com
 `editing(true)`, um clique escolhe a nota pelas caixas do alphaTab (`includeNoteBounds`); `edit(op, valor)` muda casa,
 corda (mesma altura), meio tom, apaga, navega, liga e desliga as articulações do TabLab (`toggle`: ligados, slides,
-bends de tipo explícito com até 4 pontos, porque o GP7 perde um "Custom" de 5; vibratos, P.M., nota morta, let ring,
+bends de tipo explícito com até 4 pontos, porque o GP7 perde um "Custom" de 5 (`gpSafe` reduz aos quatro que pesam,
+com aviso, antes de gravar; o exportador o jogava fora em silêncio); vibratos, P.M., nota morta, let ring,
 acentos, harmônicos, palhetada, tapping; no mesmo grupo ligar troca). Depois de cada mudança a partitura passa pelo
 JSON do alphaTab (o `finish` liga ligados e slides à nota seguinte); a mesma cópia é o passo do Desfazer (guardada em
 `state.copy` e reaproveitada como o "antes" da mudança seguinte: o alphaTab não mexe nela ao ler). Apagar a nota de onde
@@ -290,10 +291,26 @@ e a agulha segue no mesmo x), com tudo à vista e a tecla de cada comando: a not
 da página com o `placeName`; casa e meio tom com − e +; a corda, um botão por corda com a casa em que a mesma altura cai
 nela, pelos `strings` do `describe`; anterior, seguinte, apagar), a duração (a figura de 1 a 1/32, pontuada, tercina,
 pela `base` do `describe`, e a pausa: `length` refaz o compasso do mesmo começo, `edit.setLength`, mais curta sobra
-pausa e mais longa não passa da nota seguinte; `rest` tira a batida inteira, `edit.toRest`; teclas − = . T ⇧⌫), as
-articulações em grupos, o som e o encaixe, o tempo
+pausa e mais longa não passa da nota seguinte; `rest` tira a batida inteira, `edit.toRest`; teclas − = . T ⇧⌫), o
+bend (`BendEditor`, abaixo), as articulações em grupos, o som e o encaixe, o tempo
 (barras de duração, grade, um passo para os lados), as suspeitas e, embaixo, o aviso da página, Desfazer, Refazer e
-Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. Várias notas de uma
+Concluir; as linhas de texto têm a altura reservada, então escolher uma nota não mexe no resto. O bend (`BendEditor`, como o
+editor do Guitar Pro): o tipo (Bend, Bend e volta, Volta, Pré-bend, Pré e bend, Pré e volta; a Volta só numa ligada que
+traz um bend; o tipo escolhido de novo tira), as alturas de cada etapa em quartos de tom, de ¼ a 3 tons (o pré, até onde
+sobe, até onde volta), e o tempo num gráfico da nota: os pontos de arrastar na grade de 1/12, os atalhos Rápido (chega a
+¼ da nota, como o Guitar Pro 8 grava), Ao longo (como o Songsterr importa) e Atrasado, e por baixo o som medido pela
+Lente na batida da nota (pontos laranja; no Sunshine, c. 1, ele mostra que o "bend" de ½ escrito pelo F era o começo da
+passagem à nota seguinte). B muda a altura (½, 1, 1½, 2 e tira), ⇧B o tipo. O modelo é `BendForm` (TrackLabCore,
+Bend.swift): o formato do Guitar Pro 7 guarda origem, um patamar e destino (sete números, alturas ×25 por quarto de
+tom, instantes em % da nota; o tipo não é gravado, sai da forma), então cada tipo tem um movimento só e o patamar de
+antes do movimento se escreve como a origem atrasada; dois movimentos na mesma nota se escrevem em duas ligadas
+(Dividir, Ligada). A coluna manda os pontos (`edit("bend", {points})`, em todas as escolhidas); a página confere se cabem
+(`setBendPoints`: dois a quatro, em ordem, 0 a 12) e o `describe` devolve o bend da nota, a altura que a ligada traz
+(`carried`) e o tempo da batida dela (`ownTick`, `ownLength`). Medido em 31/10 nos bends das músicas: ¼ e ¾ de tom, a
+volta sozinha numa ligada e a subida ao longo da nota apareciam e a paleta de antes não escrevia (ela também mostrava um
+bend de ¼ como "1"); 19 formas conferidas pela ida e volta do Guitar Pro 7 e pelo MIDI da TAB sintetizada (erro até ⅓
+de quarto de tom, os degraus do MIDI). Fora do alcance: a volta ao chão e a subida de novo na mesma nota (o alphaTab
+classifica pela forma e a reduz a um pré-bend). Várias notas de uma
 vez: ⇧ clique (da nota de partida até ali, `edit.rangeOf`), ⌘ clique (põe ou tira uma) e ⇧← ⇧→ (`extend`); a página
 guarda `group` (os endereços) e a principal, contorna as outras (`#group-selection`) e manda à coluna quantas são, de
 onde a onde e o trecho em tiques. Articulação (liga em todas se a principal não tem, `toggleAll`), casa e meio tom

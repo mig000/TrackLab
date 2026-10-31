@@ -46,7 +46,7 @@ enum NotationIcon: Hashable {
     case slide(SlideShape)
     case tie
 
-    enum BendShape: Hashable { case bend, release, prebend, prebendRelease }
+    enum BendShape: Hashable { case bend, release, prebend, prebendRelease, prebendBend, releaseOnly }
     enum SlideShape: Hashable { case legato, shift, inBelow, inAbove, outUp, outDown }
 }
 
@@ -113,6 +113,22 @@ private struct BendPath: Shape {
             p.addLine(to: top)
             head(top, -1)
             p.move(to: top)
+            p.addQuadCurve(to: end, control: CGPoint(x: r.maxX - 1, y: r.minY + 1))
+            head(end, 1)
+        case .prebendBend:
+            // O pré-bend reto até o meio e, dali, a curva até o alto.
+            let middle = CGPoint(x: r.minX + 3, y: r.midY)
+            let top = CGPoint(x: r.maxX - 2, y: r.minY + 1)
+            p.move(to: CGPoint(x: r.minX + 3, y: r.maxY - 1))
+            p.addLine(to: middle)
+            head(middle, -1)
+            p.move(to: middle)
+            p.addQuadCurve(to: top, control: CGPoint(x: r.maxX - 2, y: r.midY))
+            head(top, -1)
+        case .releaseOnly:
+            // A volta de um bend que vem ligado: do alto, a curva que desce até a seta.
+            let end = CGPoint(x: r.maxX - 1, y: r.maxY - 1)
+            p.move(to: CGPoint(x: r.minX, y: r.minY + 1))
             p.addQuadCurve(to: end, control: CGPoint(x: r.maxX - 1, y: r.minY + 1))
             head(end, 1)
         }
