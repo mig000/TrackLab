@@ -1185,6 +1185,150 @@
     return true;
   }
 
+  // MARK: o trecho reconhecido no espectro
+
+  // O trecho que o app reconheceu no som (a seleção na Lente: um retângulo de tempo × altura): na voz `v` da pauta, as
+  // notas com altura de `low` a `high` (MIDI, meio semitom de folga) que começam de `from` a `to` (tiques) saem, a que
+  // vem de antes nessa faixa encurta até `from`, e entram as `notes` ([{tick, end, string (1 é a mais aguda), fret,
+  // vibrato, bend: [[0–60, quartos de tom]…], slide: "previous" | "below" | "above" | null}]). As outras notas do trecho
+  // ficam: o que soa junto vira acorde, e uma nota que atravessa o começo de outra é cortada ali em ligadas (com o bend
+  // repartido no tempo e o vibrato em cada parte). Uma nova com `continues` é a nota da faixa que já soava antes do
+  // trecho (a mesma altura): ela não é cortada e passa a acabar onde a nova acaba. Devolve true ou o motivo ("end",
+  // "grace", "figure", "empty").
+  function replaceRegion(at, staff, region, v = 0) {
+    const m = at.model;
+    const strings = staff.tuning.length;
+    const from = Math.round(region.from);
+    const to = Math.round(region.to);
+    const incoming = (Array.isArray(region.notes) ? region.notes : [])
+      .map((n) => ({ start: Math.round(n.tick), end: Math.round(n.end), string: strings - n.string + 1, data: n }))
+      .filter((n) => n.end - n.start >= MIN_TICKS && n.string >= 1 && n.string <= strings && n.data.fret >= 0)
+      .sort((a, b) => a.start - b.start);
+    if (!incoming.length && !(to > from)) return "empty";
+    const reach = Math.max(to, ...incoming.map((n) => n.end));
+    if (reach > songEnd(staff) + 0.5) return "end";
+    const inBand = (note) => note.realValue >= region.low - 0.5 && note.realValue <= region.high + 0.5;
+    const events = timeline(staff, v);
+    // Os intervalos da voz que o trecho toca são refeitos inteiros; os outros ficam como estão.
+    let lo = Math.min(from, ...incoming.map((n) => n.start));
+    let hi = reach;
+    const touched = events.filter((ev) => ev.start < hi && ev.end > lo);
+    for (const ev of touched) {
+      lo = Math.min(lo, ev.start);
+      hi = Math.max(hi, ev.end);
+    }
+    const kept = events.filter((ev) => !touched.includes(ev));
+    const first = barAt(staff, lo);
+    const last = barAt(staff, hi - 1);
+    if (hasGrace(at, staff, first, last, v)) return "grace";
+    // Cada corda de cada intervalo vira uma linha (do começo ao fim, com as partes ligadas e o bend no tempo dela).
+    const lines = [];
+    for (const ev of touched) {
+      const curves = curvesOf(ev);
+      const pieces = [ev.beat, ...ev.tail];
+      for (const head of ev.beat.notes) {
+        let end = ev.end;
+        if (inBand(head)) {
+          if (ev.start >= from && ev.start < to) continue;
+          if (ev.start < from) {
+            if (from - ev.start < MIN_TICKS) continue;
+            end = Math.min(end, from);
+          }
+        }
+        const parts = pieces.map((beat) => ({ start: beat.absolutePlaybackStart,
+          note: beat.notes.find((n) => n.string === head.string) })).filter((p) => p.note);
+        const curve = curves.get(head.string);
+        lines.push({
+          start: ev.start, end, string: head.string, cut: end < ev.end, tied: head.isTieDestination, pitch: head.realValue,
+          fraction: (t) => (t - ev.start) / (ev.end - ev.start),
+          bend: curve && curve.bent ? curve.points : [],
+          head: () => Object.assign(new m.Note(), plain(head)),
+          part: (t) => (parts.filter((p) => p.start <= t + 0.5).pop() || parts[0]).note,
+          last: parts[parts.length - 1].note,
+        });
+      }
+    }
+    for (const [index, n] of incoming.entries()) {
+      const next = incoming.slice(index + 1).find((o) => o.string === n.string && Math.abs(o.start - n.end) <= MIN_TICKS);
+      const data = n.data;
+      if (data.continues) {
+        const pitch = openPitch(staff, n.string) + data.fret;
+        const going = lines.find((l) => l.cut && l.start < from && l.pitch === pitch);
+        if (going) {
+          going.end = n.end;
+          going.cut = false;
+          continue;
+        }
+      }
+      lines.push({
+        start: n.start, end: n.end, string: n.string, cut: false, fresh: true,
+        fraction: (t) => (t - n.start) / (n.end - n.start),
+        bend: Array.isArray(data.bend) && data.bend.length >= 2 ? data.bend : [],
+        head: () => {
+          const note = new m.Note();
+          note.string = n.string;
+          note.fret = data.fret;
+          if (data.slide === "below") note.slideInType = m.SlideInType.IntoFromBelow;
+          if (data.slide === "above") note.slideInType = m.SlideInType.IntoFromAbove;
+          return note;
+        },
+        vibrato: data.vibrato === 2 ? m.VibratoType.Wide : data.vibrato ? m.VibratoType.Slight : m.VibratoType.None,
+        slidesOut: Boolean(next && next.data.slide === "previous"),
+      });
+    }
+    // Os pedaços de tempo entre todos os começos e fins (e as barras de compasso, para cada parte ligada levar o vibrato
+    // dela): cada um com as linhas que soam nele vira uma batida.
+    const bars = staff.bars.slice(first, last + 1).map((bar) => bar.masterBar.start);
+    const marks = [...new Set([lo, hi, ...bars, ...lines.flatMap((l) => [l.start, l.end])])]
+      .filter((t) => t >= lo && t <= hi).sort((a, b) => a - b);
+    const built = [];
+    for (let i = 0; i + 1 < marks.length; i++) {
+      const a = marks[i];
+      const b = marks[i + 1];
+      const sounding = lines.filter((l) => l.start <= a && l.end >= b);
+      if (!sounding.length) continue;
+      const beat = new m.Beat();
+      for (const line of sounding) {
+        const attack = a === line.start;
+        let note;
+        if (line.fresh) {
+          note = attack ? line.head() : Object.assign(new m.Note(), { string: line.string, fret: line.head().fret });
+          note.vibrato = line.vibrato;
+          if (b === line.end && line.slidesOut) note.slideOutType = m.SlideOutType.Legato;
+        } else {
+          note = attack ? line.head() : tieCopy(at, line.part(a), true);
+          // O que leva à nota seguinte (slide, ligado) só no último pedaço de uma linha inteira.
+          const tail = b === line.end && !line.cut ? line.last : null;
+          note.slideOutType = tail ? tail.slideOutType : m.SlideOutType.None;
+          note.isHammerPullOrigin = tail ? tail.isHammerPullOrigin : false;
+          if (!attack) note.vibrato = line.part(a).vibrato;
+        }
+        note.string = line.string;
+        note.isTieDestination = attack ? Boolean(line.tied) : true;
+        const part = bendPart(line.bend, line.fraction(a), line.fraction(b));
+        beat.addNote(note);
+        setBend(at, note, attack ? part : held(part), !attack);
+      }
+      built.push({ start: a, end: b, beat, tail: [] });
+    }
+    // Uma ligada sem a nota de antes na corda, logo antes e na mesma casa, passa a atacar (o finish a prenderia a uma nota
+    // de longe, atravessando a pausa).
+    const all = [...kept, ...built].sort((x, y) => x.start - y.start);
+    for (const ev of built) {
+      const previous = all.filter((o) => o.end === ev.start).pop();
+      const before = previous ? [previous.beat, ...previous.tail].pop() : null;
+      for (const note of ev.beat.notes) {
+        if (!note.isTieDestination) continue;
+        const origin = before && before.notes.find((n) => n.string === note.string);
+        if (!origin || origin.fret !== note.fret) note.isTieDestination = false;
+      }
+    }
+    for (let b = first; b <= last; b++) {
+      if (!rebuildBar(at, staff.bars[b], all, v)) return "figure";
+    }
+    return true;
+  }
+
   // MARK: compassos (em todas as pistas)
 
   // Notas da primeira batida de cada voz do compasso `index` (na cópia JSON) deixam de ser ligadas à anterior: o
@@ -1589,6 +1733,7 @@
     describe,
     exportGp,
     gpSafe,
+    replaceRegion,
     setBendPoints,
     findNote,
     fit,

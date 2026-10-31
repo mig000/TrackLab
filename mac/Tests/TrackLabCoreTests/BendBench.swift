@@ -58,6 +58,15 @@ import Testing
                     return name.hasPrefix("pitch") ? "altura" : String(name.prefix { $0 != "(" })
                 }
                 count("notas")
+                // O vibrato: os escritos que o som mostra e os que ele mostra sem estar escritos (largos, de 0,12
+                // semitom para cima, os que o corretor escreve sozinho).
+                if note.vibrato > 0 {
+                    count("vibrato escrito")
+                    if fit.vibrato { count("vibrato escrito: o som vibra") }
+                } else if fit.vibrato {
+                    count("vibrato não escrito: o som vibra")
+                    if fit.depth >= SoundNote.writtenVibrato { count("vibrato não escrito: o som vibra largo") }
+                }
                 if wrote != nil {
                     count("escrito com bend")
                     if heard?.kind == wrote?.kind { count("escrito: o som tem o mesmo tipo") }

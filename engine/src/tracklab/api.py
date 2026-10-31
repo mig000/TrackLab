@@ -348,6 +348,32 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             curves[key] = pitch_media.note_curve(x, start, end, height, others=others)
         return {"curves": curves}
 
+    @app.post("/api/songs/{song_id}/transcribe")
+    def song_transcribe(song_id: str, body: dict = Body(...)) -> dict:
+        """As notas de um trecho do som (a seleção no espectro): de `from` a `to` (s, até 20 s) com altura de `low` a
+        `high` (MIDI), na faixa `stem` da separação ativa (como em `pitch`): `{notes: [{start, end, level, slide, curve}]}`."""
+        from .media import pitch as pitch_media
+        from .media import transcribe
+
+        found = song(song_id)
+        manifest = found.manifest
+        files = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {})
+        stem = body.get("stem")
+        if stem is not None and stem not in files:
+            raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
+        relative = files.get(stem or "guitar") or (manifest.get("audio") or {}).get("file")
+        if not relative:
+            raise HTTPException(404, "Esta música não tem áudio.")
+        try:
+            start, end = float(body["from"]), float(body["to"])
+            low, high = float(body["low"]), float(body["high"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "Envie from, to, low e high.") from None
+        if not (0 <= start < end <= start + 20) or not (20 <= low < high <= 110):
+            raise HTTPException(400, "O trecho vai até 20 s, e as alturas de 20 a 110.")
+        x = pitch_media.samples(found.file(relative))
+        return {"notes": transcribe.notes(x, start, end, low, high)}
+
     @app.get("/api/songs/{song_id}/peaks")
     def song_peaks(song_id: str, stem: str | None = None, stems_key: str | None = None) -> dict:
         """A onda da Fita: do áudio original, ou de uma faixa da separação ativa (ou da `stems_key`); guardada em

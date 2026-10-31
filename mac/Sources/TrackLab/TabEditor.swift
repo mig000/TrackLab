@@ -617,6 +617,12 @@ struct TabEditKeys: NSViewRepresentable {
             }
             if flags.contains(.command) || flags.contains(.control) { return false }
             // Tab: a suspeita seguinte; com o espectro à vista vale também fora da edição (ela liga a edição).
+            // Esc cancela a seleção no espectro (a marcar, ou os cartões dela) antes de qualquer outra coisa.
+            if event.keyCode == 53, model.selectingRegion || model.regionReading != nil {
+                model.selectingRegion = false
+                model.dismissRegion()
+                return true
+            }
             if event.keyCode == 48, model.editingTab || model.lensVisible {
                 model.nextSuspect(flags.contains(.shift) ? -1 : 1)
                 return true

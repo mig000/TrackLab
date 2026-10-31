@@ -61,6 +61,11 @@ def test_import_then_read_everything_back(client):
         body = {"notes": [note]} | ({"stem": stem} if stem else {})
         assert set(client.post(f"/api/songs/{song_id}/pitch", json=body).json()["curves"]) == {"n"}
     assert client.post(f"/api/songs/{song_id}/pitch", json={"notes": [note], "stem": "nada"}).status_code == 404
+    # As notas de um trecho (a seleção no espectro): a resposta é uma lista; um trecho longo demais é recusado.
+    region = {"from": 0.5, "to": 2.0, "low": 40, "high": 60}
+    assert isinstance(client.post(f"/api/songs/{song_id}/transcribe", json=region).json()["notes"], list)
+    assert client.post(f"/api/songs/{song_id}/transcribe", json=region | {"to": 30}).status_code == 400
+    assert client.post(f"/api/songs/{song_id}/transcribe", json=region | {"stem": "nada"}).status_code == 404
     for bad in ("manifest.json", "../../x", "score/nada.gp"):
         assert client.get(f"/api/songs/{song_id}/files/{bad}").status_code in (400, 404)
     events = client.get(f"/api/jobs/{job['id']}/events").text

@@ -863,6 +863,12 @@ test("as notas para a Lente dizem como chegam e saem: ligado, slide da anterior,
   assert.equal(links(slid) & 2, 2);
   assert.equal(links(slid.slideTarget) & 1, 1);
   assert.equal(links(slideIn) & 1, 1);
+  // A direção dos slides de fora, para a Lente desenhar: de baixo 16, de cima 32; para cima 4, para baixo 8.
+  assert.equal(links(slideIn) & 48, slideIn.slideInType === alphaTab.model.SlideInType.IntoFromBelow ? 16 : 32);
+  const outside = all.find((n) => n.slideOutType === alphaTab.model.SlideOutType.OutUp
+    || n.slideOutType === alphaTab.model.SlideOutType.OutDown);
+  if (outside) assert.equal(links(outside) & 12, outside.slideOutType === alphaTab.model.SlideOutType.OutUp ? 4 : 8);
+  assert.equal(links(slid) & 12, 0);
   const plain = all.filter((n) => !n.isTieDestination && !n.isHammerPullDestination && !n.slideOrigin && !n.slideInType
     && !n.slideOutType);
   assert.ok(plain.length > 30 && plain.every((n) => links(n) === 0));
@@ -924,6 +930,49 @@ test("o encaixe numa nota ligada põe o vibrato nas partes em que o som vibra", 
   assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: [[0, 0], [30, 4]], vibrato: true, vibratoFrom: 0 }));
   score = edit.refinish(alphaTab, score);
   assert.ok(!at(score, 960).vibrato && at(score, 1920).vibrato);
+});
+
+test("o trecho reconhecido no espectro troca as notas da faixa de alturas e junta o resto em acordes ligados", () => {
+  const core = require("../score-core.js");
+  let score = load();
+  const staff = score.tracks[0].staves[0];
+  const lens = (sc) => core.trackNotes(sc)[0].map((n) => n.slice(0, 8).concat(n.length > 8 ? [n.slice(8)] : []));
+  // Compasso 1 (as semínimas de Dó 4 na corda 3, casa 5): Si (casa 4) e slide até o Ré (casa 7), depois o Dó com bend
+  // e vibrato.
+  assert.equal(edit.replaceRegion(alphaTab, staff, { from: 0, to: 3840, low: 58, high: 62, notes: [
+    { tick: 0, end: 480, string: 3, fret: 4 },
+    { tick: 480, end: 1920, string: 3, fret: 7, slide: "previous" },
+    { tick: 1920, end: 3840, string: 3, fret: 5, vibrato: 1, bend: [[0, 0], [15, 4]] },
+  ] }), true);
+  score = edit.refinish(alphaTab, score);
+  const first = lens(score).filter((n) => n[0] < 3840);
+  assert.deepEqual(first.map((n) => n.slice(0, 6)), [[0, 480, 59, 3, 4, 0], [480, 1440, 62, 3, 7, 0], [1920, 1920, 60, 3, 5, 1]]);
+  assert.equal(first[0][7] & 2, 2, "o Si sai por slide");
+  assert.equal(first[1][7] & 1, 1, "o Ré chega por slide");
+  assert.deepEqual(first[2][8], [0, 0, 15, 4]);
+  assert.deepEqual(lens(score).filter((n) => n[0] >= 3840 && n[0] < 7680).map((n) => n[0]), [3840, 4800, 5760, 6720]);
+  // Compasso 2: um Lá 4 (corda 2, casa 10) de 4560 a 6720 por cima das semínimas de Dó, que ficam: o que soa junto vira
+  // acorde e cada nota que atravessa o começo da outra continua ligada.
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 4560, to: 7680, low: 68, high: 70,
+    notes: [{ tick: 4560, end: 6720, string: 2, fret: 10 }] }), true);
+  score = edit.refinish(alphaTab, score);
+  const second = lens(score).filter((n) => n[0] >= 3840 && n[0] < 7680).map((n) => n.slice(0, 5));
+  assert.deepEqual(second, [[3840, 960, 60, 3, 5], [4560, 2160, 69, 2, 10], [4800, 960, 60, 3, 5], [5760, 960, 60, 3, 5],
+    [6720, 960, 60, 3, 5]]);
+  // Pelo Guitar Pro 7 e de volta, o mesmo.
+  assert.deepEqual(lens(reread(score)), lens(score));
+  // A faixa de alturas manda: trocar o Dó do compasso 3 por nada deixa pausa só onde ele estava.
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 7680, to: 8640, low: 59, high: 61, notes: [] }),
+    true);
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(lens(score).filter((n) => n[0] >= 7680 && n[0] < 11520).map((n) => n[0]), [8640, 9600, 10560]);
+  // A nota da faixa que já soava antes do trecho continua (`continues`): o Dó de 11520 vai até 12960, sem ser cortado na
+  // borda do retângulo, e o de 12480, que começava dentro dele, sai.
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 12000, to: 13440, low: 59, high: 61,
+    notes: [{ tick: 12000, end: 12960, string: 3, fret: 5, continues: true }] }), true);
+  score = edit.refinish(alphaTab, score);
+  assert.deepEqual(lens(score).filter((n) => n[0] >= 11520).map((n) => n.slice(0, 2)),
+    [[11520, 1440], [13440, 960], [14400, 960]]);
 });
 
 console.log(`${passed} verificações passaram`);

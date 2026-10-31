@@ -65,6 +65,11 @@ struct SongView: View {
             if !model.adjusting { model.adjusting = true }
             model.syncAllToSound()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .selectRegion)) { _ in
+            if !model.lensVisible { model.lensVisible = true }
+            model.selectingRegion = true
+            model.tabMessage = "Arraste na Lente em volta das notas a reconhecer (Esc cancela)."
+        }
         .onReceive(NotificationCenter.default.publisher(for: .correctBySound)) { _ in
             if !model.editingTab { model.editingTab = true }
             model.correctBySound()

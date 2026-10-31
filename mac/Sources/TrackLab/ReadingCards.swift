@@ -21,7 +21,19 @@ struct ReadingCards: View {
                 .help("⇧F: escreve o que o som faz onde ele discorda da TAB com segurança (a altura, o bend, o vibrato), "
                       + "na pista inteira ou só no loop; ⌘Z desfaz")
             }
-            if let positions = model.selectedPositions() {
+            if let region = model.regionReading {
+                // A seleção no espectro: como está e o reconhecido; um clique no reconhecido troca, no outro deixa.
+                LazyVGrid(columns: Self.columns, spacing: 6) {
+                    RegionTile(region: region, found: false)
+                        .onTapGesture { model.dismissRegion() }
+                        .help("As notas do trecho como estão (um clique deixa assim)")
+                    RegionTile(region: region, found: true)
+                        .onTapGesture { model.applyRegion() }
+                        .help("As notas que o som tem no trecho: um clique troca as que estavam (⌘Z desfaz)")
+                }
+            } else if model.recognizing {
+                Text("Ouvindo o trecho…").font(.caption).foregroundStyle(.secondary).lineLimit(2, reservesSpace: true)
+            } else if let positions = model.selectedPositions() {
                 LazyVGrid(columns: Self.columns, spacing: 6) {
                     ForEach(positions) { card in
                         PositionTile(card: card)
@@ -54,7 +66,9 @@ struct ReadingCards: View {
     }
 
     private var placeholder: String {
-        guard model.tabSelection != nil else { return "Escolha uma nota para ver as leituras do som." }
+        guard model.tabSelection != nil else {
+            return "Escolha uma nota para ver as leituras do som, ou ⌥ + arraste na Lente para reconhecer um trecho."
+        }
         return model.lensVisible ? "Sem medida do som nesta nota (acorde, ou a curva ainda não chegou)."
             : "As leituras vêm da Lente: mostre-a (⌥⌘2) para medir o som."
     }
@@ -259,5 +273,69 @@ struct PositionTile: View {
             dots.addEllipse(in: CGRect(x: x - 3, y: y(dot.string) - 3, width: 6, height: 6))
         }
         context.fill(dots, with: .color(ReadingTile.teal))
+    }
+}
+
+/// Um cartão da seleção no espectro: as notas do trecho como faixas (o tempo na horizontal, a altura na vertical) sobre
+/// os pontos do som, com a casa de cada uma; "Como está" (as que estavam) ou "Reconhecido" (as achadas).
+struct RegionTile: View {
+    let region: SongModel.RegionReading
+    let found: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Canvas { context, size in draw(context, size) }
+                .frame(height: 54)
+            Text(found ? "Reconhecido · \(region.found.count)" : "Como está · \(region.current.count)")
+                .font(.caption2.weight(found ? .semibold : .regular)).lineLimit(1)
+        }
+        .padding(6)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 7)
+            .strokeBorder(found ? ReadingTile.teal : Color.accentColor, lineWidth: found ? 1.5 : 2))
+        .contentShape(Rectangle())
+    }
+
+    private func draw(_ context: GraphicsContext, _ size: CGSize) {
+        let notes = found ? region.shapes : region.current
+        let pitches = notes.map { Double($0.pitch) } + region.sound.map(\.pitch)
+        let low = (pitches.min() ?? region.pitches.lowerBound) - 0.8
+        let high = (pitches.max() ?? region.pitches.upperBound) + 0.8
+        let span = max(0.05, region.seconds.upperBound - region.seconds.lowerBound)
+        func x(_ seconds: Double) -> Double { (seconds - region.seconds.lowerBound) / span * size.width }
+        func y(_ pitch: Double) -> Double { size.height - 2 - (pitch - low) / max(0.5, high - low) * (size.height - 12) }
+        var dots = Path()
+        for point in region.sound {
+            dots.addEllipse(in: CGRect(x: x(point.seconds) - 0.8, y: y(point.pitch) - 0.8, width: 1.6, height: 1.6))
+        }
+        context.fill(dots, with: .color(ReadingTile.orange.opacity(0.8)))
+        let color = found ? ReadingTile.teal : ReadingTile.amber
+        let thick = max(3, min(6, (size.height - 12) / max(1, high - low) * 0.7))
+        var bands = Path()
+        for note in notes {
+            // As notas aqui ficam no tempo do mapa (o mesmo da Lente).
+            let s0 = region.seconds.lowerBound + (note.tick - region.ticks.lowerBound)
+                / max(1, region.ticks.upperBound - region.ticks.lowerBound) * span
+            let s1 = s0 + note.duration / max(1, region.ticks.upperBound - region.ticks.lowerBound) * span
+            let x0 = x(s0)
+            let x1 = max(x(s1), x0 + 2)
+            let steps = max(2, Int(((x1 - x0) / 2).rounded(.up)))
+            let centers = (0...steps).map { i -> CGPoint in
+                let f = Double(i) / Double(steps)
+                let offset = note.shape(fraction: f, elapsed: f * (s1 - s0))
+                    + note.slideOffset(elapsed: f * (s1 - s0), length: s1 - s0)
+                return CGPoint(x: x0 + (x1 - x0) * f, y: y(Double(note.pitch) + offset))
+            }
+            var band = Path()
+            band.move(to: CGPoint(x: centers[0].x, y: centers[0].y - thick / 2))
+            for point in centers.dropFirst() { band.addLine(to: CGPoint(x: point.x, y: point.y - thick / 2)) }
+            for point in centers.reversed() { band.addLine(to: CGPoint(x: point.x, y: point.y + thick / 2)) }
+            band.closeSubpath()
+            bands.addPath(band)
+            context.draw(Text("\(note.fret)").font(.system(size: 8, weight: .semibold).monospacedDigit()),
+                         at: CGPoint(x: x0, y: Double(centers[0].y) - thick / 2 - 1), anchor: .bottomLeading)
+        }
+        context.fill(bands, with: .color(color.opacity(0.35)))
+        context.stroke(bands, with: .color(color), lineWidth: 1)
     }
 }

@@ -124,7 +124,10 @@ public struct SoundNote: Sendable {
             // espectro. Sem vibrato medido, a onda escrita.
             let k = Int(((t - curve.from) / curve.hop).rounded())
             if let fit, fit.vibrato {
-                if curve.values.indices.contains(k), let value = curve.values[k], let trend = level[k] {
+                // Só dentro do trecho medido: a entrada e a saída por slide ficam de fora dele, e a curva crua ali é o
+                // próprio slide, que a faixa já desenha pela escrita.
+                if fit.window?.contains(t) ?? true, curve.values.indices.contains(k), let value = curve.values[k],
+                   let trend = level[k] {
                     offset += note.bend.isEmpty ? value - fit.low : value - trend
                 }
             } else {
@@ -329,6 +332,11 @@ public struct SoundNote: Sendable {
         var swingFrom: Double?
         var vibratoFrom: Double?
         var sizes: [Double] = []
+        // As meias voltas estreitas (de pico a vale de 0,1 semitom para cima), seguidas: o vibrato sutil e regular de uma
+        // nota longa (no Sultans of Swing, c. 106, o Fá da casa 13 vibra ±7 cents a 8 Hz por mais de um segundo, e o
+        // vibrato largo não o via).
+        var narrow: [(at: Double, from: Double, size: Double)] = []
+        var run: [(at: Double, from: Double, size: Double)] = []
         for i in values.indices {
             guard let value = values[i], let trend = level[i] else { continue }
             let rest = value - trend
@@ -343,6 +351,12 @@ public struct SoundNote: Sendable {
                     }
                     lastSwing = times[i]
                 }
+                if sign != 0, let from = swingFrom, top >= 0.03, top + lastTop >= 0.1 {
+                    run.append((times[i], from, (top + lastTop) / 2))
+                    if run.count > narrow.count { narrow = run }
+                } else {
+                    run = []
+                }
                 lastTop = sign != 0 ? top : 0
                 sign = s
                 top = 0
@@ -353,8 +367,24 @@ public struct SoundNote: Sendable {
         let cycles = Double(swings) / 2
         let span = firstSwing.flatMap { first in lastSwing.map { $0 - first } } ?? 0
         let frequency = span > 0 ? Double(swings - 1) / 2 / span : 0
-        let vibrato = trill == nil && cycles >= 1.5 && frequency >= 3.5 && frequency <= 9 && percentile(sizes, 0.5) >= 0.1
-        let depth = sizes.isEmpty ? 0 : percentile(sizes, 0.5)
+        var vibrato = trill == nil && cycles >= 1.5 && frequency >= 3.5 && frequency <= 9 && percentile(sizes, 0.5) >= 0.1
+        var depth = sizes.isEmpty ? 0 : percentile(sizes, 0.5)
+        // O estreito vale com quatro voltas seguidas ou mais, num ritmo de 4 a 9 por segundo e regular (cada meia volta
+        // a até 35 % da duração média), cobrindo metade do trecho medido.
+        if !vibrato, trill == nil, narrow.count >= 12, let first = narrow.first, let last = narrow.last, let measured {
+            let halves = zip(narrow, narrow.dropFirst()).map { $1.at - $0.at }
+            let mean = halves.reduce(0, +) / Double(halves.count)
+            let spread = halves.map { abs($0 - mean) }.max() ?? 0
+            let rate = 1 / (2 * mean)
+            if rate >= 4, rate <= 9, spread <= 0.35 * mean,
+               last.at - first.from >= 0.5 * (measured.upperBound - measured.lowerBound) {
+                vibrato = true
+                depth = percentile(narrow.map(\.size), 0.5)
+                firstSwing = first.at
+                lastSwing = last.at
+                vibratoFrom = first.from
+            }
+        }
         // A casa: a escrita, quando o som passa perto dela em algum momento da nota (antes o grave do começo virava a
         // casa: um bend rápido, ou o fim dobrado da nota anterior ainda nos primeiros quadros, a punha um ou dois
         // semitons acima, e a nota virava "outra altura"), ou, numa nota com bend escrito, quando o som fica entre a casa

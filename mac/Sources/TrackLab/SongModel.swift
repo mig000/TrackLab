@@ -198,6 +198,12 @@ final class SongModel {
     /// As notas que o corretor mudou (`correctionKey`: pista, tique e corda) e como estavam e ficaram, para a marca na
     /// Lente, o "Original" entre as leituras e a contagem (Corretor.swift).
     var corrections: [String: (before: NoteReading, after: NoteReading)] = [:]
+    /// A seleção no espectro (⌥ + arrastar na Lente): o trecho que o motor reconheceu de novo, com as notas que estavam
+    /// e as que ele achou, para escolher nos cartões; `recognizing` enquanto o motor ouve.
+    var regionReading: RegionReading?
+    var recognizing = false
+    /// O próximo arrasto na Lente marca o trecho a reconhecer (Editar › Reconhecer um trecho no espectro, ⌥⌘R).
+    var selectingRegion = false
     /// Corrigir assim que as curvas da pista chegarem (a Lente estava fechada ou ainda medindo).
     @ObservationIgnored var correctWhenMeasured = false
     /// Sincronizar o mapa pelo som assim que as curvas chegarem.

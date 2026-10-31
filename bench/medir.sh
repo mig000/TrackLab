@@ -25,7 +25,9 @@ python3 - "$out" <<'PY'
 import os, re, sys
 keys = [("escrito com bend", "bends"), ("escrito: o som tem o mesmo tipo", "tipo"), ("escrito: mesmo tipo e alturas", "tipo+alt"),
         ("escrito: o som não dobra", "não dobra"), ("não escrito: o som dobra ½ tom ou mais, confirmado", "não escr≥½"),
-        ("suspeita: altura", "altura"), ("suspeita: bend", "bend"), ("suspeitas (notas)", "suspeitas")]
+        ("suspeita: altura", "altura"), ("suspeita: bend", "bend"), ("suspeitas (notas)", "suspeitas"),
+        ("vibrato escrito", "vib escr"), ("vibrato escrito: o som vibra", "vib ouvido"),
+        ("vibrato não escrito: o som vibra", "vib a mais")]
 corrector = [("corrigidas", "corrig"), ("Miguel mudou: o corretor fez igual", "=Miguel")]
 def table(path):
     head = open(path, encoding="utf-8").read().split("\n\n")[0]

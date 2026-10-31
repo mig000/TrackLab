@@ -178,9 +178,15 @@ public struct ScoreNote: Hashable, Sendable {
     public let approached: Bool
     /// A nota sai por slide (para a seguinte ou para fora).
     public let slidesOut: Bool
+    /// O slide escrito, em semitons, para a Lente desenhar: de onde a nota entra (−3 vindo de baixo, +3 de cima, 0 sem
+    /// slide de fora) e até onde ela sai no fim (a altura da seguinte na corda num slide para ela, ±3 num slide para
+    /// fora, 0 sem).
+    public let slideIn: Double
+    public let slideOut: Double
 
     public init(tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int = 0,
-                bend: [BendPoint] = [], trill: Int? = nil, approached: Bool = false, slidesOut: Bool = false) {
+                bend: [BendPoint] = [], trill: Int? = nil, approached: Bool = false, slidesOut: Bool = false,
+                slideIn: Double = 0, slideOut: Double = 0) {
         self.tick = tick
         self.duration = duration
         self.pitch = pitch
@@ -191,21 +197,41 @@ public struct ScoreNote: Hashable, Sendable {
         self.trill = trill
         self.approached = approached
         self.slidesOut = slidesOut
+        self.slideIn = slideIn
+        self.slideOut = slideOut
     }
 
+    /// Os semitons de um slide de fora (de baixo, de cima, para cima, para baixo), como a TAB sintetizada toca (o
+    /// `simpleSlidePitchOffset` do alphaTab: 6 quartos de tom).
+    public static let outsideSlide = 3.0
+
     /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, trinado?, ligações?, deslocamento, valor, …],
-    /// …] (o trinado é a altura da outra nota, 0 sem; as ligações, 1 quando a nota chega de outra casa e 2 quando sai por
-    /// slide, somados); o que não tiver os cinco primeiros números fica de fora.
+    /// …] (o trinado é a altura da outra nota, 0 sem; as ligações, somadas: 1 quando a nota chega de outra casa, 2 quando
+    /// sai por slide, 4 e 8 quando esse slide é para fora, para cima ou para baixo, 16 e 32 quando ela entra por um slide
+    /// de baixo ou de cima); o que não tiver os cinco primeiros números fica de fora. O slide para a nota seguinte vai até
+    /// a altura dela (a primeira da mesma corda que começa onde esta acaba).
     public static func list(_ raw: [[Double]]) -> [ScoreNote] {
-        raw.compactMap { item in
+        let notes = raw.compactMap { item -> ScoreNote? in
             guard item.count >= 5, item.allSatisfy(\.isFinite), item[1] > 0 else { return nil }
             let pairs = item.count > 8 ? Array(item[8...]) : []
             let bend = stride(from: 0, to: pairs.count - 1, by: 2).map { BendPoint(offset: pairs[$0], value: pairs[$0 + 1]) }
             let trill = item.count > 6 && item[6] > 0 ? Int(item[6]) : nil
             let links = item.count > 7 ? Int(item[7]) : 0
+            let slideIn = links & 16 != 0 ? -outsideSlide : links & 32 != 0 ? outsideSlide : 0
+            let slideOut = links & 4 != 0 ? outsideSlide : links & 8 != 0 ? -outsideSlide : 0
             return ScoreNote(tick: item[0], duration: item[1], pitch: Int(item[2]), string: Int(item[3]),
                              fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend, trill: trill,
-                             approached: links & 1 != 0, slidesOut: links & 2 != 0)
+                             approached: links & 1 != 0, slidesOut: links & 2 != 0, slideIn: slideIn, slideOut: slideOut)
+        }
+        return notes.enumerated().map { index, note in
+            guard note.slidesOut, note.slideOut == 0 else { return note }
+            let end = note.tick + note.duration
+            guard let next = notes[(index + 1)...].first(where: { $0.string == note.string && $0.tick >= end - 1 }),
+                  next.tick - end <= 1, next.pitch != note.pitch else { return note }
+            return ScoreNote(tick: note.tick, duration: note.duration, pitch: note.pitch, string: note.string,
+                             fret: note.fret, vibrato: note.vibrato, bend: note.bend, trill: note.trill,
+                             approached: note.approached, slidesOut: true, slideIn: note.slideIn,
+                             slideOut: Double(next.pitch - note.pitch))
         }
     }
 
@@ -227,6 +253,24 @@ public struct ScoreNote: Hashable, Sendable {
             return (a.value + (b.value - a.value) * eased) / 2
         }
         return (bend.last?.value ?? 0) / 2
+    }
+
+    /// O slide escrito num instante (`elapsed` segundos desde o começo de uma nota de `length` segundos), em semitons: a
+    /// entrada vem de `slideIn` até a casa no primeiro quarto da nota e a saída vai da casa até `slideOut` nos últimos
+    /// 40 %, em linha reta; numa nota longa, em até 0,1 s na entrada e 0,15 s na saída, como o som desliza (a TAB
+    /// sintetizada leva um quarto da nota num slide de fora e a metade num para a seguinte).
+    public func slideOffset(elapsed: Double, length: Double) -> Double {
+        var offset = 0.0
+        if slideIn != 0 {
+            let reach = Swift.min(0.1, 0.25 * length)
+            if reach > 0, elapsed < reach { offset += slideIn * (1 - Swift.max(0, elapsed) / reach) }
+        }
+        if slideOut != 0 {
+            let reach = Swift.min(0.15, 0.4 * length)
+            let from = length - reach
+            if reach > 0, elapsed > from { offset += slideOut * Swift.min(1, (elapsed - from) / reach) }
+        }
+        return offset
     }
 
     /// O vibrato escrito: uma onda de 5,5 Hz que só sobe (0,22 semitom; o largo, o dobro).

@@ -1355,6 +1355,10 @@
       pasteAt(value);
       return;
     }
+    if (op === "replaceRegion") {
+      replaceRegionWith(value);
+      return;
+    }
     if (op === "fitMany") {
       // O corretor (Corrigir pelo som) e as leituras de um trecho: várias notas pela pista, tique e corda, cada uma com
       // o que o F escreveria nela (`edit.fit`), num passo só do Desfazer. As que não acham ou não cabem (fora do braço)
@@ -1659,6 +1663,33 @@
     drawSelection();
     postSelection();
     post({ type: "notice", text: `Colado: ${clip.events.length} ${clip.events.length === 1 ? "batida" : "batidas"} · ⌘Z desfaz` });
+  }
+
+  // O trecho reconhecido no espectro (o app manda a pista, o tempo e as alturas do retângulo e as notas que achou): as
+  // notas da faixa de alturas no trecho dão lugar às novas, num passo do Desfazer, e as novas ficam escolhidas.
+  function replaceRegionWith(value) {
+    const staff = value && state.score.tracks[value.track] && state.score.tracks[value.track].staves
+      .find((s) => s.tuning && s.tuning.length);
+    if (!staff) {
+      post({ type: "notice", text: "Não achei a pista do trecho." });
+      return;
+    }
+    let reason = null;
+    change(() => {
+      const result = edit.replaceRegion(alphaTab, staff, value, 0);
+      if (result !== true) reason = result;
+      return result === true;
+    });
+    if (reason) {
+      post({ type: "notice", text: reason === "empty" ? "Nada a trocar no trecho." : RETIME_REASONS[reason]
+        || "Não deu para trocar o trecho." });
+      return;
+    }
+    const notes = Array.isArray(value.notes) ? value.notes : [];
+    chooseWheres(notes.map((n) => ({ track: value.track, tick: Math.round(n.tick), string: n.string, voice: 0 })));
+    drawSelection();
+    postSelection();
+    post({ type: "notice", text: `Trecho reconhecido: ${notes.length} ${notes.length === 1 ? "nota" : "notas"} · ⌘Z desfaz` });
   }
 
   // Com o cursor de inserção: a casa digitada põe a nota (e a escolhe); ↑↓ andam de corda e ←→ de batida (numa corda

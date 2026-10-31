@@ -55,6 +55,11 @@ struct TrackLabApp: App {
                 Button("Corrigir a TAB pelo som") { NotificationCenter.default.post(name: .correctBySound, object: nil) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
                 Button("Sincronizar o mapa pelo som") { NotificationCenter.default.post(name: .syncBySound, object: nil) }
+                // O próximo arrasto na Lente marca o trecho a reconhecer (o mesmo que ⌥ + arrastar).
+                Button("Reconhecer um trecho no espectro") {
+                    NotificationCenter.default.post(name: .selectRegion, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
             }
         }
         Settings { SettingsView() }
@@ -73,6 +78,7 @@ extension Notification.Name {
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
     static let correctBySound = Notification.Name("TrackLab.correctBySound")
     static let syncBySound = Notification.Name("TrackLab.syncBySound")
+    static let selectRegion = Notification.Name("TrackLab.selectRegion")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

@@ -404,6 +404,15 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(!bent.approached && !bent.slidesOut && bent.bend.count == 3)
     let linked = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 3]]).first)
     #expect(linked.approached && linked.slidesOut && linked.bend.isEmpty)
+    // O slide escrito na faixa: para a seguinte da corda, até a altura dela, no fim; de fora, 3 semitons.
+    let slid = ScoreNote.list([[0, 480, 67, 3, 12, 0, 0, 2], [0, 960, 76, 1, 12], [480, 480, 69, 3, 14, 0, 0, 1],
+                               [960, 960, 64, 2, 5, 0, 0, 23]]) // 23 = de baixo (16) + para cima (4) + sai (2) + chega (1)
+    #expect(slid[0].slideOut == 2 && slid[0].slideIn == 0 && slid[1].slideOut == 0 && slid[2].slideOut == 0)
+    #expect(slid[0].slideOffset(elapsed: 0, length: 0.5) == 0 && slid[0].slideOffset(elapsed: 0.5, length: 0.5) == 2)
+    #expect(slid[0].slideOffset(elapsed: 0.35, length: 0.5) == 0 && abs(slid[0].slideOffset(elapsed: 0.425, length: 0.5) - 1) < 1e-9)
+    #expect(slid[3].slideIn == -3 && slid[3].slideOut == 3)
+    #expect(slid[3].slideOffset(elapsed: 0, length: 1) == -3 && slid[3].slideOffset(elapsed: 0.5, length: 1) == 0)
+    #expect(slid[3].slideOffset(elapsed: 1, length: 1) == 3)
     #expect(bent.shape(fraction: 0, elapsed: 0) == 0 && bent.shape(fraction: 1, elapsed: 1) == 2)
     #expect(abs(bent.shape(fraction: 0.25, elapsed: 0) - 1) < 1e-9)
     let wavy = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 1]]).first)
@@ -879,6 +888,18 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(!SoundNote.doubleStopVibrato([jumping, subtle]))
     #expect(!SoundNote.doubleStopVibrato([subtle, subtle]))
     #expect(!SoundNote.doubleStopVibrato([wide, vibrating, subtle]))
+    // O vibrato estreito e regular de uma nota longa (o Fá do c. 106 do Sultans: ±7 cents a 8 Hz): vale, sem o corretor
+    // o escrever sozinho; o ruído do rastreador do mesmo tamanho, sem ritmo, não.
+    let sutil = sound { 60 + 0.07 * sin(2 * .pi * 8 * ($0 - 1)) }
+    #expect(sutil.fit?.vibrato == true && abs((sutil.fit?.depth ?? 0) - 0.07) < 0.02)
+    #expect(sutil.correction(for: plain, start: 1, end: 2) == nil)
+    var seed: UInt64 = 7
+    let noise = (0...125).map { _ -> Double in
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        return Double(seed >> 33) / Double(1 << 31) * 0.14 - 0.07
+    }
+    let jitter = sound { noise[Int((($0 - 1) / 0.008).rounded())] + 60 }
+    #expect(jitter.fit?.vibrato == false)
 }
 
 @Test func sincronizarPeloSom() throws {
@@ -947,4 +968,42 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     let rising = sound { $0 < 1.2 ? 60 : min(62, 60 + ($0 - 1.2) * 15) }
     #expect(rising.disagreements(with: note([[0, 0], [15, 4], [45, 4], [60, 0]])) == [.noRelease])
     #expect(rising.disagreements(with: note([[0, 0], [15, 4]])).isEmpty)
+}
+
+@Test func reconhecerUmTrecho() throws {
+    // 120 por minuto (960 tiques a cada 0,5 s), a grade de semicolcheias; a gravação 0,2 semitom acima.
+    let grid = TempoGrid(points: (0...16).map { TempoPoint(tick: Double($0) * 960, seconds: Double($0) * 0.5, kind: "detected") })
+    func heard(_ start: Double, _ end: Double, _ pitch: Double, slide: String? = nil,
+               shape: (Double) -> Double = { _ in 0 }) -> HeardNote {
+        let count = Int(((end - start) / 0.008).rounded())
+        return HeardNote(start: start, end: end, level: pitch + 0.2, slide: slide,
+                         curve: PitchCurve(from: start, hop: 0.008, values: (0..<count).map { k in
+                             pitch + 0.2 + shape(Double(k) * 0.008) }))
+    }
+    // A afinação da guitarra pelas cordas (1 é a Mi aguda).
+    let open = [1: 64, 2: 59, 3: 55, 4: 50, 5: 45, 6: 40]
+    // Um Fá♯ 4 curto, um slide até o Lá 4 segurado com vibrato; antes do trecho a mão estava na casa 12 da corda 3.
+    let notes = Recognition.notes([
+        heard(1.0, 1.12, 66),
+        heard(1.12, 2.0, 69, slide: "previous") { 0.25 * sin(2 * .pi * 6 * $0) },
+    ], tuning: 0.2, grid: grid, step: 240, open: open, from: (3, 12))
+    #expect(notes.map(\.pitch) == [66, 69])
+    #expect(notes.map(\.tick) == [1920, 2160] && notes[0].end == 2160 && notes[1].end == 3840)
+    // Na corda 3 (Sol), perto da casa 12, e o slide fica na mesma corda.
+    #expect(notes.map(\.string) == [3, 3] && notes.map(\.fret) == [11, 14])
+    #expect(notes[1].slide == "previous" && notes[1].vibrato && !notes[0].vibrato)
+    // A origem do slide com a subida dentro dela (o motor corta na chegada): sem bend.
+    let rising = Recognition.notes([
+        heard(1.0, 1.12, 66) { t in t < 0.04 ? 0 : min(2.5, (t - 0.04) * 30) },
+        heard(1.12, 2.0, 69, slide: "previous"),
+    ], tuning: 0.2, grid: grid, step: 240, open: open, from: (3, 12))
+    #expect(rising.first?.pitch == 66 && rising.first?.bend.isEmpty == true)
+    // Para a Lente: o Fá♯ desliza até o Lá no fim.
+    let shapes = Recognition.scoreNotes(notes)
+    #expect(shapes[0].slideOut == 3 && shapes[1].approached)
+    // Um bend de 1 tom que sobe e fica: a nota na casa, com o bend escrito.
+    let bent = Recognition.notes([heard(0.5, 1.5, 62) { t in min(2, max(0, (t - 0.2) / 0.15) * 2) }],
+                                 tuning: 0.2, grid: grid, step: 240, open: open, from: (3, 7))
+    #expect(bent.count == 1 && bent[0].pitch == 62 && bent[0].string == 3 && bent[0].fret == 7)
+    #expect(bent[0].bend.last?[1] == 4)
 }

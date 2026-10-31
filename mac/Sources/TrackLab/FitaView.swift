@@ -21,6 +21,8 @@ struct FitaView: View {
     @Local private var held: (point: TempoPoint, to: Double)?
     /// No espectro: a nota pega na faixa e quantos semitons ela já andou.
     @Local private var grabbed: (note: ScoreNote, track: Int, semitones: Int, steps: Int)?
+    /// No espectro, com ⌥: o retângulo da seleção (o tempo e as alturas) enquanto se arrasta.
+    @Local private var marquee: (from: (seconds: Double, pitch: Double), to: (seconds: Double, pitch: Double))?
     @Environment(\.colorScheme) private var scheme
 
     /// A aparência clara (papel): a Lente em tinta, as marcas por cima escuras.
@@ -100,11 +102,29 @@ struct FitaView: View {
 
     private func dragGesture(size: CGSize, start: Double) -> some Gesture {
         let width = size.width
+        // O tempo e a altura de um ponto da Lente (a altura como a Lente mostra, com a afinação da gravação descontada).
+        func place(_ point: CGPoint) -> (seconds: Double, pitch: Double) {
+            let window = model.pitchWindow.range
+            let height = max(1, size.height - stripHeight)
+            return (time(at: point.x, width: width, start: start),
+                    window.lowerBound + (size.height - point.y) / height * (window.upperBound - window.lowerBound))
+        }
         return DragGesture(minimumDistance: 0)
             .onChanged { value in
+                if marquee != nil {
+                    marquee?.to = place(value.location)
+                    return
+                }
                 if origin == nil {
                     let at = time(at: value.startLocation.x, width: width, start: start)
                     origin = at
+                    if lens, !model.adjusting, model.spectrum != nil,
+                       NSEvent.modifierFlags.contains(.option) || model.selectingRegion, value.startLocation.y > stripHeight {
+                        // ⌥ + arrastar na Lente (ou o arrasto depois do ⌥⌘R): o retângulo da seleção, que o motor
+                        // reconhece de novo.
+                        marquee = (place(value.startLocation), place(value.location))
+                        return
+                    }
                     if model.adjusting, let point = model.grid.beat(near: at, within: Self.grab / max(width, 1) * span) {
                         held = (point, point.seconds)
                     } else if !model.adjusting, let hit = noteAt(value.startLocation, size: size, start: start) {
@@ -142,6 +162,17 @@ struct FitaView: View {
                     origin = nil
                     held = nil
                     grabbed = nil
+                    marquee = nil
+                }
+                if let marquee {
+                    model.selectingRegion = false
+                    let a = marquee.from
+                    let b = place(value.location)
+                    if abs(value.translation.width) > 3, abs(value.translation.height) > 3 {
+                        model.recognize(from: min(a.seconds, b.seconds), to: max(a.seconds, b.seconds),
+                                        low: min(a.pitch, b.pitch), high: max(a.pitch, b.pitch))
+                    }
+                    return
                 }
                 // Um clique na Fita devolve as teclas ao transporte (tira o foco da busca, por exemplo).
                 if let window = NSApp.keyWindow, window.firstResponder is NSText { window.makeFirstResponder(nil) }
@@ -471,6 +502,46 @@ struct FitaView: View {
         }
         // A principal em âmbar (mais escuro no papel, para ler sobre o claro).
         bands(main, track: model.scoreTrack, rgb: paper ? (196, 118, 10) : (245, 181, 68))
+        // A seleção no espectro: o retângulo que se arrasta (⌥) e o trecho reconhecido, com as notas achadas tracejadas em
+        // verde, como ficariam (o cartão "Reconhecido" na coluna as escreve).
+        let teal = ReadingTile.teal
+        if let marquee {
+            let rect = CGRect(x: gx(min(marquee.from.seconds, marquee.to.seconds)), y: y(max(marquee.from.pitch, marquee.to.pitch)),
+                              width: abs(gx(marquee.to.seconds) - gx(marquee.from.seconds)),
+                              height: abs(y(marquee.to.pitch) - y(marquee.from.pitch)))
+            context.fill(Path(rect), with: .color(teal.opacity(0.1)))
+            context.stroke(Path(rect), with: .color(teal), style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
+        }
+        if let region = model.regionReading, region.track == model.scoreTrack {
+            let rect = CGRect(x: gx(region.seconds.lowerBound), y: y(region.pitches.upperBound + 0.5),
+                              width: gx(region.seconds.upperBound) - gx(region.seconds.lowerBound),
+                              height: y(region.pitches.lowerBound - 0.5) - y(region.pitches.upperBound + 0.5))
+            context.stroke(Path(rect), with: .color(teal.opacity(0.8)), style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
+            var found = Path()
+            for note in region.shapes {
+                let s0 = model.grid.seconds(at: note.tick)
+                let s1 = model.grid.seconds(at: note.tick + note.duration)
+                guard s1 > gridStart, s0 < gridStart + span else { continue }
+                let x0 = gx(s0)
+                let x1 = max(gx(s1), x0 + 3)
+                let steps = max(2, Int(((x1 - x0) / 3).rounded(.up)))
+                let centers = (0...steps).map { i -> CGPoint in
+                    let x = x0 + (x1 - x0) * Double(i) / Double(steps)
+                    let t = gridStart + x / width * span
+                    return CGPoint(x: x, y: y(Double(note.pitch) + Self.offset(note, sound: nil, at: t, start: s0, end: s1)))
+                }
+                var band = Path()
+                band.move(to: CGPoint(x: centers[0].x, y: centers[0].y - thick / 2))
+                for point in centers.dropFirst() { band.addLine(to: CGPoint(x: point.x, y: point.y - thick / 2)) }
+                for point in centers.reversed() { band.addLine(to: CGPoint(x: point.x, y: point.y + thick / 2)) }
+                band.closeSubpath()
+                found.addPath(band)
+                context.draw(Text("\(note.fret)").font(.system(size: 9, weight: .bold).monospacedDigit()).foregroundStyle(teal),
+                             at: CGPoint(x: x0 + 2, y: Double(centers[0].y) - thick / 2 - 2), anchor: .bottomLeading)
+            }
+            context.fill(found, with: .color(teal.opacity(0.18)))
+            context.stroke(found, with: .color(teal), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round, dash: [4, 2]))
+        }
         // O som forte sem nota escrita (suspeita): um contorno vermelho na altura dele, do ataque a 120 ms depois.
         var unwritten = Path()
         for sound in model.unwrittenSounds(track: model.scoreTrack) {
@@ -571,11 +642,13 @@ struct FitaView: View {
     /// A largura da faixa de uma nota (a da Lente: 72 % do semitom, de 5 a 14 px).
     static func bandWidth(semitone: Double) -> Double { max(5, min(14, semitone * 0.72)) }
 
-    /// Quantos semitons acima da escrita a faixa passa em `t`: pelo som, se a curva chegou; senão pela escrita.
+    /// Quantos semitons acima da escrita a faixa passa em `t`: pelo som, se a curva chegou; senão pela escrita; mais o
+    /// slide escrito, na entrada e na saída (antes a faixa ficava reta e o slide não aparecia).
     static func offset(_ note: ScoreNote, sound: SoundNote?, at t: Double, start: Double, end: Double) -> Double {
-        if let sound { return sound.offset(note, at: t, start: start, end: end) }
         let length = max(1e-3, end - start)
-        return note.shape(fraction: (t - start) / length, elapsed: t - start)
+        let slide = note.slideOffset(elapsed: t - start, length: length)
+        if let sound { return sound.offset(note, at: t, start: start, end: end) + slide }
+        return note.shape(fraction: (t - start) / length, elapsed: t - start) + slide
     }
 
     /// A nota sob o ponteiro no espectro (a pista principal antes da segunda): a faixa dela passa a até 3 px.

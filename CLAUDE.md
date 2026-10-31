@@ -111,6 +111,21 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   na faixa da separação ativa onde a pista soa (`stem`; a guitarra se não vier), pela receita da Lente do TabLab (`trackPitch`: correlação normalizada em volta da
   altura escrita, de −2 a +4 semitons; `trackHarmonics` quando outra corda soa junto; mediana de 5). Conferido contra o
   `lens-core.js` original no mesmo sinal (mesmo resultado); 30 notas reais em 0,24 s.
+- Reconhecer um trecho (`media/transcribe.py`, `POST songs/{id}/transcribe` com `from`, `to` em segundos, até 20 s, e
+  `low`, `high` em MIDI, sem a afinação da gravação descontada): a seleção no espectro do app. A altura a cada 8 ms só
+  dentro da faixa (a correlação; onde ela não acha, os harmônicos, com a folga do acorde numa faixa de menos de 8
+  semitons), cortada em notas onde o som some, onde a altura salta e fica (um salto de até 3 quadros que volta é falha
+  do rastreador, e um buraco de até 8 quadros na mesma altura é emendado) e onde a mesma nota é atacada de novo (a
+  energia nos três primeiros harmônicos dela volta 6 dB); dois pedaços da mesma altura com até 200 ms de buraco são a
+  mesma nota se a energia não volta, e o que fica a menos de 0,2 semitom da borda da faixa é outra nota puxada para
+  dentro (sem isso, o retângulo do Lá do c. 106 que encostava no Fá 4 da base partia o Lá em três). Slide: um movimento de 1,5 semitom ou mais que anda de casa em casa (metade dele em
+  degraus de 0,35 semitom por quadro ou mais, com patamares de até 5 quadros e alturas no meio) e para na chegada por
+  60 ms; a nota de chegada diz `slide` ("previous", ou "below"/"above" quando o som já começa deslizando). Um movimento
+  liso fica na nota (bend, vibrato). Medido no Sultans of Swing: o slide do c. 105 sobe 3 semitons em 110 ms em degraus
+  de 0,4 a 0,8; o bend do c. 77 sobe 1,3 semitom em 150 ms, de 0,1 a 0,2 por quadro. Cada nota: `start`, `end`, `level`
+  (a altura dos primeiros 40 ms), `slide` e a `curve`. Numa faixa que pega duas cordas (o Fá 4 da base e o Lá 4 do solo
+  no c. 106) o rastreador alterna entre elas: o retângulo precisa ficar em volta de uma. Editar › Reconhecer um trecho
+  no espectro (⌥⌘R) faz o próximo arrasto na Lente marcar o retângulo, sem segurar ⌥ (Esc cancela).
 - Partitura editada (`PUT songs/{id}/score`, o Guitar Pro 7 no corpo): `score/edited.gp`, as anteriores em
   `score/history/` (100); o manifesto aponta para a editada e guarda `original`. A TAB sintetizada guarda o SHA da
   partitura e fica `stale` quando ela muda. Só entra um Guitar Pro 7 inteiro (`score_measures`: o zip, o
@@ -163,7 +178,8 @@ some num zoom ou num mapa novo). Com o zoom mudando, a camada da tela é esticad
 transform da `#sheet`) e a TAB acompanha a Fita até o desenho novo chegar. A página manda as notas de cada pista
 (`trackNotes`: tique, duração, altura, corda, casa, vibrato, trinado, como a nota chega e sai e o bend; a chegada é 1
 quando ela vem de outra casa pela corda, num ligado, num slide da anterior ou num slide de fora, e a saída 2 quando sai
-por slide, `ScoreNote.approached`/`slidesOut`) para as barras sobre o espectro da Fita.
+por slide, `ScoreNote.approached`/`slidesOut`; mais 4 ou 8 quando esse slide é para fora, para cima ou para baixo, e 16
+ou 32 quando ela entra por um slide de baixo ou de cima) para as barras sobre o espectro da Fita.
 
 Edição da TAB (`score-edit.js`, testado em `web/tests/check-edit.cjs`): como a do TabLab, mas sobre o próprio Guitar
 Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia detalhe na volta ao .gp). Com
@@ -227,7 +243,10 @@ são um por vez, como os do relógio. A Fita mostra a onda ou o espectro da guit
 (`SpectrumPalette`: as cores dela, gama 1,35, o topo da escala pelo trecho, ±2 s, e a base 150 passos abaixo; 2 pixels
 por linha, interpolados), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
 18 semitons, deslizando tocando: `PitchWindow`), as linhas de compasso e batida por cima e as notas da pista em âmbar e
-da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o vibrato ondula; `ScoreNote.shape`),
+da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o vibrato ondula; `ScoreNote.shape`; o
+slide desliza no fim da nota até a altura da seguinte da corda, ou 3 semitons para fora, e o de fora entra 3 semitons
+abaixo ou acima, em até 0,15 s, `ScoreNote.slideOffset`: antes a faixa ficava reta e nenhum slide aparecia, como o
+12–14 do c. 105 do Sultans),
 como na Lente (`SoundNote`, em TrackLabCore/SoundCurve.swift, porta o `fitCurve` e o `shapeAt` do `lens-core.js`): a
 faixa segue o som (o vibrato e o bend copiados da curva quando ela os tem; senão, a escrita), com o traço do ataque e os
 pontos laranja da altura que soa (as curvas chegam do motor aos poucos, pelas notas que aparecem; a chave leva a altura,
@@ -453,7 +472,22 @@ onde a onde e o trecho em tiques. Articulação (liga em todas se a principal n�
 (`transposeAll`), corda (`moveAll`, o trecho noutra posição do braço), apagar, pausa, figura e ⌥← ⌥→ valem para todas;
 as do ritmo uma batida por vez, com o finish entre uma e outra (`eachBeat`). Se uma não dá, nenhuma muda: o `change`
 volta a partitura de antes (também numa só, que um compasso refeito pela metade deixava estragada). Esc com várias deixa
-só a principal; os passos do Desfazer guardam a escolha. Ouvir (o ouvido, O ou ⌥Espaço, que no Mac do Miguel é o atalho global do ChatGPT) põe o loop no trecho escolhido e
+só a principal; os passos do Desfazer guardam a escolha. Reconhecer um trecho (`Recognize.swift`, `Recognition` em
+TrackLabCore): ⌥ + arrastar na Lente marca um retângulo de tempo × altura (o ⌥ do "só a altura" de uma faixa arrastada
+vale ao soltar); o motor ouve de novo só aquele pedaço da faixa onde a pista soa e só naquela faixa de alturas
+(`transcribe`), o app escreve as notas (`Recognition.notes`: a altura, o bend e o vibrato pelo encaixe do F, com a
+afinação da gravação descontada; o começo e o fim na grade escolhida, a nota esticando até a seguinte se sobra menos de
+um passo; a corda onde a casa fica mais perto da nota tocada antes do trecho, a mesma da nota que estava ali com essa
+altura, e a mesma da anterior num slide; a nota de onde sai um slide fica sem bend, porque a subida no fim dela é o
+slide) e a coluna da edição mostra dois cartões, "Como está" e "Reconhecido" (as
+notas em faixas sobre os pontos do som, com a casa), e a Lente as notas achadas tracejadas em verde. Um clique no
+reconhecido troca (`edit("replaceRegion")`, `edit.replaceRegion`, num passo do Desfazer): as notas da faixa de alturas
+que começam no trecho saem, a que vinha de antes nessa faixa encurta até ele (ou continua, quando a primeira achada é a
+mesma altura no começo do trecho, `continues`), e entram as novas, com o slide da anterior (Legato), o de fora, o
+vibrato e o bend; as outras notas ficam, e o que soa junto vira acorde, com a nota que atravessa o começo de outra
+cortada ali em ligadas (cada parte com o vibrato, o bend repartido no tempo). Uma corda dupla se faz em dois
+retângulos. Provado no c. 105/106 do Sultans, no app (aplicado, conferido e desfeito, com backup): o 12 → 14 de
+semicolcheia sai 11, slide, 14 segurado com vibrato até o fim do c. 106, em acorde com o 13 da corda Mi, como soa. Ouvir (o ouvido, O ou ⌥Espaço, que no Mac do Miguel é o atalho global do ChatGPT) põe o loop no trecho escolhido e
 toca. Nota nova: um clique numa linha da TAB sem nota (uma corda vazia de um acorde, ou uma pausa) põe o cursor de
 inserção ali (`state.caret`, o endereço da batida com a corda; a corda sai da caixa do compasso, `stringAt`, com as
 linhas igualmente espaçadas); digitar a casa (ou − + e "Pôr nota" na coluna) põe a nota (`edit.insertNote`) e a escolhe;
@@ -518,7 +552,10 @@ acabado, e o vibrato parecia mais longo que no espectro). O vibrato do som (`Sou
 volta da curva de 200 ms pela distância de pico a vale (o alto dela mais o da anterior), de 0,2 semitom para cima, e a
 largura (`depth`) é a metade disso; antes cada metade tinha de passar de 0,12 semitom da média sozinha, e o vibrato da
 guitarra que empurra a corda para cima da casa e volta escapava (no Sultans of Swing, c. 42, a corda dupla Lá e Fá na
-casa 10, a de cima vibrando 0,2 semitom). O corretor só escreve sozinho o vibrato de largura 0,12 para cima
+casa 10, a de cima vibrando 0,2 semitom). Um vibrato estreito também vale quando é regular: seis voltas seguidas ou
+mais de 0,1 semitom de pico a vale, de 4 a 9 por segundo, cada meia volta a até 35 % da duração média, cobrindo metade do
+trecho medido (no c. 106 do Sultans, o Fá da casa 13 vibra ±7 cents a 8 Hz por 1,2 s; no GOAT, dos 227 vibratos escritos
+o som passa a mostrar 151, antes 149, e 23 notas a mais "vibram" sem estar escritas, das 27.745). O corretor só escreve sozinho o vibrato de largura 0,12 para cima
 (`SoundNote.writtenVibrato`; com a detecção nova, no GOAT, ele passava a pôr 50 a mais, quase todos sutis: assim põe 11), e
 numa corda dupla (duas notas na mesma batida, `doubleStopVibrato`) põe o vibrato nas duas quando as duas o mostram, uma
 com essa largura e nenhuma acima de meio semitom (a curva de acorde, pelos harmônicos, dá saltos que parecem vibrato

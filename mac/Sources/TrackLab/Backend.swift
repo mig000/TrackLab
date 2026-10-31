@@ -292,6 +292,16 @@ final class Backend {
         return answer.curves
     }
 
+    /// As notas de um trecho do som (a seleção no espectro): de `from` a `to` segundos, com altura de `low` a `high` (MIDI,
+    /// sem a afinação da gravação descontada), na faixa `stem` da separação ativa.
+    func transcribe(_ id: String, from: Double, to: Double, low: Double, high: Double, stem: String?) async throws -> [HeardNote] {
+        struct Body: Encodable { let from: Double; let to: Double; let low: Double; let high: Double; let stem: String? }
+        struct Answer: Decodable { let notes: [HeardNote] }
+        let answer: Answer = try await send("POST", "songs/\(id)/transcribe",
+                                            body: Body(from: from, to: to, low: low, high: high, stem: stem))
+        return answer.notes
+    }
+
     func search(_ text: String) async throws -> [SearchResult] {
         let response: SearchResponse = try await get("songsterr/search", query: [URLQueryItem(name: "q", value: text)])
         return response.results

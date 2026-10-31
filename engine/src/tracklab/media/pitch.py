@@ -94,9 +94,10 @@ def track_pitch(x: np.ndarray, rate: int, start: float, end: float, low: float, 
 
 
 def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: float, high: float,
-                    others: tuple[float, ...] | list[float] = ()) -> np.ndarray:
+                    others: tuple[float, ...] | list[float] = (), narrow: bool = False) -> np.ndarray:
     """A altura pelos harmônicos (quando outra corda soa junto e a correlação se perde). Com `others` (as outras
-    notas do acorde), os harmônicos que caem a menos de 0,3 semitom de um harmônico delas não contam: são delas."""
+    notas do acorde), os harmônicos que caem a menos de 0,3 semitom de um harmônico delas não contam: são delas. Com
+    `others` ou `narrow` (uma busca estreita, como a seleção no espectro), a folga sobre a mediana é a do acorde."""
     size = 2048 if frequency(low) < 165 else 1024
     padded = size * 4
     window = np.hanning(size)
@@ -144,7 +145,7 @@ def track_harmonics(x: np.ndarray, rate: int, start: float, end: float, low: flo
         strong = max(at[chosen, 0], at[chosen, 1]) - floor >= 12
         # No acorde a janela é estreita (entre as vizinhas): quase todas as candidatas estão perto do pico e o vazamento
         # as levanta; a folga sobre a mediana fica menor.
-        if (best - middle) / best < (CHORD_CLARITY if others else HARMONIC_CLARITY) or not strong:
+        if (best - middle) / best < (CHORD_CLARITY if others or narrow else HARMONIC_CLARITY) or not strong:
             previous = math.nan
             continue
         a, c = scores[chosen - 1], scores[chosen + 1]
