@@ -561,6 +561,47 @@ test("ligada (L), como no Guitar Pro: duas notas, o bend na primeira e o vibrato
   assert.ok(!at(score, 960).isTieDestination && !at(score, 0).tieDestination);
 });
 
+test("vibrato numa ligada com Hold (como a importação do Songsterr grava): o Hold sai, com o mesmo som", () => {
+  const core = require("../score-core.js");
+  const { BendPoint, BendType } = alphaTab.model;
+  const hold = (n, value) => {
+    n.bendType = BendType.Hold;
+    n.bendPoints = null;
+    n.addBendPoint(new BendPoint(0, value));
+    n.addBendPoint(new BendPoint(60, value));
+  };
+  // Compasso 1: bend inteiro, e duas ligadas que seguram o alto com Hold. Compasso 2: a ligada segura outra altura.
+  let score = load();
+  edit.toggle(alphaTab, at(score, 0), "bend-full");
+  edit.toggle(alphaTab, at(score, 3840), "bend-full");
+  for (const tick of [960, 1920, 4800]) {
+    assert.equal(edit.tie(alphaTab, at(score, tick)), true);
+    score = edit.refinish(alphaTab, score);
+  }
+  hold(at(score, 960), 4);
+  hold(at(score, 1920), 4);
+  hold(at(score, 4800), 2);
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok([960, 1920, 4800].every((tick) => at(score, tick).isTieDestination && at(score, tick).hasBend));
+  const bends = (sc) => core.trackNotes(sc)[0].map((n) => [n[0], n.slice(7)]);
+  const sound = bends(score);
+  // O vibrato na primeira ligada: ela perde o Hold; a seguinte, sem vibrato, fica como estava.
+  edit.toggle(alphaTab, at(score, 960), "vibrato");
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(at(score, 960).vibrato && !at(score, 960).hasBend, "a ligada com vibrato fica sem o Hold");
+  assert.ok(at(score, 1920).hasBend && !at(score, 1920).vibrato, "a sem vibrato fica com ele");
+  assert.deepEqual(bends(score), sound, "o mesmo bend em toda a cadeia");
+  edit.toggle(alphaTab, at(score, 1920), "wide-vibrato");
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(!at(score, 1920).hasBend);
+  assert.deepEqual(bends(score), sound);
+  // Um Hold noutra altura que a de antes muda o som: fica.
+  edit.toggle(alphaTab, at(score, 4800), "vibrato");
+  score = reread(edit.refinish(alphaTab, score));
+  assert.ok(at(score, 4800).vibrato && at(score, 4800).hasBend);
+  assert.deepEqual(bends(score), sound);
+});
+
 test("o compasso refeito não muda o som: o bend de uma nota ligada continua no mesmo tempo", () => {
   // As 32 combinações (salvas pelo Guitar Pro 8): cada nota refeita na própria duração junta as ligadas sem articulação
   // numa figura maior; o bend medido no tempo (o que a Lente e o sintetizador tocam) tem de ser o mesmo.

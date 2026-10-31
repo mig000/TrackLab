@@ -151,7 +151,22 @@
       }
     }
     if (group === "bend") freeFollowers(at, note);
+    if (group === "vibrato" && !was) dropHolds(at, note);
     return true;
+  }
+
+  // As ligadas com vibrato da cadeia ficam sem o Hold que só segura o alto de antes, com o mesmo som: com ele, o
+  // Guitar Pro desenha o pontilhado e o vibrato por cima dele; sem ele, o vibrato sai da ponta da seta. A importação
+  // do Songsterr grava o Hold nas ligadas depois de um bend.
+  function dropHolds(at, note) {
+    let first = note;
+    while (first.isTieDestination && first.tieOrigin) first = first.tieOrigin;
+    for (let n = first.tieDestination; n && n.isTieDestination; n = n.tieDestination) {
+      const own = (n.bendPoints || []).map((p) => p.value);
+      if (!n.vibrato || !own.length || own.some((v) => v !== own[0])) continue;
+      const before = bendOf(n.tieOrigin);
+      if (own[0] === (before.length ? before[before.length - 1][1] : 0)) setBend(at, n, [], true);
+    }
   }
 
   // As ligadas depois de um bend ficam sem bend, como o Guitar Pro grava: elas continuam no alto do bend de antes (a

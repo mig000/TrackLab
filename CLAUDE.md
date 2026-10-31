@@ -76,7 +76,8 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   marca `synth.stale` quando o mapa, a partitura ou a versão (`version` no manifesto) mudou depois, ou quando falta um
   arquivo dela (o app abre a música sem ele, refaz ao abrir e oferece "Atualizar a TAB sintetizada"). A importação do
   Songsterr grava a ligada depois de um bend com um Hold no alto (62 no Highway Star, 6 no Sunshine): o mesmo som que sem
-  ele (conferido no MIDI), mas o desenho mostra o pontilhado.
+  ele (conferido no MIDI), mas o desenho mostra o pontilhado. Fica assim nas ligadas sem vibrato (o pontilhado mostra
+  "sobe rápido e segura"; sem ele a seta se esticaria pela ligada); ligar o vibrato numa ligada tira o Hold dela.
 - Espectro (`media/spectrum.py`, `GET songs/{id}/spectrum?stem=guitar`): a receita da Lente do TabLab (mono 22 050 Hz,
   Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em
@@ -327,7 +328,9 @@ bend, segurado) ou deixa de continuar; com ela, duas notas (o bend na primeira, 
 Dividir. Como o Guitar Pro 8 grava (conferido nele, 30/10): o Bend tem dois pontos e chega no alto a um quarto da nota
 (com um terceiro no fim, a gravação reduzia aos das pontas e a subida ia até o fim da nota); a ligada depois de um bend
 fica sem bend e continua no alto (um Hold nela faz o Guitar Pro desenhar o pontilhado e o vibrato por cima dele; pôr ou
-tirar o bend na primeira tira o Hold das seguintes, `freeFollowers`; o Dividir, o F e o L não gravam Hold); o harmônico
+tirar o bend na primeira tira o Hold das seguintes, `freeFollowers`; o Dividir, o F e o L não gravam Hold; ligar o
+vibrato numa ligada tira o Hold das ligadas com vibrato da cadeia que só seguram o alto de antes, `dropHolds`, com o
+mesmo som: assim saíram os dois do c. 59 do solo do Sunshine, feitos pelo Dividir de antes); o harmônico
 leva o traste (`harmonicValue`: o natural na casa, os outros 12; sem ele, o Guitar Pro o apagava). A ligada que a TAB
 não mostra se escolhe com o clique na linha da corda, no espaço de tempo dela (`noteAt`/`beatInSlot`: o alphaTab só
 acha a batida pela área visível, que nela tem largura zero), como o cursor do Guitar Pro; a caixa da escolha fica na
