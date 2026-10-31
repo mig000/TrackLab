@@ -253,6 +253,17 @@ struct FitaView: View {
         }
         context.fill(barLines, with: .color(.secondary.opacity(0.55)))
 
+        // O nome de cada parte embaixo, no começo dela (a que já começou antes fica presa na borda esquerda).
+        if !lens {
+            for part in model.songParts() where part.to > start && part.from < end {
+                let x0 = max(x(part.from), 0) + 4
+                guard x(part.to) - x0 > 44 else { continue }
+                context.draw(Text(part.name).font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color(red: part.color.0, green: part.color.1, blue: part.color.2)),
+                             at: CGPoint(x: x0, y: height - 3), anchor: .bottomLeading)
+            }
+        }
+
         // O espectro (com as notas da TAB por cima) no lugar das ondas.
         if lens {
             drawSpectrum(in: &context, size: size, start: soundStart, gridStart: start, pitches: pitches)
@@ -260,8 +271,8 @@ struct FitaView: View {
         // As ondas: o original atrás, a guitarra na frente.
         let step = 2.0
         if !lens, let peaks = model.sourcePeaks {
-            context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
-                         with: .color(.secondary.opacity(0.35)))
+            fillSource(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
+                       in: &context, start: start, width: width, height: height)
         }
         if !lens, let peaks = model.guitarPeaks {
             context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
@@ -326,8 +337,8 @@ struct FitaView: View {
         // A onda, estreita, em cima.
         let step = 2.0
         if let peaks = model.sourcePeaks {
-            context.fill(wave(peaks, start: start, width: width, step: step, middle: strip / 2, half: strip * 0.45),
-                         with: .color(.secondary.opacity(0.35)))
+            fillSource(wave(peaks, start: start, width: width, step: step, middle: strip / 2, half: strip * 0.45),
+                       in: &context, start: gridStart, width: width, height: strip)
         }
         if let peaks = model.guitarPeaks {
             context.fill(wave(peaks, start: start, width: width, step: step, middle: strip / 2, half: strip * 0.45),
@@ -730,6 +741,30 @@ struct FitaView: View {
     /// A silhueta espelhada da onda, um ponto a cada `step` pixels. Os pontos ficam presos em instantes da música
     /// (múltiplos de um passo de tempo), não em pixels da tela: tocando, a silhueta só desliza; amostrada nos pixels,
     /// cada quadro pegava trechos um pouco diferentes do áudio e a onda tremia.
+    /// A silhueta da banda (o original) na cor de cada parte da música (as seções do Guitar Pro: todas as Verse de uma
+    /// cor, os Chorus de outra); cinza antes da primeira parte, depois da última e numa música sem seções.
+    private func fillSource(_ path: Path, in context: inout GraphicsContext, start: Double, width: Double, height: Double) {
+        let gray = Color.secondary.opacity(0.35)
+        let parts = model.songParts()
+        guard !parts.isEmpty else {
+            context.fill(path, with: .color(gray))
+            return
+        }
+        func x(_ t: Double) -> Double { (t - start) / span * width }
+        func paint(_ x0: Double, _ x1: Double, _ color: Color) {
+            guard x1 > x0 else { return }
+            var clipped = context
+            clipped.clip(to: Path(CGRect(x: x0, y: 0, width: x1 - x0, height: height)))
+            clipped.fill(path, with: .color(color))
+        }
+        paint(-1, min(width + 1, x(parts[0].from)), gray)
+        for part in parts {
+            paint(max(-1, x(part.from)), min(width + 1, x(part.to)),
+                  Color(red: part.color.0, green: part.color.1, blue: part.color.2).opacity(0.5))
+        }
+        paint(max(-1, x(parts[parts.count - 1].to)), width + 1, gray)
+    }
+
     private func wave(_ peaks: Peaks, start: Double, width: Double, step: Double, middle: Double, half: Double) -> Path {
         let dt = step / max(width, 1) * span
         var top: [CGPoint] = []

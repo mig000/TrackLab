@@ -50926,8 +50926,9 @@
 		get hideOnMultiTrack() {
 			return false;
 		}
+		// TrackLab: os nomes dos acordes também têm a linha deles, como no Guitar Pro.
 		get canShareBand() {
-			return true;
+			return false;
 		}
 		get sizingMode() {
 			return EffectBarGlyphSizing.SingleOnBeat;
@@ -52040,8 +52041,10 @@
 		get hideOnMultiTrack() {
 			return true;
 		}
+		// TrackLab: a parte da música (Verse, Chorus) tem a linha dela, como no Guitar Pro (antes dividia a linha com os
+		// vibratos e os acordes de outros compassos).
 		get canShareBand() {
-			return true;
+			return false;
 		}
 		get sizingMode() {
 			return EffectBarGlyphSizing.SinglePreBeat;

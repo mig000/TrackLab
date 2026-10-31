@@ -1007,3 +1007,15 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(bent.count == 1 && bent[0].pitch == 62 && bent[0].string == 3 && bent[0].fret == 7)
     #expect(bent[0].bend.last?[1] == 4)
 }
+
+@Test func coresDasPartes() {
+    #expect(SongParts.family(of: "Verse 3") == "verse" && SongParts.family(of: "Verso 2") == "verse")
+    #expect(SongParts.family(of: "Pre-Chorus") == "pre-chorus" && SongParts.family(of: "Pré-refrão") == "pre-chorus")
+    #expect(SongParts.family(of: "Chorus") == "chorus" && SongParts.family(of: "Refrão 1") == "chorus")
+    #expect(SongParts.family(of: "Solo 2") == "solo" && SongParts.family(of: "Outro") == "outro")
+    #expect(SongParts.family(of: "Riff do meio") == "riff do meio")
+    // A mesma família, a mesma cor; famílias diferentes, cores diferentes.
+    #expect(SongParts.color(of: SongParts.family(of: "Verse 1")) == SongParts.color(of: SongParts.family(of: "Verse 4")))
+    #expect(SongParts.color(of: "verse") != SongParts.color(of: "chorus"))
+    #expect(SongParts.color(of: "riff do meio") == SongParts.color(of: "riff do meio"))
+}

@@ -398,3 +398,50 @@ public enum SectionLibrary {
             .prefix(limit).map(\.name)
     }
 }
+
+/// As partes da música (as seções marcadas no Guitar Pro: Intro, Verse 1, Pre-Chorus, Solo 2…) para pintar a Onda: cada
+/// família de parte com uma cor (todas as Verse da mesma, todos os Chorus da mesma), em português ou em inglês.
+public enum SongParts {
+    /// A família de uma parte: o nome sem número, acento nem pontuação, e os sinônimos juntos ("Verse 2" e "Verso" são
+    /// "verse"; "Pré-refrão" e "Pre-Chorus", "pre-chorus").
+    public static func family(of name: String) -> String {
+        let plain = name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+            .replacingOccurrences(of: "-", with: " ")
+        let words = plain.components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+        let text = words.joined(separator: " ")
+        let rules: [(String, [String])] = [
+            ("pre-chorus", ["pre chorus", "prechorus", "pre refrao", "prerefrao"]),
+            ("chorus", ["chorus", "refrao", "coro"]),
+            ("intro", ["intro", "introducao"]),
+            ("verse", ["verse", "verso", "estrofe"]),
+            ("solo", ["solo", "lead"]),
+            ("bridge", ["bridge", "ponte"]),
+            ("outro", ["outro", "ending", "coda", "final", "fim"]),
+            ("interlude", ["interlude", "interludio", "break", "instrumental"]),
+        ]
+        for (family, names) in rules where names.contains(where: { text == $0 || text.hasPrefix($0 + " ") }) {
+            return family
+        }
+        return text.isEmpty ? "parte" : text
+    }
+
+    /// A cor (r, g, b de 0 a 1) de uma família; uma desconhecida ganha uma da paleta pelo nome (a mesma sempre). Sem
+    /// amarelo nem laranja: o âmbar é a guitarra.
+    public static func color(of family: String) -> (Double, Double, Double) {
+        switch family {
+        case "intro": return (0.20, 0.66, 0.66)
+        case "verse": return (0.32, 0.52, 0.92)
+        case "pre-chorus": return (0.62, 0.46, 0.88)
+        case "chorus": return (0.90, 0.36, 0.48)
+        case "solo": return (0.26, 0.70, 0.38)
+        case "bridge": return (0.20, 0.72, 0.90)
+        case "outro": return (0.50, 0.55, 0.66)
+        case "interlude": return (0.72, 0.40, 0.72)
+        default:
+            let palette: [(Double, Double, Double)] = [(0.55, 0.62, 0.30), (0.80, 0.42, 0.62), (0.36, 0.42, 0.78),
+                                                       (0.30, 0.60, 0.55), (0.70, 0.48, 0.42)]
+            let sum = family.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
+            return palette[sum % palette.count]
+        }
+    }
+}

@@ -158,7 +158,8 @@ vibrato dela sai da ponta da seta e não se repete na faixa de efeitos, `trackla
 chão antes da ligada deixa o vibrato na faixa: o c. 77 do Sultans mostrava dois), e a ligada com vibrato aparece entre
 parênteses, com a volta parando em cima do número; sem vibrato ela fica escondida, como no Guitar Pro; a ligadura de
 uma cadeia que começa num bend fica embaixo da nota, sem cruzar a seta (`tracklabTieUnderBend`); os acentos e o staccato sobre a
-TAB, `TracklabAccentEffectInfo`; "let ring" em vez de "LetRing"; sem o rótulo N.H.; e, no som, o bend segue pela
+TAB, `TracklabAccentEffectInfo`; a parte da música (o marcador) e os nomes dos acordes com linha própria, como no Guitar
+Pro (antes dividiam a linha com os vibratos); "let ring" em vez de "LetRing"; sem o rótulo N.H.; e, no som, o bend segue pela
 cadeia de ligadas, `bendOrigin`, também na cópia pelo JSON, e bend com vibrato na mesma nota vibra de onde o bend para
 de mudar até o fim). O relógio leva o atraso da saída de áudio (`delay`, ~0,15 s no iMac): a página só anda quando o som
 sai. Antes do primeiro ponto do mapa e depois do último, a pauta anda em segundos na escala da Fita. A página dá a volta
@@ -226,7 +227,10 @@ Onda e a Lente (a Fita em dois modos, `FitaView(lens:strip:)`), cada camada à v
 Onda sobre a Lente, guardadas; duplo clique volta ao automático). Sem altura escolhida, a TAB ganha a da pauta desenhada
 (`rendered.height`) e o resto vai para as camadas; com a Onda à vista, a Lente perde a faixa estreita da onda. A Onda desenha na escala da
 música (`Peaks.loudest` do original: a parte mais alta chega na borda) com o expoente 0,7 (`Peaks.display`), para
-os trechos baixos e a guitarra separada ocuparem a faixa. A
+os trechos baixos e a guitarra separada ocuparem a faixa. A silhueta da banda (o original) tem a cor da parte da música
+(as seções do Guitar Pro, `songParts`; `SongParts` dá a família, "Verse 2" e "Verso" são a mesma, e a cor dela, sem
+amarelo nem laranja, que são da guitarra), também na faixa da onda em cima da Lente, e o nome de cada parte fica embaixo,
+no começo dela (a que já começou, presa na borda esquerda); cinza fora das partes e numa música sem seções. A
 Lente medir as curvas depende de ela estar à vista; o loop na TAB vai de barra a barra. Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto

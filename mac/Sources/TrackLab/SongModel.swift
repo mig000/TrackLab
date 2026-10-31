@@ -797,6 +797,18 @@ final class SongModel {
              select: (from, to))
     }
 
+    /// As partes da música em segundos (de uma seção marcada no Guitar Pro até a seguinte, a última até o fim), com a cor
+    /// da família dela (`SongParts`), para pintar a Onda.
+    func songParts() -> [(from: Double, to: Double, name: String, color: (Double, Double, Double))] {
+        guard let end = grid.barTicks.last else { return [] }
+        return markers.enumerated().compactMap { index, marker in
+            let to = index + 1 < markers.count ? markers[index + 1].tick : end
+            guard to > marker.tick else { return nil }
+            return (grid.seconds(at: marker.tick), grid.seconds(at: to), marker.name,
+                    SongParts.color(of: SongParts.family(of: marker.name)))
+        }
+    }
+
     /// Um trecho por seção marcada no Guitar Pro, de uma seção até a seguinte (a última até o fim).
     func addSectionsFromMarkers() {
         guard let end = grid.barTicks.last else { return }
