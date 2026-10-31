@@ -200,6 +200,8 @@ final class SongModel {
     var corrections: [String: (before: NoteReading, after: NoteReading)] = [:]
     /// Corrigir assim que as curvas da pista chegarem (a Lente estava fechada ou ainda medindo).
     @ObservationIgnored var correctWhenMeasured = false
+    /// Sincronizar o mapa pelo som assim que as curvas chegarem.
+    @ObservationIgnored var syncWhenMeasured = false
     /// Muda com as notas e com o mapa (as chaves das curvas levam o tempo da nota): a lista de suspeitas se refaz.
     @ObservationIgnored private var notesVersion = 0
     @ObservationIgnored private var suspectCache: (key: [Int], list: [Suspect])?
@@ -594,6 +596,10 @@ final class SongModel {
                     correctWhenMeasured = false
                     correctBySound(afterMeasuring: true)
                 }
+                if syncWhenMeasured {
+                    syncWhenMeasured = false
+                    syncAllToSound(afterMeasuring: true)
+                }
             }
         }
     }
@@ -961,6 +967,45 @@ final class SongModel {
         moveBeat(tick: grid.barTicks[bar - 1], to: grid.bars[bar - 1] + offset,
                  message: "Compasso \(bar): o som vinha \(Int((abs(offset) * 1000).rounded())) ms "
                     + (offset > 0 ? "depois" : "antes") + "; o 1 foi até ele.")
+    }
+
+    /// Sincronizar pelo som: o "Pelo som" (A) na música toda, de uma vez (`SoundSync.synced`: o atraso dos ataques de
+    /// cada compasso, suavizado pelos vizinhos; as âncoras ficam). O mapa novo vai para o histórico do pacote e para o
+    /// Desfazer. Sem as curvas medidas, liga a Lente e sincroniza quando a medida termina.
+    func syncAllToSound(afterMeasuring: Bool = false) {
+        guard !saving, let current = tempoMap else { return }
+        let track = scoreTrack
+        guard scoreNotes.indices.contains(track) else {
+            adjustMessage = "A partitura ainda está carregando; tente de novo em seguida."
+            return
+        }
+        if !afterMeasuring, !lensVisible || measuring || scoreNotes[track].contains(where: { !curveAsked($0, track: track) }) {
+            syncWhenMeasured = true
+            if lensVisible { measureLater() } else { lensVisible = true }
+            adjustMessage = "Medindo quando as notas soam, para sincronizar…"
+            return
+        }
+        let offsets = barOffsets()
+        guard offsets.count >= 3,
+              let result = SoundSync.synced(current.points, barTicks: grid.barTicks, offsets: offsets), result.bars > 0 else {
+            adjustMessage = "Poucas notas com ataque claro para sincronizar pelo som."
+            return
+        }
+        let map = TempoMapDocument(source: current.source, algorithm: "sound-sync", points: result.points)
+        let ms = Int((abs(result.median) * 1000).rounded())
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                show(try await Backend.shared.putTempo(id, map))
+                undoStack.append(current)
+                redoStack.removeAll()
+                adjustMessage = "Sincronizei \(result.bars) compassos pelo som: o som vinha em mediana \(ms) ms "
+                    + (result.median < 0 ? "antes" : "depois") + " · ⌘Z desfaz"
+            } catch {
+                adjustMessage = error.localizedDescription
+            }
+        }
     }
 
     /// U, "o 1 é aqui": o início de compasso mais perto do que se ouve agora vai até este instante.
@@ -1607,7 +1652,10 @@ final class SongModel {
         }
         let bend: Any = fit.guitarPro.map { $0.map { [$0.offset, $0.value] } } ?? NSNull()
         var value: [String: Any] = ["pitch": fit.base, "bend": bend, "vibrato": fit.vibrato]
-        if fit.vibrato, let from = vibratoFrom(note, fit: fit) { value["vibratoFrom"] = from }
+        if fit.vibrato, let span = vibratoSpan(note, fit: fit) {
+            value["vibratoFrom"] = span.from
+            value["vibratoTo"] = span.to
+        }
         bridge.edit("fit", value)
         tabMessage = "Encaixou no som: " + parts.joined(separator: ", ") + " · ⌘Z desfaz"
     }

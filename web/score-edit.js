@@ -424,30 +424,38 @@
         changed = true;
       }
     });
-    // O vibrato nas partes em que o som vibra (`vibratoFrom`: a fração da cadeia onde ele começa; numa parte, se ao
-    // menos um quarto dela vem depois: no Sultans of Swing, c. 5, a primeira ligada, uma colcheia, segura 0,14 s e
-    // vibra no resto): numa nota longa que vibra do começo ao fim, antes só a última parte ganhava o
-    // vibrato, e a TAB o mostrava só no fim. Com bend, só depois de o bend chegar ao alto; sem `vibratoFrom`, o vibrato
-    // escrito fica, e sem nenhum ele vai à nota inteira (sem bend) ou à última (com bend: o vibrato no fim do bend).
+    // O vibrato nas partes em que o som vibra (`vibratoFrom` e `vibratoTo`: a fração da cadeia onde ele começa e
+    // acaba): uma parte tem vibrato se ao menos um quarto dela cai dentro dele (no Sultans of Swing, c. 5, a primeira
+    // ligada, uma colcheia, segura 0,14 s e vibra no resto), e com a medida as outras ficam sem (c. 27: o som vibra no
+    // começo e acaba antes do fim da escrita, e o vibrato ia só à última). Sem nenhuma parte assim, a que tem mais dele.
+    // Com bend, só depois de o bend chegar ao alto. Sem a medida, o vibrato escrito fica, e sem nenhum ele vai à nota
+    // inteira (sem bend) ou à última (com bend: o vibrato no fim do bend).
     if (wanted.vibrato) {
       const top = bend.length ? Math.max(...bend.map((p) => p[1])) : 0;
       const arrive = bend.length ? bend.find((p) => p[1] === top)[0] / 60 : 0;
       const measured = Number.isFinite(wanted.vibratoFrom);
       const from = measured ? Math.max(arrive, wanted.vibratoFrom) : bend.length ? 1 : 0;
+      const to = measured && Number.isFinite(wanted.vibratoTo) ? Math.max(from, wanted.vibratoTo) : 1;
       let start = 0;
-      const parts = chain.filter((n, i) => {
+      const overlap = chain.map((n, i) => {
         const end = start + lengths[i] / total;
-        const inside = end - Math.max(start, from) >= 0.25 * (end - start);
+        const share = Math.max(0, Math.min(end, to) - Math.max(start, from)) / Math.max(1e-9, end - start);
         start = end;
-        return inside;
+        return share;
       });
+      let keep = overlap.map((share) => share >= 0.25);
+      if (!keep.some(Boolean)) {
+        const best = overlap.indexOf(Math.max(...overlap));
+        keep = overlap.map((_, i) => i === (overlap[best] > 0 ? best : chain.length - 1));
+      }
       if (measured || !chain.some((n) => n.vibrato)) {
-        for (const n of parts.length ? parts : [chain[chain.length - 1]]) {
-          if (!n.vibrato) {
-            n.vibrato = m.VibratoType.Slight;
+        chain.forEach((n, i) => {
+          const wantedHere = keep[i] ? n.vibrato || m.VibratoType.Slight : measured ? m.VibratoType.None : n.vibrato;
+          if (wantedHere !== n.vibrato) {
+            n.vibrato = wantedHere;
             changed = true;
           }
-        }
+        });
       }
     } else if (chain.some((n) => n.vibrato)) {
       for (const n of chain) n.vibrato = m.VibratoType.None;

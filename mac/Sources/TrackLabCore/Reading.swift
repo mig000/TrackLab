@@ -175,6 +175,23 @@ extension SoundNote {
         return shown.sorted { $0.1 > $1.1 }.map { (reading: $0.0, closeness: $0.1) }
     }
 
+    /// A largura (meia oscilação, semitons) a partir da qual o corretor escreve sozinho o vibrato que o som tem: a
+    /// detecção vê a partir de 0,1 (a Lente, os cartões), mas no GOAT o corretor passava a pôr 50 vibratos a mais com
+    /// ela, quase todos sutis.
+    public static let writtenVibrato = 0.12
+
+    /// O vibrato de uma corda dupla (duas notas na mesma batida): a mão vibra as duas juntas, então as duas ganham o
+    /// vibrato quando as duas o mostram, ao menos uma com largura para o corretor e nenhuma acima de meio semitom (a
+    /// curva de acorde, pelos harmônicos, dá saltos que parecem um vibrato largo: no Sultans of Swing, c. 42, a corda
+    /// dupla 8/9 "vibrava" 0,59 semitom na de baixo e nada na de cima, e ganhava o vibrato). Acordes de três notas ou mais
+    /// ficam de fora. No c. 42, a última, a de cima vibra 0,11 e a de baixo 0,36.
+    public static func doubleStopVibrato(_ sounds: [SoundNote]) -> Bool {
+        let fits = sounds.compactMap(\.fit)
+        return sounds.count == 2 && fits.count == 2
+            && fits.allSatisfy { $0.vibrato && $0.trill == nil && $0.depth <= 0.5 }
+            && fits.contains { $0.depth >= writtenVibrato }
+    }
+
     /// A correção do corretor: a escrita com as partes em que o som discorda dela com segurança (a altura, o bend, o
     /// vibrato que o som tem e a escrita não), ou nil se nada muda; o trinado fica para o clique. Notas de acorde não mudam (a curva pula
     /// entre as cordas); a altura só muda até um semitom (mais longe, o rastreador provavelmente pegou outra coisa, como
@@ -206,7 +223,9 @@ extension SoundNote {
                 break
             }
         }
-        if fit.trill == nil, fit.vibrato, note.vibrato == 0, out.pitch == note.pitch { out.vibrato = true }
+        if fit.trill == nil, fit.vibrato, fit.depth >= SoundNote.writtenVibrato, note.vibrato == 0, out.pitch == note.pitch {
+            out.vibrato = true
+        }
         guard !out.writesSame(as: written), let before = closeness(written, start: start, end: end) else { return nil }
         let reshaped = out.pitch != written.pitch || out.bend != written.bend || out.trill != written.trill
         if reshaped, let after = closeness(out, start: start, end: end), after - before >= 0.15, after >= 0.5 {

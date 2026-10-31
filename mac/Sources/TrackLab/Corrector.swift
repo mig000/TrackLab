@@ -47,7 +47,18 @@ extension SongModel {
             guard let sound = soundNotes[curveKey(note, track: track)] else { continue }
             let start = grid.seconds(at: note.tick)
             let end = grid.seconds(at: note.tick + note.duration)
-            guard let fix = sound.correction(for: note, start: start, end: end) else { continue }
+            guard let fix = sound.correction(for: note, start: start, end: end) else {
+                // O vibrato que a escrita já tem, numa nota ligada sem bend: vai às partes em que o som vibra (a página
+                // não muda nada se já está assim, nem numa nota sem ligadas). Não marca a nota: é a mesma leitura.
+                if let fit = sound.fit, fit.vibrato, fit.trill == nil, note.vibrato > 0, note.bend.isEmpty {
+                    var item = fitValue(NoteReading(note: note), note: note, sound: sound)
+                    item["track"] = track
+                    item["tick"] = note.tick
+                    item["string"] = note.string
+                    items.append(item)
+                }
+                continue
+            }
             var item = fitValue(fix, note: note, sound: sound)
             item["track"] = track
             item["tick"] = note.tick
@@ -55,6 +66,26 @@ extension SongModel {
             items.append(item)
             let key = Self.correctionKey(track: track, tick: note.tick, string: note.string)
             pending[key] = (corrections[key]?.before ?? NoteReading(note: note, kind: .original, name: "Original"), fix)
+        }
+        // As cordas duplas (duas notas na mesma batida): o vibrato vai às duas se uma vibra (`doubleStopVibrato`);
+        // o corretor de nota não mexe em acordes.
+        let beats = Dictionary(grouping: chosen) { $0.tick }
+        for (_, pair) in beats where pair.count == 2 && pair.contains(where: { $0.vibrato == 0 }) {
+            let sounds = pair.compactMap { soundNotes[curveKey($0, track: track)] }
+            guard sounds.count == 2, SoundNote.doubleStopVibrato(sounds) else { continue }
+            for note in pair where note.vibrato == 0 {
+                var fix = NoteReading(note: note)
+                fix.vibrato = true
+                fix.kind = .sound
+                fix.name = "Pelo som"
+                var item = fitValue(fix, note: note, sound: soundNotes[curveKey(note, track: track)])
+                item["track"] = track
+                item["tick"] = note.tick
+                item["string"] = note.string
+                items.append(item)
+                let key = Self.correctionKey(track: track, tick: note.tick, string: note.string)
+                pending[key] = (corrections[key]?.before ?? NoteReading(note: note, kind: .original, name: "Original"), fix)
+            }
         }
         guard !items.isEmpty else {
             tabMessage = loop == nil ? "Nada a corrigir pelo som nesta pista." : "Nada a corrigir pelo som no loop."
@@ -95,18 +126,22 @@ extension SongModel {
             let beat = grid.seconds(at: note.tick + TempoGrid.ticksPerQuarter) - grid.seconds(at: note.tick)
             value["trillSpeed"] = sound?.fit?.trill?.speed(beatSeconds: beat) ?? 16
         }
-        if reading.vibrato, let from = vibratoFrom(note, fit: sound?.fit) { value["vibratoFrom"] = from }
+        if reading.vibrato, let span = vibratoSpan(note, fit: sound?.fit) {
+            value["vibratoFrom"] = span.from
+            value["vibratoTo"] = span.to
+        }
         return value
     }
 
-    /// Onde o vibrato do som começa, na fração 0–1 da nota (a cadeia de ligadas inteira): a página põe o vibrato nas
-    /// partes ligadas em que o som vibra.
-    func vibratoFrom(_ note: ScoreNote, fit: CurveFit?) -> Double? {
+    /// Onde o vibrato do som começa e acaba, na fração 0–1 da nota (a cadeia de ligadas inteira): a página põe o
+    /// vibrato nas partes ligadas em que o som vibra.
+    func vibratoSpan(_ note: ScoreNote, fit: CurveFit?) -> (from: Double, to: Double)? {
         guard let begin = fit?.vibratoStart else { return nil }
         let start = grid.seconds(at: note.tick)
         let end = grid.seconds(at: note.tick + note.duration)
         guard end > start else { return nil }
-        return max(0, min(1, (begin - start) / (end - start)))
+        let fraction = { (t: Double) in max(0, min(1, (t - start) / (end - start))) }
+        return (fraction(begin), fraction(fit?.vibratoEnd ?? end))
     }
 
     // MARK: - As leituras da nota escolhida

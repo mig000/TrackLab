@@ -38,15 +38,18 @@ public struct CurveFit: Hashable, Sendable {
     /// Os segundos da curva que o encaixe mediu (sem o começo que ainda é a nota anterior, a entrada de outra casa e o
     /// fim que já é a seguinte): onde as leituras são comparadas com o som.
     public let window: ClosedRange<Double>?
-    /// O segundo em que o vibrato começa (o começo da primeira meia volta), nil sem vibrato: numa nota ligada, o
-    /// vibrato vai às partes em que o som vibra.
+    /// Os segundos em que o vibrato começa (o começo da primeira meia volta) e acaba (o fim da última), nil sem vibrato:
+    /// numa nota ligada, o vibrato vai às partes em que o som vibra.
     public let vibratoStart: Double?
+    public let vibratoEnd: Double?
 
     public init(base: Int, low: Double, rise: Double, quarterTones: Int, form: BendForm?, vibrato: Bool, trill: Trill?,
-                depth: Double, certain: Bool = true, window: ClosedRange<Double>? = nil, vibratoStart: Double? = nil) {
+                depth: Double, certain: Bool = true, window: ClosedRange<Double>? = nil, vibratoStart: Double? = nil,
+                vibratoEnd: Double? = nil) {
         self.certain = certain
         self.window = window
         self.vibratoStart = vibratoStart
+        self.vibratoEnd = vibratoEnd
         self.base = base
         self.low = low
         self.rise = rise
@@ -116,9 +119,14 @@ public struct SoundNote: Sendable {
         let vibrato = note.vibrato > 0
         var offset = bendFromSound(note, at: t, start: start, vibrato: vibrato) ?? note.bendOffset(fraction: (t - start) / length)
         if vibrato {
+            // O vibrato do som onde ele tem altura; onde o som não tem (acabou antes da nota escrita, ou o rastreador o
+            // perdeu), a faixa fica lisa, e não com a onda escrita: antes a Lente mostrava o vibrato mais longo que o do
+            // espectro. Sem vibrato medido, a onda escrita.
             let k = Int(((t - curve.from) / curve.hop).rounded())
-            if let fit, fit.vibrato, curve.values.indices.contains(k), let value = curve.values[k], let trend = level[k] {
-                offset += note.bend.isEmpty ? value - fit.low : value - trend
+            if let fit, fit.vibrato {
+                if curve.values.indices.contains(k), let value = curve.values[k], let trend = level[k] {
+                    offset += note.bend.isEmpty ? value - fit.low : value - trend
+                }
             } else {
                 offset += note.vibratoOffset(elapsed: t - start)
             }
@@ -307,10 +315,14 @@ public struct SoundNote: Sendable {
         let measured = times.first.flatMap { first in times.last.map { first...$0 } }
         let level = trend(values, width: max(3, Int((0.2 / curve.hop).rounded())))
         let quick = trend(values, width: max(3, Int((0.04 / curve.hop).rounded())))
-        // O vibrato: o que sobra em volta da tendência, em meias voltas que passam de 0,12 semitom.
+        // O vibrato: o que sobra em volta da tendência, em meias voltas; cada uma conta pela distância de pico a vale (o
+        // alto dela mais o da anterior, do outro lado), de 0,2 semitom para cima. Antes cada metade tinha de passar de
+        // 0,12 semitom da média sozinha, e o vibrato da guitarra, que empurra a corda para cima da casa e volta (a
+        // metade de baixo menor), escapava: no Sultans of Swing, c. 42, a corda dupla vibrando de 0,2 semitom.
         var swings = 0
         var sign = 0
         var top = 0.0
+        var lastTop = 0.0
         var firstSwing: Double?
         var lastSwing: Double?
         // Onde a primeira meia volta começou (o começo do vibrato; `firstSwing` é onde ela acaba, meia volta depois).
@@ -322,15 +334,16 @@ public struct SoundNote: Sendable {
             let rest = value - trend
             let s = rest > 0 ? 1 : -1
             if s != sign {
-                if sign != 0, top >= 0.12 {
+                if sign != 0, top >= 0.05, top + lastTop >= 0.2 {
                     swings += 1
-                    sizes.append(top)
+                    sizes.append((top + lastTop) / 2)
                     if firstSwing == nil {
                         firstSwing = times[i]
                         vibratoFrom = swingFrom
                     }
                     lastSwing = times[i]
                 }
+                lastTop = sign != 0 ? top : 0
                 sign = s
                 top = 0
                 swingFrom = times[i]
@@ -340,7 +353,7 @@ public struct SoundNote: Sendable {
         let cycles = Double(swings) / 2
         let span = firstSwing.flatMap { first in lastSwing.map { $0 - first } } ?? 0
         let frequency = span > 0 ? Double(swings - 1) / 2 / span : 0
-        let vibrato = trill == nil && cycles >= 1.5 && frequency >= 3.5 && frequency <= 9 && percentile(sizes, 0.5) >= 0.12
+        let vibrato = trill == nil && cycles >= 1.5 && frequency >= 3.5 && frequency <= 9 && percentile(sizes, 0.5) >= 0.1
         let depth = sizes.isEmpty ? 0 : percentile(sizes, 0.5)
         // A casa: a escrita, quando o som passa perto dela em algum momento da nota (antes o grave do começo virava a
         // casa: um bend rápido, ou o fim dobrado da nota anterior ainda nos primeiros quadros, a punha um ou dois
@@ -539,7 +552,7 @@ public struct SoundNote: Sendable {
         return CurveFit(base: base, low: form?.kind.usesPre == true ? ref : low, rise: form == nil ? 0 : max(0, rise),
                         quarterTones: quarters, form: form, vibrato: vibrato, trill: nil, depth: depth,
                         certain: form == nil || certain, window: measured,
-                        vibratoStart: vibrato ? vibratoFrom ?? firstSwing : nil)
+                        vibratoStart: vibrato ? vibratoFrom ?? firstSwing : nil, vibratoEnd: vibrato ? lastSwing : nil)
     }
 
     /// O trinado: a curva alterna entre dois níveis a ao menos 0,7 semitom, cruzando o meio a cada 35 a 200 ms, em
@@ -862,5 +875,63 @@ public enum SoundSync {
             lists[low, default: []].append(attack - note.start)
         }
         return lists.compactMapValues { $0.count >= minimum ? SoundNote.percentile($0, 0.5) : nil }
+    }
+
+    /// O mapa de tempo sincronizado pelo som, o "Sincronizar pelo som" (o "Pelo som" do Ajuste na música toda, de uma
+    /// vez): o atraso de cada compasso (`offsets`, de `barOffsets`) suavizado pela mediana dos compassos com medida a
+    /// até `radius` dele (uma nota atrasada de propósito, um compasso medido errado, não puxam o mapa sozinhos), e entre
+    /// compassos sem medida em linha reta (antes do primeiro e depois do último, o deles); cada ponto anda o atraso do
+    /// lugar dele, em linha reta entre o começo do compasso e o do seguinte (as batidas de dentro acompanham). As âncoras
+    /// (postas à mão no Ajuste) ficam; um ponto que passaria do vizinho fica onde estava. O atraso vai até 0,25 s (mais
+    /// que isso é outra coisa: um compasso a mais ou a menos). Devolve os pontos, quantos compassos andaram (5 ms ou
+    /// mais) e a mediana do que andou; nil sem medida. No Sultans of Swing (31/10), o som atacava em mediana 45 ms antes
+    /// das notas escritas, 78 % delas a mais de 30 ms, do mapa do Songsterr.
+    public static func synced(_ points: [TempoPoint], barTicks: [Double], offsets: [Int: Double],
+                              radius: Int = 2) -> (points: [TempoPoint], bars: Int, median: Double)? {
+        let count = barTicks.count
+        guard count >= 2, !offsets.isEmpty else { return nil }
+        var smooth: [Double?] = (0..<count).map { i in
+            let window = (max(0, i - radius)...min(count - 1, i + radius)).compactMap { offsets[$0] }
+            return window.isEmpty ? nil : SoundNote.percentile(window, 0.5)
+        }
+        let known = smooth.indices.filter { smooth[$0] != nil }
+        guard let first = known.first, let last = known.last else { return nil }
+        for i in 0..<count where smooth[i] == nil {
+            if i < first {
+                smooth[i] = smooth[first]
+            } else if i > last {
+                smooth[i] = smooth[last]
+            } else if let a = known.last(where: { $0 < i }), let b = known.first(where: { $0 > i }),
+                      let low = smooth[a], let high = smooth[b] {
+                smooth[i] = low + (high - low) * Double(i - a) / Double(b - a)
+            }
+        }
+        let shift = smooth.map { Swift.max(-0.25, Swift.min(0.25, $0 ?? 0)) }
+        func offset(at tick: Double) -> Double {
+            var low = 0
+            var high = count - 1
+            guard tick >= barTicks[0] else { return shift[0] }
+            guard tick < barTicks[count - 1] else { return shift[count - 1] }
+            while high - low > 1 {
+                let middle = (low + high) / 2
+                if barTicks[middle] <= tick { low = middle } else { high = middle }
+            }
+            let fraction = (tick - barTicks[low]) / Swift.max(1, barTicks[low + 1] - barTicks[low])
+            return shift[low] + (shift[low + 1] - shift[low]) * fraction
+        }
+        var out: [TempoPoint] = []
+        for (index, point) in points.enumerated() {
+            guard !point.isAnchor else {
+                out.append(point)
+                continue
+            }
+            var seconds = point.seconds + offset(at: point.tick)
+            let previous = out.last?.seconds ?? -Double.infinity
+            let next = points[(index + 1)...].first(where: \.isAnchor)?.seconds ?? Double.infinity
+            if seconds <= previous + 0.001 || seconds >= next - 0.001 { seconds = point.seconds }
+            out.append(TempoPoint(tick: point.tick, seconds: seconds, kind: point.kind, confidence: point.confidence))
+        }
+        let moved = shift.filter { abs($0) >= 0.005 }
+        return (out, moved.count, moved.isEmpty ? 0 : SoundNote.percentile(moved, 0.5))
     }
 }

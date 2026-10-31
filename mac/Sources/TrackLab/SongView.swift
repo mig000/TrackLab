@@ -61,6 +61,10 @@ struct SongView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .syncBySound)) { _ in
+            if !model.adjusting { model.adjusting = true }
+            model.syncAllToSound()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .correctBySound)) { _ in
             if !model.editingTab { model.editingTab = true }
             model.correctBySound()
@@ -340,6 +344,10 @@ struct AdjustBar: View {
                 .keyboardShortcut("a", modifiers: [])
                 .help("A: o 1 do compasso que toca vai para onde as notas dele soam (os ataques medidos no espectro; "
                       + "a Fita mostra no alto de cada compasso quanto o som vem antes ou depois)")
+            Button { model.syncAllToSound() } label: { Label("Tudo pelo som", systemImage: "waveform.path.ecg") }
+                .keyboardShortcut("a", modifiers: [.shift])
+                .help("⇧A: a música toda de uma vez: cada compasso vai para onde as notas dele soam, suavizado pelos "
+                      + "vizinhos; as âncoras ficam e ⌘Z desfaz")
             Button { model.tap() } label: { Label("Bater junto", systemImage: "hand.tap") }
                 .keyboardShortcut("t", modifiers: [])
                 .help("T: com a música tocando, aperte em cada batida de um trecho; quando parar, as batidas dele viram os seus toques")

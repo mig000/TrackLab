@@ -54,6 +54,7 @@ struct TrackLabApp: App {
                 Divider()
                 Button("Corrigir a TAB pelo som") { NotificationCenter.default.post(name: .correctBySound, object: nil) }
                     .keyboardShortcut("f", modifiers: [.command, .option])
+                Button("Sincronizar o mapa pelo som") { NotificationCenter.default.post(name: .syncBySound, object: nil) }
             }
         }
         Settings { SettingsView() }
@@ -71,6 +72,7 @@ extension Notification.Name {
     static let toggleLens = Notification.Name("TrackLab.toggleLens")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
     static let correctBySound = Notification.Name("TrackLab.correctBySound")
+    static let syncBySound = Notification.Name("TrackLab.syncBySound")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

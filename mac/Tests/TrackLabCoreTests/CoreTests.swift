@@ -829,6 +829,16 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // Um Ré que segura 0,14 s e vibra a 6 Hz: o vibrato começa perto de 1,14 s, não meia volta depois.
     let held = try fit { t in t < 1.14 ? 60.3 : 60.35 + 0.25 * sin(2 * .pi * 6 * (t - 1.14)) }
     #expect(held.vibrato && held.vibratoStart.map { $0 < 1.2 } == true)
+    // E onde acaba: o som que vibra até 1,6 s e para (o resto sem altura).
+    let stops = try fit { t in t < 1.14 ? 60.3 : t < 1.6 ? 60.35 + 0.25 * sin(2 * .pi * 6 * (t - 1.14)) : nil }
+    #expect(stops.vibratoEnd.map { $0 > 1.4 && $0 < 1.65 } == true)
+    // Na Lente, a faixa com vibrato segue o do som e fica lisa onde o som acabou (antes ganhava a onda escrita).
+    let stopsSound = SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: (0...125).map { i -> Double? in
+        let t = 1 + Double(i) * 0.008
+        return t < 1.14 ? 60.3 : t < 1.6 ? 60.35 + 0.25 * sin(2 * .pi * 6 * (t - 1.14)) : nil
+    }), start: 1, end: 2, pitch: 60)
+    let vibratoNote = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, vibrato: 1)
+    #expect(stopsSound.offset(vibratoNote, at: 1.85, start: 1, end: 2) == 0)
     // A subida que só sai no último quarto, sem nota colada depois: com o bend escrito é o bend; sem ele, nada.
     let late = { (t: Double) -> Double? in t < 1.8 ? 60 : min(62, 60 + (t - 1.8) * 40) }
     #expect(try fit(written: [[0, 0], [60, 4]], late).form?.kind == .bend)
@@ -843,6 +853,54 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(try fit(short).form?.top == 2)
     // O pré-bend de ½ tom escrito tocado a 0,7 semitom é o pré-bend.
     #expect(try fit(written: [[0, 2], [60, 2]]) { _ in 60.7 }.form?.kind == .prebend)
+}
+
+@Test func vibratoDePicoAValeECordaDupla() throws {
+    func sound(_ f: @escaping (Double) -> Double, chord: Bool = false) -> SoundNote {
+        SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: (0...125).map { f(1 + Double($0) * 0.008) }),
+                  start: 1, end: 2, pitch: 60, chord: chord)
+    }
+    // Um vibrato de 0,2 semitom de pico a vale (antes cada metade tinha de passar de 0,12 da média, e ele escapava).
+    let narrow = sound { 60 + 0.1 * sin(2 * .pi * 6 * ($0 - 1)) }
+    #expect(narrow.fit?.vibrato == true)
+    // O corretor não o escreve sozinho (largura abaixo de 0,12); um de 0,15 sim.
+    let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
+    #expect(narrow.correction(for: plain, start: 1, end: 2) == nil)
+    let wide = sound { 60 + 0.15 * sin(2 * .pi * 6 * ($0 - 1)) }
+    #expect(wide.correction(for: plain, start: 1, end: 2)?.vibrato == true)
+    // Corda dupla: as duas vibram, uma com largura para o corretor, e as duas ganham o vibrato; se uma parece parada,
+    // ou "vibra" mais de meio semitom (os saltos da curva de acorde), não.
+    let still = sound({ _ in 60 }, chord: true)
+    let vibrating = sound({ 60 + 0.15 * sin(2 * .pi * 6 * ($0 - 1)) }, chord: true)
+    let subtle = sound({ 60 + 0.1 * sin(2 * .pi * 6 * ($0 - 1)) }, chord: true)
+    let jumping = sound({ 60 + 0.7 * sin(2 * .pi * 6 * ($0 - 1)) }, chord: true)
+    #expect(SoundNote.doubleStopVibrato([vibrating, subtle]))
+    #expect(!SoundNote.doubleStopVibrato([vibrating, still]))
+    #expect(!SoundNote.doubleStopVibrato([jumping, subtle]))
+    #expect(!SoundNote.doubleStopVibrato([subtle, subtle]))
+    #expect(!SoundNote.doubleStopVibrato([wide, vibrating, subtle]))
+}
+
+@Test func sincronizarPeloSom() throws {
+    // Oito compassos de 4/4 a 120 (2 s cada), uma batida por semínima; o som vem 50 ms antes em todos, menos o 4, que
+    // um atraso de propósito puxaria 200 ms para depois, e o 6, sem medida.
+    let barTicks = (0...8).map { Double($0) * 3840 }
+    let points = (0...32).map { i in
+        TempoPoint(tick: Double(i) * 960, seconds: Double(i) * 0.5, kind: i % 4 == 0 ? "detected" : "interpolated")
+    }
+    var offsets: [Int: Double] = [:]
+    for bar in [0, 1, 2, 3, 4, 6, 7] { offsets[bar] = -0.05 }
+    offsets[3] = 0.2
+    let result = try #require(SoundSync.synced(points, barTicks: barTicks, offsets: offsets))
+    // Todos andam 50 ms para antes: a mediana dos vizinhos desfaz o compasso 4, e o 6 sem medida segue os vizinhos.
+    #expect(result.points.allSatisfy { abs($0.seconds - (Double($0.tick) / 960 * 0.5 - 0.05)) < 1e-9 })
+    #expect(result.bars == 9 && abs(result.median + 0.05) < 1e-9)
+    // Uma âncora fica onde está; as batidas em volta andam.
+    var anchored = points
+    anchored[8] = TempoPoint(tick: 7680, seconds: 4, kind: "anchor")
+    let kept = try #require(SoundSync.synced(anchored, barTicks: barTicks, offsets: offsets))
+    #expect(kept.points[8].seconds == 4 && abs(kept.points[9].seconds - 4.45) < 1e-9)
+    #expect(SoundSync.synced(points, barTicks: barTicks, offsets: [:]) == nil)
 }
 
 @Test func leiturasECorretor() throws {

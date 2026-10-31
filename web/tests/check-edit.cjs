@@ -900,6 +900,10 @@ test("o encaixe numa nota ligada põe o vibrato nas partes em que o som vibra", 
   assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.33 }));
   score = edit.refinish(alphaTab, score);
   assert.ok(at(score, 960).vibrato && at(score, 1920).vibrato);
+  // O som vibra no começo e acaba antes (c. 27 do Sultans): o vibrato fica na primeira e sai da segunda.
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.05, vibratoTo: 0.55 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(at(score, 960).vibrato && !at(score, 1920).vibrato);
   // Com bend, só depois de chegar ao alto: a subida ocupa a primeira inteira.
   score = build();
   assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: [[0, 0], [30, 4]], vibrato: true, vibratoFrom: 0 }));

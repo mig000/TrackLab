@@ -399,7 +399,7 @@ O som contra o mapa: a curva de cada nota traz `attack` (`media/pitch.py`, `atta
 do sinal sem graves, até 120 ms antes ou depois do começo escrito, de 6 dB para cima; nil num ligado). Na Fita, um
 traço branco no ataque medido quando passa de 30 ms da escrita; no Ajuste, no alto de cada compasso, a mediana dos
 ataques dele (`SoundSync.barOffsets`, ao menos 3 notas, de 25 ms para cima) e "Pelo som" (A) leva o 1 do compasso que
-toca até eles. Sunshine: a primeira nota soa 93 ms antes do mapa, o compasso 12 30 ms antes, o resto a menos de 25 ms. Mover a nota no tempo, que a
+toca até eles. Sunshine: a primeira nota soa 93 ms antes do mapa, o compasso 12 30 ms antes, o resto a menos de 25 ms. "Tudo pelo som" (⇧A no Ajuste; Editar › Sincronizar o mapa pelo som, que abre o Ajuste) faz o mesmo na música toda de uma vez (`SoundSync.synced`: o atraso de cada compasso suavizado pela mediana dos compassos com medida a até dois dele, os sem medida em linha reta entre os vizinhos, cada ponto andando o atraso do lugar dele; as âncoras ficam; até 0,25 s), num passo do Desfazer e no histórico do mapa; sem as curvas, liga a Lente e sincroniza quando a medida termina. No Sultans of Swing (31/10), o mapa do Songsterr deixava o som 45 ms antes das notas em mediana (78 % delas a mais de 30 ms, igual na multitrack e no Demucs do vídeo; do c. 191 ao fim, só 10 ms); simulado, depois: mediana 0, 31 % a mais de 30 ms e 18 % a mais de 60 ms (o que sobra é de nota a nota). Mover a nota no tempo, que a
 Lente fazia em segundos, aqui reescreve o ritmo do Guitar Pro (`edit.retime`): a voz 1 vira uma linha do tempo
 (cada batida com notas é um intervalo; uma cadeia de ligaduras, um só), o intervalo muda e os compassos afetados são
 refeitos com figuras (simples, pontuadas e, se preciso, tercinas), pausas nos espaços e notas ligadas no que passa da
@@ -504,10 +504,24 @@ virava cópia só com casa e corda e perdia o bend segurado e o ligado, e a cóp
 cada nota da Highway Star). Vibrato, P.M. e let ring ligados numa ligada seguem pelas seguintes que estavam iguais. A
 Lente junta a cadeia numa faixa com o bend de cada parte no tempo dela (`chainBend`) e o vibrato de qualquer parte; o F
 numa nota ligada reparte o bend medido entre as partes (`fitChain`) e põe o vibrato nas partes em que o som vibra
-(`vibratoFrom`, a fração da cadeia onde ele começa, de `CurveFit.vibratoStart`: a parte que tem ao menos metade depois
-dele, e com bend só depois de o bend chegar ao alto; sem a medida, a nota inteira sem bend e a última com bend). Antes ia
-só à última: no Sultans of Swing, c. 5, um Ré de três ligadas vibrando do começo ao fim ficava com o vibrato só no fim
-da TAB. Ligada (L, a primeira de Ligados e slides,
+(`vibratoFrom` e `vibratoTo`, a fração da cadeia onde ele começa e acaba, de `CurveFit.vibratoStart`, o começo da
+primeira meia volta, e `vibratoEnd`, o fim da última: a parte em que ao menos um quarto cai dentro dele, e as outras
+ficam sem; nenhuma assim, a que tem mais; com bend, só depois de o bend chegar ao alto; sem a medida, a nota inteira sem
+bend e a última com bend). Antes ia só à última, e o F nem mandava quando uma parte já tinha vibrato: no Sultans of
+Swing, c. 5, um Ré de três ligadas vibrando do começo ao fim ficava com o vibrato só no fim da TAB, e no c. 27 um Dó que
+vibra no começo e acaba antes do fim da escrita ficava com ele só na segunda parte. "Corrigir pelo som" também leva o
+vibrato já escrito das ligadas sem bend às partes em que o som vibra (sem marcar a nota). Na Lente, a faixa de uma nota
+com vibrato segue o do som onde ele tem altura e fica lisa onde não tem (antes ganhava a onda escrita onde o som tinha
+acabado, e o vibrato parecia mais longo que no espectro). O vibrato do som (`SoundNote.fit`) conta cada meia volta em
+volta da curva de 200 ms pela distância de pico a vale (o alto dela mais o da anterior), de 0,2 semitom para cima, e a
+largura (`depth`) é a metade disso; antes cada metade tinha de passar de 0,12 semitom da média sozinha, e o vibrato da
+guitarra que empurra a corda para cima da casa e volta escapava (no Sultans of Swing, c. 42, a corda dupla Lá e Fá na
+casa 10, a de cima vibrando 0,2 semitom). O corretor só escreve sozinho o vibrato de largura 0,12 para cima
+(`SoundNote.writtenVibrato`; com a detecção nova, no GOAT, ele passava a pôr 50 a mais, quase todos sutis: assim põe 11), e
+numa corda dupla (duas notas na mesma batida, `doubleStopVibrato`) põe o vibrato nas duas quando as duas o mostram, uma
+com essa largura e nenhuma acima de meio semitom (a curva de acorde, pelos harmônicos, dá saltos que parecem vibrato
+largo: a 8/9 do c. 42 "vibrava" 0,59 na de baixo e nada na de cima, e ganhava o vibrato); o corretor de nota não mexe em
+acordes, e com três notas ou mais, nada. Ligada (L, a primeira de Ligados e slides,
 `edit.tie`), como no Guitar Pro: a nota passa a continuar a da batida anterior na mesma corda (a casa dela e o alto do
 bend, segurado) ou deixa de continuar; com ela, duas notas (o bend na primeira, o vibrato na segunda) se escrevem sem o
 Dividir. Como o Guitar Pro 8 grava (conferido nele, 30/10): o Bend tem dois pontos e chega no alto a um quarto da nota
