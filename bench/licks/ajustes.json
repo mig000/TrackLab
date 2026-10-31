@@ -1,0 +1,10 @@
+{
+  "comentario": "Medidos em 31/10 pela sincronia.py (a fração das notas sem bend na altura escrita): Billy Gibbons 1 45 -> 88 %, Joe Bonamassa 2 59 -> 85 %, Johnny Winter 1 42 -> 76 %; o reference.gp no andamento escrito (90) com o áudio 0,69 s adiantado (o FramePadding dele; o ponto de sincronia do último compasso fica 4 s fora), 88 %. O FramePadding não vale nos licks (piora o Joe Bonamassa 1 e o SRV 2). O Florent Passamonti é dedilhado e não sincroniza (45 %).",
+  "sincronia": {
+    "Billy-Gibbons-lead-1": [0.06, 1.0],
+    "Joe-Bonamassa-lead-2": [0.12, 0.98],
+    "Johnny-Winter-lead-1": [-0.63, 1.0125],
+    "reference": [0.6916, 0.96053]
+  },
+  "fora": ["5-plans-de-blues-Florent-Passamonti-1"]
+}

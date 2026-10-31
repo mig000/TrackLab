@@ -308,9 +308,16 @@ três músicas fora de acorde (altura 79, bend 58, vibrato 66), 32 das 685 dos l
 com backup e restauração): 21 corrigidas, as suspeitas 138 → 119; um bend rápido com o começo perdido ainda sai "pré ½
 e bend" (c. 250), e o cartão "Original" o volta num clique. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem
 nota 87, não soa 1, ataque 42, vibrato 25. A
-calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Medição da detecção
-de bend (31/10; `node web/tools/bend-curves.cjs <motor> <arquivo>` extrai as curvas das guitarras do repertório e
-`TRACKLAB_BEND_BENCH=<arquivo> mac/test.sh --filter medicaoDosBends` mede): 2.117 notas fora de acorde das três
+calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Medição (`bench/`):
+quatro conjuntos de notas com a curva do som de cada uma, em `~/TrackLab/Medidas` (`TRACKLAB_BENCH_DIR`): `musicas.json`
+(`node web/tools/bend-curves.cjs <motor> ~/TrackLab/Medidas/musicas.json`, as guitarras do repertório pelo motor
+rodando, com a TAB original do pacote em `original`), `licks.json` e `reference.json` (`zsh bench/licks/refazer.sh`,
+~1 min: os Guitar Pro com áudio dentro de "Blues Licks" no HD externo, os ajustes de sincronia em
+`bench/licks/ajustes.json`, achados por `bench/licks/sincronia.py`) e `goat.json` (`zsh bench/goat/refazer.sh <pasta
+GOAT>`, ~15 min). `zsh bench/medir.sh <rótulo>` roda a medição da detecção (`medicaoDosBends`) e a do corretor
+(`medicaoDoCorretor`) nos quatro e mostra a tabela lado a lado (as medidas ficam em `medidas/<rótulo>/`, para comparar
+uma mudança com a anterior). Medição da detecção
+de bend (31/10, as três músicas): 2.117 notas fora de acorde das três
 músicas, 171 com bend escrito; a de antes → a nova: o mesmo tipo do escrito 109 → 119, tipo e alturas 50 → 54, o som
 "não dobra" 34 → 28, suspeita de altura em nota com bend escrito 74 → 62, bend de meio tom ou mais não escrito 145 → 36
 (confirmados), suspeitas de bend 103 → 43 (mais 22 pelo tipo), de altura 450 → 402, notas suspeitas 553 → 454. Das três
@@ -342,8 +349,8 @@ cada nota). Com o começo da nota anterior e o fim da seguinte fora da medida (3
 para 14 notas suspeitas, tipo e alturas do bend escrito 8 → 12 de 21 (os ¼ de tom que saíam "1", "pré e bend" ou "pré e
 volta"), os licks 63 → 61, as músicas iguais (370). Quarto conjunto, o maior: o GOAT (`GOAT.zip` em "Backup projeto" no
 HD externo, o dataset do paper arXiv 2509.22655: 172 gravações de guitarra com o som direto, DI, a TAB em Guitar Pro e o
-MIDI alinhado nota a nota; o jogador tocou a TAB, então ela é a verdade). Um agente montou a medição (31/10; os scripts
-ficaram no scratchpad da sessão, `regenerar.sh`, ~15 min): o tempo de cada nota pelo MIDI do Guitar Pro casado com o
+MIDI alinhado nota a nota; o jogador tocou a TAB, então ela é a verdade). Um agente montou a medição (31/10;
+`bench/goat/`: `notas.cjs` e `curvas.py`, refeitos iguais pelo `refazer.sh`): o tempo de cada nota pelo MIDI do Guitar Pro casado com o
 alinhado (o alphaTab não aplica o swing que o Guitar Pro toca em 15 itens), centrado no ataque; 157 itens passam da
 validação de 70 % (mediana 96,7 %), 27.745 notas fora de acorde, 727 bends escritos. O que ele mostrou e mudou na
 detecção (antes → depois, no GOAT; as músicas, os licks e o reference iguais ou melhores): o vibrato numa corda dobrada
