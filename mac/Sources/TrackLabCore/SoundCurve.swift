@@ -73,13 +73,15 @@ public struct SoundNote: Sendable {
     /// `next`: a altura da nota seguinte da corda, se ela começa onde esta acaba (uma subida no fim que chega a ela é a
     /// passagem, não um bend). `written`: os pontos do bend escrito (o som que fica entre a casa e o alto escrito é o
     /// bend da casa escrita, também quando o rastreador perde o começo de um bend rápido ou é um pré-bend).
+    /// `approached`, `slidesOut`: a nota chega de outra casa (ligado, slide) ou sai por slide (`ScoreNote`).
     public init(curve: PitchCurve, start: Double, end: Double, pitch: Double, chord: Bool = false, next: Int? = nil,
-                written: [ScoreNote.BendPoint] = []) {
+                written: [ScoreNote.BendPoint] = [], approached: Bool = false, slidesOut: Bool = false) {
         self.curve = curve
         self.chord = chord
         level = SoundNote.trend(curve.values, width: Int((0.2 / curve.hop).rounded()))
         quick = SoundNote.trend(curve.values, width: max(3, Int((0.04 / curve.hop).rounded())))
-        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord, next: next, written: written)
+        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord, next: next, written: written,
+                            approached: approached, slidesOut: slidesOut)
         func top(_ series: [Double?]) -> Double {
             var best = -Double.infinity
             for (k, value) in series.enumerated() {
@@ -187,7 +189,8 @@ public struct SoundNote: Sendable {
     }
 
     public static func fit(_ curve: PitchCurve, start: Double, end: Double, pitch: Double?,
-                           trills: Bool = true, next: Int? = nil, written: [ScoreNote.BendPoint] = []) -> CurveFit? {
+                           trills: Bool = true, next: Int? = nil, written: [ScoreNote.BendPoint] = [],
+                           approached: Bool = false, slidesOut: Bool = false) -> CurveFit? {
         let length = end - start
         guard length > 0.04 else { return nil }
         var times: [Double] = []
@@ -197,6 +200,28 @@ public struct SoundNote: Sendable {
             guard t >= start + 0.02, t <= end else { continue }
             times.append(t)
             values.append(value)
+        }
+        // A nota que vem de outra casa (ligado, slide da anterior, slide de fora): o som entra subindo ou descendo até
+        // ela, e esse caminho não é bend nem outra altura; fica fora da medida até o primeiro quadro na altura escrita
+        // (no pré-bend, se escrito), quando ele chega nos primeiros 250 ms (ou três quartos de uma nota curta). A que sai
+        // por slide, sem bend escrito: fora depois do último quadro a um quarto de semitom da altura, nos últimos 250 ms
+        // (o começo da subida até meio semitom já seria um bend de ¼). No reference.gp, 6 das 11 notas acusadas de
+        // "outra altura e bend" eram slide ou ligado de uma ou duas casas abaixo.
+        if let pitch, approached || slidesOut {
+            let target = pitch + (written.first?.value ?? 0) / 2
+            let near = { (i: Int, within: Double) -> Bool in values[i].map { abs($0 - target) <= within } ?? false }
+            let enough = { (range: Range<Int>) -> Bool in values[range].compactMap { $0 }.count >= 6 }
+            let reach = min(0.25, 0.75 * length)
+            if slidesOut, written.isEmpty, let last = values.indices.last(where: { near($0, 0.25) }), times[last] >= end - reach,
+               enough(0..<last + 1) {
+                times.removeSubrange((last + 1)...)
+                values.removeSubrange((last + 1)...)
+            }
+            if approached, let first = values.indices.first(where: { near($0, 0.5) }), times[first] <= start + reach,
+               enough(first..<values.count) {
+                times.removeSubrange(..<first)
+                values.removeSubrange(..<first)
+            }
         }
         let valid = values.compactMap { $0 }
         guard valid.count >= 6, Double(valid.count) >= 0.4 * Double(values.count) else { return nil }
@@ -265,7 +290,9 @@ public struct SoundNote: Sendable {
         // casa: pelo som, um pré-bend parado é igual a uma nota mais alta).
         let bottom = percentile(valid, 0.1)
         let writtenTop = (written.map(\.value).max() ?? 0) / 2
-        let nearFret = pitch.map { abs(bottom - $0) <= 0.5 } ?? false
+        let nearFret = pitch.map { pitch in
+            abs(bottom - pitch) <= 0.5 || Double(valid.filter { abs($0 - pitch) <= 0.5 }.count) >= 0.4 * Double(valid.count)
+        } ?? false
         let inWritten = pitch.map { writtenTop > 0 && bottom >= $0 - 0.5 && bottom <= $0 + writtenTop + 0.5 } ?? false
         var base = fallback
         if let pitch, trill == nil, nearFret || inWritten { base = Int(pitch.rounded()) }

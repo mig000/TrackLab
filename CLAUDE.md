@@ -152,7 +152,9 @@ cursor); o que vem antes das batidas é medido só na pista principal (uma pausa
 Cada desenho do alphaTab vai para uma camada nova, transparente, e só troca com a da tela quando termina (a pauta não
 some num zoom ou num mapa novo). Com o zoom mudando, a camada da tela é esticada na hora (`renderedSpan / span`, pelo
 transform da `#sheet`) e a TAB acompanha a Fita até o desenho novo chegar. A página manda as notas de cada pista
-(`trackNotes`: tique, duração, altura, corda, casa) para as barras sobre o espectro da Fita.
+(`trackNotes`: tique, duração, altura, corda, casa, vibrato, trinado, como a nota chega e sai e o bend; a chegada é 1
+quando ela vem de outra casa pela corda, num ligado, num slide da anterior ou num slide de fora, e a saída 2 quando sai
+por slide, `ScoreNote.approached`/`slidesOut`) para as barras sobre o espectro da Fita.
 
 Edição da TAB (`score-edit.js`, testado em `web/tests/check-edit.cjs`): como a do TabLab, mas sobre o próprio Guitar
 Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia detalhe na volta ao .gp). Com
@@ -229,12 +231,17 @@ a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao s
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
 bend e o vibrato do som (`fit` na página). O bend do som sai num tipo do editor (`CurveFit.form`, um `BendForm`), nos
 pontos que o Guitar Pro 7 guarda (`CurveFit.guitarPro`). A detecção (`SoundNote.fit`, refeita em 31/10 e medida nas
-três músicas, abaixo): a casa é a escrita quando o som passa perto dela, ou quando fica entre ela e o alto do bend
+três músicas, abaixo): a casa é a escrita quando o som passa perto dela (o grave dele a meio semitom, ou 40 % dos
+quadros a meio semitom dela: o som que fica na nota com uma entrada curta de baixo, o fim da nota anterior ou um ligado
+que o Songsterr não escreve, era "outra altura e bend"), ou quando fica entre ela e o alto do bend
 escrito (`written`, os pontos do bend da nota: o rastreador perdeu o começo de um bend rápido, ou é um pré-bend; antes o
 grave do começo virava a casa, e um bend rápido ou o fim dobrado da nota anterior, que o rastreador ainda ouve nos
 primeiros quadros num solo de bends, punham a nota um ou dois semitons acima, "outra altura"); se o som nunca passa
 pela casa e o bend escrito sai dela, o começo não é pré-bend (a subida perdida; sem isso, 30 bends escritos das músicas
-viravam "pré e bend"); três alturas acima da
+viravam "pré e bend"); numa nota que chega de outra casa (`approached`), a entrada fica fora da medida até o primeiro
+quadro a meio semitom da altura escrita, se ele chega nos primeiros 250 ms (ou três quartos de uma nota curta), e numa
+que sai por slide sem bend escrito (`slidesOut`), o que vem depois do último quadro a um quarto de semitom dela nos
+últimos 250 ms (o começo da subida até meio semitom já seria um bend de ¼); três alturas acima da
 casa dizem o tipo: o ataque (o grave dos primeiros 100 ms ou um quinto da nota; pré-bend de meio tom para cima), o alto
 (com vibrato, a curva de 200 ms menos a meia oscilação; sem ele, a de 40 ms, que alcança o bend que só chega no fim da
 nota, sem os primeiros 50 ms) e o fim (a curva de 40 ms no último sétimo); um salto de ¾ de semitom no último quarto da
@@ -290,8 +297,12 @@ fora de acorde, 21 com bend escrito, quase todos de ¼ de tom; sincroniza no and
 adiantado (o `FramePadding` dele, −30.500 quadros; o ponto de sincronia do último compasso fica 4 s fora), 88 % das
 notas sem bend na altura. Ali as duas versões de 31/10 dão o mesmo: o mesmo tipo 11 de 21, tipo e alturas 8, "não
 dobra" 4, notas suspeitas 32. O que ele mostrou: das 11 notas sem bend escrito acusadas de "outra altura e bend", 6 são
-slide ou ligado de uma ou duas casas abaixo (o som entra subindo e fica na escrita); nas músicas e nos licks há 60 e 27
-assim, e o `trackNotes` não manda slides nem ligados. Na
+slide ou ligado de uma ou duas casas abaixo (o som entra subindo e fica na escrita); nas músicas e nos licks havia 60 e
+27 assim. Com a chegada e a saída das notas e a casa pelos 40 % (31/10, à noite), das notas assim sobram 31 nas músicas,
+2 nos licks e nenhuma no reference; notas suspeitas 418 → 370 nas músicas, 103 → 63 nos licks, 32 → 19 no reference
+(as ligações sozinhas: 412, 75, 25); de altura 359 → 311, 77 → 37, 23 → 9; bend de meio tom ou mais não escrito,
+confirmado, 36 → 25, 19 → 6, 9 → 3; os bends escritos ficam como estavam (o `bend-curves.cjs` grava a chegada e a saída de
+cada nota). Na
 linha do som da coluna, o bend em palavras (`BendForm.spoken`: "sobe 1 e volta a ½"); no gráfico do editor, tracejado,
 o que o som sugere (o que o F escreveria; numa nota sem bend escrito, uma linha "O som sugere"). A linha do som e o
 gráfico leem `pitchCurvesVersion` (antes podiam ficar com a medida de antes de a afinação da gravação ser refeita). Com o espectro à

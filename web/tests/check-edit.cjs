@@ -497,7 +497,7 @@ test("dividir: duas ligadas com o mesmo som, o vibrato só na segunda, e a divis
   const lens = core.trackNotes(score)[0].find((n) => n[0] === 960);
   assert.equal(lens[1], 1920);
   assert.equal(lens[5], 1);
-  assert.deepEqual(lens.slice(7), [0, 0, 15, 4, 30, 4, 60, 4]);
+  assert.deepEqual(lens.slice(8), [0, 0, 15, 4, 30, 4, 60, 4]);
   // A nota anda uma semínima: a divisão e o vibrato vão junto.
   assert.equal(edit.nudge(alphaTab, at(score, 960), 1, 960), true);
   score = edit.refinish(alphaTab, score);
@@ -583,7 +583,7 @@ test("vibrato numa ligada com Hold (como a importação do Songsterr grava): o H
   hold(at(score, 4800), 2);
   score = reread(edit.refinish(alphaTab, score));
   assert.ok([960, 1920, 4800].every((tick) => at(score, tick).isTieDestination && at(score, tick).hasBend));
-  const bends = (sc) => core.trackNotes(sc)[0].map((n) => [n[0], n.slice(7)]);
+  const bends = (sc) => core.trackNotes(sc)[0].map((n) => [n[0], n.slice(8)]);
   const sound = bends(score);
   // O vibrato na primeira ligada: ela perde o Hold; a seguinte, sem vibrato, fica como estava.
   edit.toggle(alphaTab, at(score, 960), "vibrato");
@@ -650,7 +650,7 @@ test("o compasso refeito não muda o som: o bend de uma nota ligada continua no 
   let score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, new alphaTab.Settings());
   const sound = (sc) => new Map(core.trackNotes(sc)[0].map((n) => {
     const points = [];
-    for (let i = 7; i + 1 < n.length; i += 2) points.push([n[i], n[i + 1]]);
+    for (let i = 8; i + 1 < n.length; i += 2) points.push([n[i], n[i + 1]]);
     const at = (x) => {
       if (!points.length) return 0;
       if (x <= points[0][0]) return points[0][1];
@@ -846,6 +846,26 @@ test("editor de bend: a ligada traz a altura, a volta dela é Release, e um bend
   const again = reread(score);
   assert.ok(at(again, 1920).hasBend, "o bend chega ao Guitar Pro");
   assert.equal(edit.gpSafe(alphaTab, score), 0);
+});
+
+test("as notas para a Lente dizem como chegam e saem: ligado, slide da anterior, slide de fora e slide de saída", () => {
+  // O som de uma nota que vem de outra casa entra subindo ou descendo até ela (antes a Lente via "outra altura e bend").
+  const core = require("../score-core.js");
+  const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, "fixtures", "combinacoes.gp")));
+  const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, new alphaTab.Settings());
+  const all = edit.notesOf(score.tracks[0].staves[0]);
+  const lens = core.trackNotes(score)[0];
+  const links = (note) => lens.find((n) => n[0] === note.beat.absolutePlaybackStart && n[4] === note.fret)[7];
+  const hammered = all.find((n) => n.isHammerPullDestination);
+  const slid = all.find((n) => n.slideOutType === alphaTab.model.SlideOutType.Legato);
+  const slideIn = all.find((n) => n.slideInType);
+  assert.equal(links(hammered) & 1, 1);
+  assert.equal(links(slid) & 2, 2);
+  assert.equal(links(slid.slideTarget) & 1, 1);
+  assert.equal(links(slideIn) & 1, 1);
+  const plain = all.filter((n) => !n.isTieDestination && !n.isHammerPullDestination && !n.slideOrigin && !n.slideInType
+    && !n.slideOutType);
+  assert.ok(plain.length > 30 && plain.every((n) => links(n) === 0));
 });
 
 console.log(`${passed} verificações passaram`);

@@ -13,6 +13,7 @@ import Testing
     struct Note: Decodable {
         let tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int, trill: Int?
         let bend: [Double], start: Double, end: Double, others: [Int], next: Next?, curve: Curve
+        let approached: Bool?, slidesOut: Bool?
     }
     struct Track: Decodable { let index: Int; let name: String; let notes: [Note] }
     struct Song: Decodable { let name: String; let tracks: [Track] }
@@ -43,10 +44,12 @@ import Testing
                     ScoreNote.BendPoint(offset: note.bend[$0], value: note.bend[$0 + 1])
                 }
                 let written = ScoreNote(tick: note.tick, duration: note.duration, pitch: note.pitch, string: note.string,
-                                        fret: note.fret, vibrato: note.vibrato, bend: pairs, trill: note.trill)
+                                        fret: note.fret, vibrato: note.vibrato, bend: pairs, trill: note.trill,
+                                        approached: note.approached ?? false, slidesOut: note.slidesOut ?? false)
                 let shifted = curve(note).shifted(by: -tuning)
                 let sound = SoundNote(curve: shifted, start: note.start, end: note.end, pitch: Double(note.pitch),
-                                      next: note.next.flatMap { $0.gap < 1 ? $0.pitch : nil }, written: pairs)
+                                      next: note.next.flatMap { $0.gap < 1 ? $0.pitch : nil }, written: pairs,
+                                      approached: note.approached ?? false, slidesOut: note.slidesOut ?? false)
                 guard let fit = sound.fit, fit.trill == nil else { continue }
                 let wrote = BendForm(points: pairs.map { [$0.offset, $0.value] })
                 let heard = fit.form

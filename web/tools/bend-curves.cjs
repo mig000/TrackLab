@@ -26,7 +26,7 @@ const root = path.join(process.env.HOME, "TrackLab/Repertorio");
       const stem = /rhythm|ritmo|base/.test(name) && files.rhythm ? "rhythm" : "guitar";
       if (!files[stem]) continue;
       const notes = raw.map((n) => ({ tick: n[0], duration: n[1], pitch: n[2], string: n[3], fret: n[4], vibrato: n[5],
-        trill: n[6] || null, bend: n.slice(7), start: core.tickToSeconds(points, n[0]), end: core.tickToSeconds(points, n[0] + n[1]) }));
+        trill: n[6] || null, approached: (n[7] & 1) > 0, slidesOut: (n[7] & 2) > 0, bend: n.slice(8), start: core.tickToSeconds(points, n[0]), end: core.tickToSeconds(points, n[0] + n[1]) }));
       for (const n of notes) {
         n.others = notes.filter((o) => o !== n && o.tick === n.tick).map((o) => o.pitch);
         const next = notes.find((o) => o.string === n.string && o.tick >= n.tick + n.duration - 1);

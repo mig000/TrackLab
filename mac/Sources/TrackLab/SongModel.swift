@@ -505,7 +505,7 @@ final class SongModel {
             guard let curve = curves[item.key] else { continue }
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
                                chord: chords.contains(item.key), plain: note.bend.isEmpty, next: next(note),
-                               written: note.bend)
+                               written: note.bend, approached: note.approached, slidesOut: note.slidesOut)
             rawCurves[item.key] = raw
             soundNotes[item.key] = raw.sound(tuning: tuning)
         }
@@ -523,10 +523,12 @@ final class SongModel {
         let plain: Bool
         let next: Int?
         let written: [ScoreNote.BendPoint]
+        let approached: Bool
+        let slidesOut: Bool
 
         func sound(tuning: Double) -> SoundNote {
             SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord,
-                      next: next, written: written)
+                      next: next, written: written, approached: approached, slidesOut: slidesOut)
         }
     }
 
@@ -1538,7 +1540,8 @@ final class SongModel {
             let chord = scoreNotes.indices.contains(track)
                 && scoreNotes[track].contains { $0.tick == note.tick && $0.string != note.string }
             let fit = curves?[key].map {
-                SoundNote(curve: $0.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord)
+                SoundNote(curve: $0.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord,
+                          approached: note.approached, slidesOut: note.slidesOut)
             }?.fit
             if let fit, abs(Double(fit.base) - Double(pitch)) <= 1 {
                 apply(fit, to: note, center: Double(pitch))

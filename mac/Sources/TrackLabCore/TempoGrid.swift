@@ -151,8 +151,8 @@ public enum LoopRegion {
 }
 
 /// Uma nota da partitura para as barras sobre o espectro: tique, duração em tiques, altura MIDI, corda (1 é a mais
-/// aguda), casa, vibrato (0, 1 leve, 2 largo) e os pontos do bend (deslocamento de 0 a 60 ao longo da nota, valor em
-/// quartos de tom), como a página da partitura manda (`trackNotes` em score-core.js).
+/// aguda), casa, vibrato (0, 1 leve, 2 largo), como chega e sai (ligado, slide) e os pontos do bend (deslocamento de 0 a
+/// 60 ao longo da nota, valor em quartos de tom), como a página da partitura manda (`trackNotes` em score-core.js).
 public struct ScoreNote: Hashable, Sendable {
     public struct BendPoint: Hashable, Sendable {
         public let offset: Double
@@ -173,9 +173,14 @@ public struct ScoreNote: Hashable, Sendable {
     public let bend: [BendPoint]
     /// A altura MIDI da outra nota do trinado escrito; nil sem trinado.
     public let trill: Int?
+    /// A nota vem de outra casa pela corda (ligado, slide da anterior ou slide de fora): o som entra subindo ou
+    /// descendo até ela.
+    public let approached: Bool
+    /// A nota sai por slide (para a seguinte ou para fora).
+    public let slidesOut: Bool
 
     public init(tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int = 0,
-                bend: [BendPoint] = [], trill: Int? = nil) {
+                bend: [BendPoint] = [], trill: Int? = nil, approached: Bool = false, slidesOut: Bool = false) {
         self.tick = tick
         self.duration = duration
         self.pitch = pitch
@@ -184,18 +189,23 @@ public struct ScoreNote: Hashable, Sendable {
         self.vibrato = vibrato
         self.bend = bend
         self.trill = trill
+        self.approached = approached
+        self.slidesOut = slidesOut
     }
 
-    /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, trinado?, deslocamento, valor, …], …] (o
-    /// trinado é a altura da outra nota, 0 sem); o que não tiver os cinco primeiros números fica de fora.
+    /// A lista da página: [[tique, duração, altura, corda, casa, vibrato?, trinado?, ligações?, deslocamento, valor, …],
+    /// …] (o trinado é a altura da outra nota, 0 sem; as ligações, 1 quando a nota chega de outra casa e 2 quando sai por
+    /// slide, somados); o que não tiver os cinco primeiros números fica de fora.
     public static func list(_ raw: [[Double]]) -> [ScoreNote] {
         raw.compactMap { item in
             guard item.count >= 5, item.allSatisfy(\.isFinite), item[1] > 0 else { return nil }
-            let pairs = item.count > 7 ? Array(item[7...]) : []
+            let pairs = item.count > 8 ? Array(item[8...]) : []
             let bend = stride(from: 0, to: pairs.count - 1, by: 2).map { BendPoint(offset: pairs[$0], value: pairs[$0 + 1]) }
             let trill = item.count > 6 && item[6] > 0 ? Int(item[6]) : nil
+            let links = item.count > 7 ? Int(item[7]) : 0
             return ScoreNote(tick: item[0], duration: item[1], pitch: Int(item[2]), string: Int(item[3]),
-                             fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend, trill: trill)
+                             fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend, trill: trill,
+                             approached: links & 1 != 0, slidesOut: links & 2 != 0)
         }
     }
 

@@ -281,9 +281,11 @@
   }
 
   // As notas de cada pista do Guitar Pro lido, para as barras sobre o espectro da Fita: [tique, duração em tiques, altura
-  // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), a altura MIDI do trinado (0 sem trinado), e os
-  // pontos do bend em pares (deslocamento de 0 a 60 ao longo da nota, valor em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não
-  // entram; a bateria não tem altura e fica de fora (lista vazia).
+  // MIDI, corda (1 é a mais aguda), casa, vibrato (0, 1 leve, 2 largo), a altura MIDI do trinado (0 sem trinado), como
+  // a nota chega e sai (1: vem de outra casa pela corda, num ligado, num slide da anterior ou num slide de fora; 2: sai
+  // por slide; 3: os dois) e os pontos do bend em pares (deslocamento de 0 a 60 ao longo da nota, valor em quartos de
+  // tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não entram; a bateria não tem altura e fica de
+  // fora (lista vazia).
   function trackNotes(score) {
     return score.tracks.map((track) => {
       const notes = [];
@@ -305,8 +307,11 @@
                 const vibrato = Math.max(...pieces.map((n) => (n.vibrato === 2 ? 2 : n.vibrato ? 1 : 0)));
                 const bend = chainBend(pieces, duration).flatMap((p) => p);
                 const trill = note.isTrill ? note.realValue + note.trillFret - note.fret : 0;
+                const out = pieces[pieces.length - 1].slideOutType;
+                const links = (note.isHammerPullDestination || note.slideOrigin || note.slideInType ? 1 : 0)
+                  + (out >= 1 && out <= 4 ? 2 : 0);
                 notes.push([beat.absolutePlaybackStart, duration, note.realValue, strings ? strings - note.string + 1 : 0,
-                  note.fret, vibrato, trill, ...bend]);
+                  note.fret, vibrato, trill, links, ...bend]);
               }
             }
           }

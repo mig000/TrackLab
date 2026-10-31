@@ -369,8 +369,12 @@ private func grid(bars: Int = 3) -> TempoGrid {
     let notes = ScoreNote.list([[0, 4800, 74, 1, 10], [960, 0, 60, 2, 1], [1, 2]])
     #expect(notes == [ScoreNote(tick: 0, duration: 4800, pitch: 74, string: 1, fret: 10)])
     // Bend de um tom (4 quartos) que sobe até a metade da nota; vibrato leve.
-    let bent = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 0, 0, 30, 4, 60, 4]]).first)
+    let bent = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 0, 0, 0, 30, 4, 60, 4]]).first)
     #expect(bent.trill == nil && ScoreNote.list([[0, 960, 64, 2, 5, 0, 66]]).first?.trill == 66)
+    // Como a nota chega e sai: 1 vem de outra casa (ligado, slide), 2 sai por slide.
+    #expect(!bent.approached && !bent.slidesOut && bent.bend.count == 3)
+    let linked = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 3]]).first)
+    #expect(linked.approached && linked.slidesOut && linked.bend.isEmpty)
     #expect(bent.shape(fraction: 0, elapsed: 0) == 0 && bent.shape(fraction: 1, elapsed: 1) == 2)
     #expect(abs(bent.shape(fraction: 0.25, elapsed: 0) - 1) < 1e-9)
     let wavy = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 1]]).first)
@@ -743,6 +747,24 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // A subida depois da metade que chega à nota seguinte é a passagem; sem a seguinte, é bend.
     #expect(try fit(next: 62) { glide($0, 60, 1.6, 62, 12) }.form == nil)
     #expect(try fit { glide($0, 60, 1.6, 62, 12) }.form?.kind == .bend)
+}
+
+@Test func slideELigadoNaoSaoBend() throws {
+    // Slide de duas casas abaixo que só chega na nota depois de 180 ms (de 250): sem saber do slide, é a casa de baixo
+    // com um bend de um tom ("outra altura e bend"); com ele, a entrada fica fora e a nota está certa.
+    let slideIn = soundCurve(1, 1.25) { $0 < 1.15 ? 58 : min(60, 58 + ($0 - 1.15) * 50) }
+    let plain = try #require(SoundNote(curve: slideIn, start: 1, end: 1.25, pitch: 60).fit)
+    #expect(plain.base == 58 && plain.form?.kind == .bend)
+    let approached = try #require(SoundNote(curve: slideIn, start: 1, end: 1.25, pitch: 60, approached: true).fit)
+    #expect(approached.base == 60 && approached.form == nil)
+    // Sai por slide para cima a partir de 60 % da nota: sem saber, um bend; com o slide escrito, nada.
+    let slideOut = soundCurve(1, 1.4) { $0 < 1.24 ? 60 : 60 + ($0 - 1.24) * 15 }
+    #expect(try #require(SoundNote(curve: slideOut, start: 1, end: 1.4, pitch: 60).fit).form?.kind == .bend)
+    #expect(try #require(SoundNote(curve: slideOut, start: 1, end: 1.4, pitch: 60, slidesOut: true).fit).form == nil)
+    // O som fica na nota escrita a maior parte do tempo, com uma entrada de baixo que a partitura não marca (o fim da
+    // nota anterior, um ligado que o Songsterr não escreve): a casa é a escrita, não a de baixo.
+    let dip = soundCurve(1, 1.3) { $0 < 1.1 ? 58 : 60 }
+    #expect(try #require(SoundNote(curve: dip, start: 1, end: 1.3, pitch: 60).fit).base == 60)
 }
 
 @Test func suspeitasDeBendPeloTipo() {
