@@ -868,4 +868,43 @@ test("as notas para a Lente dizem como chegam e saem: ligado, slide da anterior,
   assert.ok(plain.length > 30 && plain.every((n) => links(n) === 0));
 });
 
+test("o encaixe numa nota ligada põe o vibrato nas partes em que o som vibra", () => {
+  // Uma mínima sem bend dividida em duas ligadas: o som vibra do começo ao fim, e o vibrato vai às duas (antes, só a
+  // última ganhava, e a TAB o mostrava só no fim); se o som só vibra no fim, só a segunda.
+  const build = () => {
+    let score = load();
+    for (const tick of [1920, 2880]) {
+      assert.equal(edit.toRest(alphaTab, at(score, tick)), true);
+      score = edit.refinish(alphaTab, score);
+    }
+    assert.equal(edit.setLength(alphaTab, at(score, 960), 1920), true);
+    score = edit.refinish(alphaTab, score);
+    assert.equal(edit.split(alphaTab, at(score, 960), 1920), true);
+    return edit.refinish(alphaTab, score);
+  };
+  let score = build();
+  const pitch = at(score, 960).realValue;
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.05 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(at(score, 960).vibrato && at(score, 1920).vibrato);
+  score = build();
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.6 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(!at(score, 960).vibrato && at(score, 1920).vibrato);
+  // O vibrato só na última, já escrito: o encaixe com a medida o leva também à primeira.
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(at(score, 960).vibrato && at(score, 1920).vibrato);
+  // Vibra no último terço da primeira: ela entra (basta um quarto dela).
+  score = build();
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: null, vibrato: true, vibratoFrom: 0.33 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(at(score, 960).vibrato && at(score, 1920).vibrato);
+  // Com bend, só depois de chegar ao alto: a subida ocupa a primeira inteira.
+  score = build();
+  assert.ok(edit.fit(alphaTab, at(score, 960), { pitch, bend: [[0, 0], [30, 4]], vibrato: true, vibratoFrom: 0 }));
+  score = edit.refinish(alphaTab, score);
+  assert.ok(!at(score, 960).vibrato && at(score, 1920).vibrato);
+});
+
 console.log(`${passed} verificações passaram`);

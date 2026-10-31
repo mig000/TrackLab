@@ -10,6 +10,10 @@ sempre) com três jeitos de guardar uma música:
 
 O índice é um SQLite em `~/TrackLab/multitracks.sqlite` com uma tabela FTS5 (sem acentos, por começo de palavra). A
 varredura é refeita inteira (o HD externo pode ter mudado); com 3.800 músicas leva dezenas de segundos, na fila.
+
+As escondidas (uma regravação que não serve, uma cópia repetida) ficam numa lista à parte, pelo caminho, em
+`~/TrackLab/multitracks-hidden.json`: os arquivos da biblioteca não mudam, a varredura continua indexando-as e só a
+busca e o casamento com o Songsterr as deixam de fora.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from pathlib import Path
 
 from . import home
 from .errors import TrackLabError
-from .util import now_iso
+from .util import atomic_json, now_iso
 
 DEFAULT_ROOT = Path("/Volumes/HD Externo WD/Multitracks")
 AUDIO = {".wav", ".flac", ".mp3", ".ogg", ".opus", ".aif", ".aiff", ".m4a"}
@@ -70,6 +74,35 @@ def root() -> Path:
 
 def database() -> Path:
     return home.home() / "multitracks.sqlite"
+
+
+def hidden_file() -> Path:
+    return home.home() / "multitracks-hidden.json"
+
+
+def hidden() -> set[str]:
+    """Os caminhos (relativos à biblioteca) das músicas escondidas."""
+    target = hidden_file()
+    if not target.is_file():
+        return set()
+    try:
+        paths = json.loads(target.read_text(encoding="utf-8")).get("hidden")
+    except (OSError, ValueError, AttributeError):
+        return set()
+    return {path for path in paths if isinstance(path, str)} if isinstance(paths, list) else set()
+
+
+def set_hidden(relative: str, hide: bool, path: Path | None = None) -> list[str]:
+    """Esconde ou mostra de novo a música do índice com este caminho; devolve a lista das escondidas."""
+    paths = hidden()
+    if hide:
+        if by_path(relative, path=path) is None:
+            raise MultitrackError(f"{relative} não está no índice das multitracks.")
+        paths.add(relative)
+    else:
+        paths.discard(relative)
+    atomic_json(hidden_file(), {"hidden": sorted(paths)})
+    return sorted(paths)
 
 
 def _plain(filename: str) -> str:
@@ -244,7 +277,7 @@ def status(path: Path | None = None) -> dict:
     """Onde está a biblioteca, se o HD está ligado e o que o índice tem."""
     target = Path(path or database())
     folder = root()
-    result = {"root": str(folder), "available": folder.is_dir(), "count": 0, "scanned": None}
+    result = {"root": str(folder), "available": folder.is_dir(), "count": 0, "scanned": None, "hidden": len(hidden())}
     if target.is_file():
         with _connect(target) as connection:
             meta = dict(connection.execute("SELECT key, value FROM meta").fetchall())
@@ -262,27 +295,43 @@ def _query(text: str) -> str | None:
     return " ".join(f'"{word}"*' for word in words) or None
 
 
-def search(text: str, limit: int = SEARCH_LIMIT, path: Path | None = None) -> list[dict]:
-    """As músicas do índice que têm todas as palavras (título, artista, álbum), as do título primeiro (bm25)."""
+def search(text: str, limit: int = SEARCH_LIMIT, path: Path | None = None, *,
+           include_hidden: bool = False) -> list[dict]:
+    """As músicas do índice que têm todas as palavras (título, artista, álbum), as do título primeiro (bm25); as
+    escondidas só com `include_hidden`."""
     query = _query(text)
     target = Path(path or database())
     if not query or not target.is_file():
         return []
+    skip = [] if include_hidden else sorted(hidden())
     with _connect(target) as connection:
         rows = connection.execute(
             "SELECT songs.* FROM search JOIN songs ON songs.id = search.rowid WHERE search MATCH ? "
-            "ORDER BY bm25(search, 10.0, 5.0, 1.0) LIMIT ?", (query, limit)).fetchall()
-    return [_row(row) for row in rows]
+            f"AND songs.path NOT IN ({','.join('?' * len(skip))}) "
+            "ORDER BY bm25(search, 10.0, 5.0, 1.0) LIMIT ?", (query, *skip, limit)).fetchall()
+    return _rows(rows)
+
+
+def hidden_songs(path: Path | None = None) -> list[dict]:
+    """As escondidas que estão no índice, por artista e título."""
+    target = Path(path or database())
+    paths = sorted(hidden())
+    if not paths or not target.is_file():
+        return []
+    with _connect(target) as connection:
+        rows = connection.execute(f"SELECT * FROM songs WHERE path IN ({','.join('?' * len(paths))}) "
+                                  "ORDER BY artist, title, path", paths).fetchall()
+    return _rows(rows)
 
 
 def by_path(relative: str, path: Path | None = None) -> dict | None:
-    """A música do índice com este caminho (relativo à biblioteca), ou None."""
+    """A música do índice com este caminho (relativo à biblioteca), ou None. Pedida pelo caminho, uma escondida vale."""
     target = Path(path or database())
     if not target.is_file():
         return None
     with _connect(target) as connection:
         row = connection.execute("SELECT * FROM songs WHERE path = ?", (relative,)).fetchone()
-    return _row(row) if row else None
+    return _rows([row])[0] if row else None
 
 
 def match(artist: str, title: str, path: Path | None = None) -> dict | None:
@@ -305,12 +354,17 @@ def _key(text: str) -> str:
     return " ".join(re.findall(r"\w+", re.sub(r"^the\s+", "", text)))
 
 
-def _row(row: sqlite3.Row) -> dict:
+def _rows(rows: list[sqlite3.Row]) -> list[dict]:
+    paths = hidden()
+    return [_row(row, row["path"] in paths) for row in rows]
+
+
+def _row(row: sqlite3.Row, is_hidden: bool = False) -> dict:
     stems = json.loads(row["stems"] or "[]")
     return {"id": row["id"], "path": row["path"], "artist": row["artist"], "title": row["title"], "album": row["album"],
             "year": row["year"], "format": row["format"], "collection": row["collection"], "stems": stems,
-            "kinds": sorted({stem["kind"] for stem in stems})}
+            "kinds": sorted({stem["kind"] for stem in stems}), "hidden": is_hidden}
 
 
-__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "by_path", "kind_of", "kinds_of", "clean_name",
-           "split_name"]
+__all__ = ["MultitrackError", "root", "scan", "build", "status", "search", "match", "by_path", "hidden", "set_hidden",
+           "hidden_songs", "kind_of", "kinds_of", "clean_name", "split_name"]

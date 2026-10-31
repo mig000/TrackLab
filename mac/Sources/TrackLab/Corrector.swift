@@ -95,7 +95,18 @@ extension SongModel {
             let beat = grid.seconds(at: note.tick + TempoGrid.ticksPerQuarter) - grid.seconds(at: note.tick)
             value["trillSpeed"] = sound?.fit?.trill?.speed(beatSeconds: beat) ?? 16
         }
+        if reading.vibrato, let from = vibratoFrom(note, fit: sound?.fit) { value["vibratoFrom"] = from }
         return value
+    }
+
+    /// Onde o vibrato do som começa, na fração 0–1 da nota (a cadeia de ligadas inteira): a página põe o vibrato nas
+    /// partes ligadas em que o som vibra.
+    func vibratoFrom(_ note: ScoreNote, fit: CurveFit?) -> Double? {
+        guard let begin = fit?.vibratoStart else { return nil }
+        let start = grid.seconds(at: note.tick)
+        let end = grid.seconds(at: note.tick + note.duration)
+        guard end > start else { return nil }
+        return max(0, min(1, (begin - start) / (end - start)))
     }
 
     // MARK: - As leituras da nota escolhida

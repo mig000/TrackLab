@@ -165,6 +165,17 @@ def test_the_multitrack_index_through_the_api(client, tmp_path, monkeypatch):
     assert job["status"] == "done" and job["result"]["count"] == 1
     found = client.get("/api/multitracks/search", params={"q": "sunshine"}).json()["results"]
     assert [(s["artist"], s["kinds"]) for s in found] == [("Cream", ["backing", "guitar"])]
+    path = found[0]["path"]
+    assert client.put("/api/multitracks/hidden", json={"path": path, "hidden": True}).json() == {"hidden": [path]}
+    assert client.get("/api/multitracks/search", params={"q": "sunshine"}).json()["results"] == []
+    shown = client.get("/api/multitracks/search", params={"q": "sunshine", "hidden": "true"}).json()["results"]
+    assert [s["hidden"] for s in shown] == [True]
+    assert [s["path"] for s in client.get("/api/multitracks/hidden").json()["results"]] == [path]
+    assert client.get("/api/multitracks").json()["hidden"] == 1
+    assert client.put("/api/multitracks/hidden", json={"path": "Outra"}).status_code == 400
+    assert client.put("/api/multitracks/hidden", json={"path": "Outra", "hidden": True}).status_code == 400
+    assert client.put("/api/multitracks/hidden", json={"path": path, "hidden": False}).json() == {"hidden": []}
+    assert client.get("/api/multitracks/search", params={"q": "sunshine"}).json()["results"][0]["hidden"] is False
 
 
 def test_stem_sources_through_the_api(tmp_path, monkeypatch):

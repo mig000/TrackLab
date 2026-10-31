@@ -394,6 +394,10 @@ public struct MultitrackSong: Codable, Identifiable, Hashable, Sendable {
     public let format: String
     public let collection: String
     public let kinds: [String]
+    /// Escondida da biblioteca (os arquivos ficam onde estão): só vem na busca que pede as escondidas.
+    public let hidden: Bool?
+
+    public var isHidden: Bool { hidden == true }
 
     /// Os instrumentos em português, na ordem do mixer.
     public var instruments: [String] {
@@ -418,6 +422,8 @@ public struct MultitrackStatus: Codable, Hashable, Sendable {
     public let available: Bool
     public let count: Int
     public let scanned: String?
+    /// Quantas estão escondidas.
+    public let hidden: Int?
 }
 
 public struct MultitrackSearch: Codable, Sendable {

@@ -38,11 +38,15 @@ public struct CurveFit: Hashable, Sendable {
     /// Os segundos da curva que o encaixe mediu (sem o começo que ainda é a nota anterior, a entrada de outra casa e o
     /// fim que já é a seguinte): onde as leituras são comparadas com o som.
     public let window: ClosedRange<Double>?
+    /// O segundo em que o vibrato começa (o começo da primeira meia volta), nil sem vibrato: numa nota ligada, o
+    /// vibrato vai às partes em que o som vibra.
+    public let vibratoStart: Double?
 
     public init(base: Int, low: Double, rise: Double, quarterTones: Int, form: BendForm?, vibrato: Bool, trill: Trill?,
-                depth: Double, certain: Bool = true, window: ClosedRange<Double>? = nil) {
+                depth: Double, certain: Bool = true, window: ClosedRange<Double>? = nil, vibratoStart: Double? = nil) {
         self.certain = certain
         self.window = window
+        self.vibratoStart = vibratoStart
         self.base = base
         self.low = low
         self.rise = rise
@@ -309,6 +313,9 @@ public struct SoundNote: Sendable {
         var top = 0.0
         var firstSwing: Double?
         var lastSwing: Double?
+        // Onde a primeira meia volta começou (o começo do vibrato; `firstSwing` é onde ela acaba, meia volta depois).
+        var swingFrom: Double?
+        var vibratoFrom: Double?
         var sizes: [Double] = []
         for i in values.indices {
             guard let value = values[i], let trend = level[i] else { continue }
@@ -318,11 +325,15 @@ public struct SoundNote: Sendable {
                 if sign != 0, top >= 0.12 {
                     swings += 1
                     sizes.append(top)
-                    if firstSwing == nil { firstSwing = times[i] }
+                    if firstSwing == nil {
+                        firstSwing = times[i]
+                        vibratoFrom = swingFrom
+                    }
                     lastSwing = times[i]
                 }
                 sign = s
                 top = 0
+                swingFrom = times[i]
             }
             top = max(top, abs(rest))
         }
@@ -527,7 +538,8 @@ public struct SoundNote: Sendable {
         let quarters = form.map { max($0.kind.usesPre ? $0.pre : 0, $0.kind.usesTop ? $0.top : 0) } ?? 0
         return CurveFit(base: base, low: form?.kind.usesPre == true ? ref : low, rise: form == nil ? 0 : max(0, rise),
                         quarterTones: quarters, form: form, vibrato: vibrato, trill: nil, depth: depth,
-                        certain: form == nil || certain, window: measured)
+                        certain: form == nil || certain, window: measured,
+                        vibratoStart: vibrato ? vibratoFrom ?? firstSwing : nil)
     }
 
     /// O trinado: a curva alterna entre dois níveis a ao menos 0,7 semitom, cruzando o meio a cada 35 a 200 ms, em

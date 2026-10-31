@@ -46,7 +46,14 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   nomes, então um índice velho não erra); SQLite com FTS5 (sem acento,
   pelo começo das palavras) em `~/TrackLab/multitracks.sqlite`, refeito inteiro por `POST multitracks/scan` (na
   fila: ~6 min no HD frio, ~40 s com cache; 4.459 músicas em 28/10). A busca do Songsterr marca o resultado que está
-  na biblioteca (mesmo título e artista, sem acento nem parênteses).
+  na biblioteca (mesmo título e artista, sem acento nem parênteses). As escondidas (uma regravação que não serve, uma
+  cópia repetida) ficam numa lista à parte, pelo caminho, em `~/TrackLab/multitracks-hidden.json` (`GET` e `PUT
+  multitracks/hidden`): os arquivos do HD não mudam, a varredura continua indexando-as e só a busca, a marca na busca do
+  Songsterr e o casamento com a música as deixam de fora (pedida pelo caminho, uma escondida vale). Em Fontes ›
+  Multitracks, "Esconder" em cada linha (também no botão direito) e "Escondidas N" ao lado da busca, com "Mostrar de
+  novo". 31/10: as três entradas do Ramblin' Man (a pasta do Clone Hero e dois .mogg) são uma regravação (outra
+  execução, em Lá 440, 2,6 a 4,9 % mais rápida e com a razão variando; o vídeo do Songsterr é o disco, 21 cents acima),
+  o alinhamento a recusou e elas ficaram escondidas.
 - Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/` e só vira a ativa sem A/B se não
   houver outra (`PUT songs/{id}/stems/active`). `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
   em 24 trechos, consenso numa reta: deslocamento e velocidade até 2 %, depois uma passada fina; ganho pela energia);
@@ -496,7 +503,11 @@ refeito mantém as ligadas com articulação própria (`breaksOf`: no mesmo luga
 virava cópia só com casa e corda e perdia o bend segurado e o ligado, e a cópia da partitura quebrava 608 vezes ao refazer
 cada nota da Highway Star). Vibrato, P.M. e let ring ligados numa ligada seguem pelas seguintes que estavam iguais. A
 Lente junta a cadeia numa faixa com o bend de cada parte no tempo dela (`chainBend`) e o vibrato de qualquer parte; o F
-numa nota ligada reparte o bend medido entre as partes (`fitChain`) e põe o vibrato na última se nenhuma tinha. Ligada (L, a primeira de Ligados e slides,
+numa nota ligada reparte o bend medido entre as partes (`fitChain`) e põe o vibrato nas partes em que o som vibra
+(`vibratoFrom`, a fração da cadeia onde ele começa, de `CurveFit.vibratoStart`: a parte que tem ao menos metade depois
+dele, e com bend só depois de o bend chegar ao alto; sem a medida, a nota inteira sem bend e a última com bend). Antes ia
+só à última: no Sultans of Swing, c. 5, um Ré de três ligadas vibrando do começo ao fim ficava com o vibrato só no fim
+da TAB. Ligada (L, a primeira de Ligados e slides,
 `edit.tie`), como no Guitar Pro: a nota passa a continuar a da batida anterior na mesma corda (a casa dela e o alto do
 bend, segurado) ou deixa de continuar; com ela, duas notas (o bend na primeira, o vibrato na segunda) se escrevem sem o
 Dividir. Como o Guitar Pro 8 grava (conferido nele, 30/10): o Bend tem dois pontos e chega no alto a um quarto da nota
@@ -542,8 +553,8 @@ escuro e o fundo da Fita creme) ou escura. Fontes › Multitracks › "Procurar 
 nome da multitrack; a música importada vem sem o Demucs e com as faixas dela (`importMultitrack(path:)`), a não ser
 num .mogg. No mixer, a linha
 TAB tem uma faixa por pista sintetizada (ids `tab:<pista>`, a 80 % ao chegar, com o grupo TAB desligado), que soa por cima do original ou das
-faixas; um solo vale para tudo (cala o original também). Os atalhos de mixagem (`MixPreset.apply`) mexem só nas faixas
-da separação e tiram os solos: antes devolviam só elas, as pistas da TAB perdiam a entrada e ficavam em volume zero (a
+faixas; mudo e solo valem dentro de cada grupo, o áudio (as faixas da separação) e a TAB (`mixGains`, `isSynth`; antes um solo valia para tudo e soltar uma pista da TAB calava o áudio e o original), e a chave geral "Áudio" fica no começo da linha das faixas, a "TAB" e o X na da TAB (31/10; antes as duas ficavam juntas na da TAB e o Miguel achava que as pistas da TAB eram as faixas da multitrack). Os atalhos de mixagem (`MixPreset.apply`) mexem só nas faixas
+da separação e tiram os solos do áudio (o da TAB, outro grupo, fica): antes devolviam só elas, as pistas da TAB perdiam a entrada e ficavam em volume zero (a
 TAB e o X não soavam com uma separação ativa). A WKWebView da partitura (`ScoreWebView`) não aceita o foco
 do teclado: com ele, engolia espaço, setas e letras depois de um clique na TAB e os atalhos do transporte paravam; um
 clique na TAB ou na Fita também tira o foco de um campo de texto (a busca). Com mais de uma separação guardada, o A/B

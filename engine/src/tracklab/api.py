@@ -75,8 +75,22 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         return _job(jobs.submit("multitracks", work))
 
     @app.get("/api/multitracks/search")
-    def multitrack_search(q: str) -> dict:
-        return {"results": multitracks.search(q)}
+    def multitrack_search(q: str, hidden: bool = False) -> dict:
+        """As músicas da biblioteca pelo nome; as escondidas só com `hidden=true` (e marcadas)."""
+        return {"results": multitracks.search(q, include_hidden=hidden)}
+
+    @app.get("/api/multitracks/hidden")
+    def multitrack_hidden() -> dict:
+        """As músicas escondidas da biblioteca (os arquivos ficam onde estão)."""
+        return {"results": multitracks.hidden_songs()}
+
+    @app.put("/api/multitracks/hidden")
+    def multitrack_hide(body: dict = Body(...)) -> dict:
+        """Esconde (`hidden: true`) ou mostra de novo a música da biblioteca com este `path`."""
+        relative, hide = body.get("path"), body.get("hidden")
+        if not isinstance(relative, str) or not relative or not isinstance(hide, bool):
+            raise HTTPException(400, "Mande o caminho da música (path) e se ela fica escondida (hidden).")
+        return {"hidden": multitracks.set_hidden(relative, hide)}
 
     @app.post("/api/songs/import", status_code=202)
     def import_song(request: ImportRequest) -> dict:

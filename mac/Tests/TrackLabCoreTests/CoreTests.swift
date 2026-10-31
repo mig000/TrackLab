@@ -85,11 +85,23 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(none["tab:0"] == StemMix(volume: 0.6) && none["tab:1"] == StemMix(volume: 0.8, muted: true))
     #expect(mixGains(none)["tab:0"] == 0.6 && none["guitar"]?.muted == true)
     #expect(MixPreset.matching(none, stems: ["guitar", "bass"]) == .noGuitar)
-    // Um solo numa pista da TAB sai com o atalho (senão o atalho não mudaria o que se ouve); o volume dela fica.
+    // O solo de uma pista da TAB é do grupo da TAB: o atalho, que mexe no áudio, o deixa; o solo do áudio sai.
     var soloed = none
     soloed["tab:0"]?.solo = true
+    soloed["bass"]?.solo = true
     let full = MixPreset.full.apply(to: soloed, stems: ["guitar", "bass"])
-    #expect(full["tab:0"] == StemMix(volume: 0.6) && !full.values.contains { $0.solo })
+    #expect(full["tab:0"] == StemMix(volume: 0.6, solo: true) && full["bass"]?.solo == false)
+}
+
+@Test func soloEMudoPorGrupo() {
+    // Um solo na TAB cala as outras pistas da TAB, não o áudio (antes calava tudo); um solo no áudio não cala a TAB.
+    let mix = ["guitar": StemMix(), "bass": StemMix(volume: 0.7), "tab:0": StemMix(solo: true), "tab:1": StemMix(volume: 0.8)]
+    let gains = mixGains(mix)
+    #expect(gains["guitar"] == 1 && gains["bass"] == 0.7 && gains["tab:0"] == 1 && gains["tab:1"] == 0)
+    let audio = mixGains(["guitar": StemMix(solo: true), "bass": StemMix(), "tab:0": StemMix(volume: 0.5)])
+    #expect(audio["guitar"] == 1 && audio["bass"] == 0 && audio["tab:0"] == 0.5)
+    // O mudo de cada um vale só nele.
+    #expect(mixGains(["guitar": StemMix(muted: true), "tab:0": StemMix()]) == ["guitar": 0, "tab:0": 1])
 }
 
 @Test func portaSoComALinhaInteira() {
@@ -163,6 +175,23 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(song.active?.files["guitar"] == "stems/demucs6s-1/guitar.flac")
     #expect(song.score?.tracks.first(where: \.isGuitar)?.index == 1)
     #expect(song.url("audio/source.flac").path == "/tmp/x.tracklab/audio/source.flac")
+}
+
+@Test func multitrackEscondidaPeloMotor() throws {
+    let row = """
+    {"id": 2376, "path": "Rock Band/The Allman Brothers Band - Ramblin' Man", "artist": "The Allman Brothers Band",
+     "title": "Ramblin' Man", "album": "Brothers and Sisters", "year": "1973", "format": "clonehero",
+     "collection": "Rock Band", "stems": [], "kinds": ["drums", "guitar"], "hidden": true}
+    """
+    let hidden = try JSONDecoder().decode(MultitrackSong.self, from: Data(row.utf8))
+    #expect(hidden.isHidden && hidden.instruments == ["Guitarra", "Bateria"])
+    // Um motor de antes da lista das escondidas não manda o campo: a música está à vista.
+    let old = try JSONDecoder().decode(MultitrackSong.self, from: Data(row.replacingOccurrences(of: ", \"hidden\": true", with: "").utf8))
+    #expect(!old.isHidden)
+    let status = """
+    {"root": "/Volumes/HD Externo WD/Multitracks", "available": true, "count": 4459, "scanned": null, "hidden": 3}
+    """
+    #expect(try JSONDecoder().decode(MultitrackStatus.self, from: Data(status.utf8)).hidden == 3)
 }
 
 
@@ -793,6 +822,13 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // ele menos a meia oscilação (antes saía ½).
     let wobble = try fit { t in t < 1.25 ? 60 : t < 1.35 ? 60 + (t - 1.25) * 20 : 61.6 + 0.4 * sin(2 * .pi * 6 * (t - 1.35)) }
     #expect(wobble.vibrato && wobble.form?.top == 4)
+    // Onde o vibrato começa (numa nota ligada, a página o põe nas partes em que o som vibra): no começo da primeira meia
+    // volta; aqui a curva de 200 ms já sobe antes do bend e a primeira meia volta sai do começo da nota (com bend, a
+    // página só põe o vibrato depois do alto).
+    #expect(wobble.vibratoStart != nil)
+    // Um Ré que segura 0,14 s e vibra a 6 Hz: o vibrato começa perto de 1,14 s, não meia volta depois.
+    let held = try fit { t in t < 1.14 ? 60.3 : 60.35 + 0.25 * sin(2 * .pi * 6 * (t - 1.14)) }
+    #expect(held.vibrato && held.vibratoStart.map { $0 < 1.2 } == true)
     // A subida que só sai no último quarto, sem nota colada depois: com o bend escrito é o bend; sem ele, nada.
     let late = { (t: Double) -> Double? in t < 1.8 ? 60 : min(62, 60 + (t - 1.8) * 40) }
     #expect(try fit(written: [[0, 0], [60, 4]], late).form?.kind == .bend)

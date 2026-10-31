@@ -66,6 +66,37 @@ def test_the_index_finds_by_word_start_without_accents_and_matches_songsterr(lib
     assert multitracks.match("Jimi Hendrix", "Sunshine of Your Love", path=index) is None
 
 
+def test_a_hidden_song_leaves_the_search_and_the_songsterr_match_but_stays_on_disk_and_in_the_index(library, tmp_path):
+    index = tmp_path / "mt.sqlite"
+    multitracks.build(multitracks.scan(library), library, index)
+    rock = "Rock Band/Cream - Sunshine Of Your Love"
+    mogg = "PACK 12/Megadeth/07 - I Ain't Superstitious/07 - I Ain't Superstitious.mogg"
+    assert multitracks.search("sunshine", path=index)[0]["hidden"] is False
+    assert multitracks.set_hidden(rock, True, path=index) == [rock]
+    assert multitracks.set_hidden(mogg, True, path=index) == sorted([rock, mogg])
+    assert multitracks.search("sunshine", path=index) == []
+    assert multitracks.match("Cream", "Sunshine of Your Love", path=index) is None
+    assert multitracks.search("megadeth", path=index) == []
+    # Mostrar as escondidas: a busca as traz marcadas, a lista as junta, e pelo caminho ainda se acha.
+    assert [(s["title"], s["hidden"]) for s in multitracks.search("sunshine", path=index, include_hidden=True)] == [
+        ("Sunshine of Your Love", True)]
+    assert [s["path"] for s in multitracks.hidden_songs(path=index)] == [rock, mogg]
+    assert multitracks.by_path(rock, path=index)["hidden"] is True
+    assert multitracks.status(index)["hidden"] == 2
+    # Nada sai do disco, e uma varredura nova continua sem ela.
+    assert (library / rock / "guitar.ogg").is_file()
+    status = multitracks.build(multitracks.scan(library), library, index)
+    assert status["count"] == 6 and status["hidden"] == 2
+    assert multitracks.search("sunshine", path=index) == []
+    # De volta à biblioteca.
+    assert multitracks.set_hidden(rock, False, path=index) == [mogg]
+    assert multitracks.match("Cream", "Sunshine of Your Love", path=index)["path"] == rock
+    assert multitracks.set_hidden("PACK 99/Nada.mogg", False, path=index) == [mogg]
+    with pytest.raises(MultitrackError, match="não está no índice"):
+        multitracks.set_hidden("PACK 99/Nada.mogg", True, path=index)
+    assert multitracks.hidden_file().is_file() and multitracks.hidden_file().parent == multitracks.database().parent
+
+
 def test_a_missing_library_says_where_it_looked(tmp_path, monkeypatch):
     monkeypatch.setenv("TRACKLAB_MULTITRACKS", str(tmp_path / "desligado"))
     with pytest.raises(MultitrackError, match="HD externo"):

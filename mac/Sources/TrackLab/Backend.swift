@@ -186,9 +186,22 @@ final class Backend {
         try await send("POST", "multitracks/scan", body: Optional<String>.none)
     }
 
-    func searchMultitracks(_ text: String) async throws -> [MultitrackSong] {
-        let found: MultitrackSearch = try await get("multitracks/search", query: [URLQueryItem(name: "q", value: text)])
+    func searchMultitracks(_ text: String, hidden: Bool = false) async throws -> [MultitrackSong] {
+        let found: MultitrackSearch = try await get("multitracks/search", query: [
+            URLQueryItem(name: "q", value: text), URLQueryItem(name: "hidden", value: hidden ? "true" : "false")])
         return found.results
+    }
+
+    func hiddenMultitracks() async throws -> [MultitrackSong] {
+        let found: MultitrackSearch = try await get("multitracks/hidden")
+        return found.results
+    }
+
+    /// Esconde a música da biblioteca (ou a mostra de novo); os arquivos não mudam.
+    func setMultitrackHidden(_ path: String, _ hidden: Bool) async throws {
+        struct Body: Codable { let path: String; let hidden: Bool }
+        struct Answer: Decodable { let hidden: [String] }
+        let _: Answer = try await send("PUT", "multitracks/hidden", body: Body(path: path, hidden: hidden))
     }
 
     // MARK: - Repertório

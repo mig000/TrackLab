@@ -385,18 +385,17 @@ final class StemEngine {
     // MARK: - Mix
 
     /// O original ou as faixas da separação (`useStems`); a TAB sintetizada soa por cima de qualquer um dos dois, no
-    /// volume do mixer. Um solo vale para tudo: com alguma faixa em solo, o original também cala. `audioOn` e `tabOn`
-    /// ligam e desligam cada grupo inteiro.
+    /// volume do mixer. Mudo e solo valem dentro de cada grupo (`mixGains`): um solo na TAB não cala o áudio, nem o
+    /// original. `audioOn` e `tabOn` ligam e desligam cada grupo inteiro.
     private func applyMix() {
         if let auditioning {
             for (id, track) in tracks { track.player.volume = id == auditioning ? 1 : 0 }
             return
         }
         let gains = mixGains(mix)
-        let soloing = mix.values.contains { $0.solo }
         for (id, track) in tracks {
             if id == Self.sourceID {
-                track.player.volume = audioOn && !useStems && !soloing ? 1 : 0
+                track.player.volume = audioOn && !useStems ? 1 : 0
             } else if id == Self.clickID {
                 track.player.volume = clickOn ? 0.9 : 0
             } else if id.hasPrefix(SynthTrack.prefix) {

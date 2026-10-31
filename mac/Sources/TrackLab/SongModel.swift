@@ -1595,12 +1595,20 @@ final class SongModel {
         }
         if fit.vibrato != (note.vibrato > 0) { parts.append(fit.vibrato ? "vibrato" : "sem vibrato") }
         if note.trill != nil { parts.append("sem trinado") }
+        // Numa nota ligada com vibrato escrito numa parte só, o vibrato pode ir às outras em que o som vibra (a página
+        // decide pela medida e não muda nada se já está assim; antes o F nem mandava, "Já está como soa").
+        let chain = (tabSelection?.ownLength).map { own in (tabSelection?.length ?? own) - own > 1 } ?? false
+        if parts.isEmpty, fit.vibrato, chain {
+            parts.append("vibrato nas partes ligadas em que o som vibra")
+        }
         guard !parts.isEmpty else {
             tabMessage = "Já está como soa."
             return
         }
         let bend: Any = fit.guitarPro.map { $0.map { [$0.offset, $0.value] } } ?? NSNull()
-        bridge.edit("fit", ["pitch": fit.base, "bend": bend, "vibrato": fit.vibrato])
+        var value: [String: Any] = ["pitch": fit.base, "bend": bend, "vibrato": fit.vibrato]
+        if fit.vibrato, let from = vibratoFrom(note, fit: fit) { value["vibratoFrom"] = from }
+        bridge.edit("fit", value)
         tabMessage = "Encaixou no som: " + parts.joined(separator: ", ") + " · ⌘Z desfaz"
     }
 

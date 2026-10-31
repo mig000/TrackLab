@@ -36,16 +36,22 @@ public struct StemMix: Equatable, Sendable, Codable {
     }
 }
 
-/// O ganho de cada faixa: com algum solo, só as em solo soam; mudo cala; o resto no próprio volume.
+/// O ganho de cada faixa: com algum solo no grupo dela, só as em solo do grupo soam; mudo cala; o resto no próprio
+/// volume. Os dois grupos são independentes: o áudio (as faixas da separação) e a TAB sintetizada (`tab:…`). Antes um
+/// solo valia para tudo, e soltar uma pista da TAB calava o áudio.
 public func mixGains(_ mix: [String: StemMix]) -> [String: Float] {
-    let soloing = mix.values.contains { $0.solo }
+    let soloingTab = mix.contains { isSynth($0.key) && $0.value.solo }
+    let soloingAudio = mix.contains { !isSynth($0.key) && $0.value.solo }
     var gains: [String: Float] = [:]
     for (id, entry) in mix {
-        let audible = soloing ? entry.solo : !entry.muted
+        let audible = (isSynth(id) ? soloingTab : soloingAudio) ? entry.solo : !entry.muted
         gains[id] = audible ? Swift.min(Swift.max(entry.volume, 0), 1.5) : 0
     }
     return gains
 }
+
+/// Uma pista da TAB sintetizada (`tab:<pista>`), no grupo da TAB do mixer.
+public func isSynth(_ id: String) -> Bool { id.hasPrefix(SynthTrack.prefix) }
 
 /// Os atalhos do mixer: a banda sem a guitarra (para tocar junto), a guitarra sozinha (para tirar), tudo.
 public enum MixPreset: String, CaseIterable, Identifiable, Sendable {
@@ -62,13 +68,14 @@ public enum MixPreset: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// A mixagem do atalho nas faixas da separação (`stems`); os volumes que o usuário já mexeu ficam, e as outras
-    /// entradas também (as pistas da TAB sintetizada, `tab:…`, com volume e mudo; antes saíam do dicionário e a TAB
-    /// ficava calada). Um solo em qualquer uma sai: o atalho diz o que se ouve.
+    /// entradas também (as pistas da TAB sintetizada, `tab:…`, com volume, mudo e solo; antes saíam do dicionário e a
+    /// TAB ficava calada). Um solo no áudio sai: o atalho diz o que se ouve; o da TAB, que é outro grupo, fica.
     public func apply(to mix: [String: StemMix], stems: [String]) -> [String: StemMix] {
-        var result = mix.mapValues { entry -> StemMix in
+        var result = mix
+        for (id, entry) in mix where !isSynth(id) {
             var entry = entry
             entry.solo = false
-            return entry
+            result[id] = entry
         }
         for id in stems {
             var entry = mix[id] ?? StemMix()

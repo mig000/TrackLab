@@ -618,11 +618,22 @@ struct MixerBar: View {
                     }
                 }
                 HStack(spacing: 14) {
-                    ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
-                        StemStrip(model: model, id: stem.rawValue, label: stem.label)
+                    // A chave geral do áudio na linha dele (antes ficava na da TAB, e as duas se confundiam).
+                    Toggle(isOn: Binding(get: { engine.audioOn }, set: { engine.audioOn = $0 })) {
+                        Label("Áudio", systemImage: engine.audioOn ? "speaker.wave.2.fill" : "speaker.slash")
                     }
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .help("Liga ou cala todo o áudio (o original ou as faixas), sem mexer na mixagem de cada faixa")
+                    HStack(spacing: 14) {
+                        ForEach(Stem.allCases.filter { engine.stemIDs.contains($0.rawValue) }) { stem in
+                            StemStrip(model: model, id: stem.rawValue, label: stem.label)
+                        }
+                    }
+                    .disabled(!engine.useStems)
+                    .opacity(engine.audioOn ? 1 : 0.5)
                 }
-                .disabled(!engine.useStems)
             }
             SynthRow(model: model)
         }
@@ -639,12 +650,8 @@ private struct SynthRow: View {
         let tracks = synth?.ids.filter { model.engine.synthIDs.contains($0.id) } ?? []
         let engine = model.engine
         HStack(spacing: 14) {
-            // As chaves gerais: todo o áudio, toda a TAB, e trocar um pelo outro.
+            // A chave geral da TAB e trocar o áudio por ela (a do áudio fica na linha das faixas).
             HStack(spacing: 4) {
-                Toggle(isOn: Binding(get: { engine.audioOn }, set: { engine.audioOn = $0 })) {
-                    Label("Áudio", systemImage: engine.audioOn ? "speaker.wave.2.fill" : "speaker.slash")
-                }
-                .help("Liga ou cala todo o áudio (o original ou as faixas), sem mexer na mixagem de cada faixa")
                 Toggle(isOn: Binding(get: { engine.tabOn }, set: { engine.tabOn = $0 })) {
                     Label("TAB", systemImage: engine.tabOn ? "pianokeys" : "pianokeys.inverse")
                 }

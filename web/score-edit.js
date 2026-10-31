@@ -401,8 +401,7 @@
   }
 
   // O encaixe numa nota ligada (o app mede a nota inteira): a altura na primeira (as ligadas seguem a casa dela), o
-  // bend medido repartido entre as ligadas pelo tempo de cada uma, e o vibrato onde já está escrito (sem nenhum, na
-  // última: o vibrato no fim de um bend).
+  // bend medido repartido entre as ligadas pelo tempo de cada uma, e o vibrato nas partes em que o som vibra.
   function fitChain(at, chain, wanted) {
     const m = at.model;
     const head = chain[0];
@@ -425,10 +424,32 @@
         changed = true;
       }
     });
-    if (wanted.vibrato && !chain.some((n) => n.vibrato)) {
-      chain[chain.length - 1].vibrato = m.VibratoType.Slight;
-      changed = true;
-    } else if (!wanted.vibrato && chain.some((n) => n.vibrato)) {
+    // O vibrato nas partes em que o som vibra (`vibratoFrom`: a fração da cadeia onde ele começa; numa parte, se ao
+    // menos um quarto dela vem depois: no Sultans of Swing, c. 5, a primeira ligada, uma colcheia, segura 0,14 s e
+    // vibra no resto): numa nota longa que vibra do começo ao fim, antes só a última parte ganhava o
+    // vibrato, e a TAB o mostrava só no fim. Com bend, só depois de o bend chegar ao alto; sem `vibratoFrom`, o vibrato
+    // escrito fica, e sem nenhum ele vai à nota inteira (sem bend) ou à última (com bend: o vibrato no fim do bend).
+    if (wanted.vibrato) {
+      const top = bend.length ? Math.max(...bend.map((p) => p[1])) : 0;
+      const arrive = bend.length ? bend.find((p) => p[1] === top)[0] / 60 : 0;
+      const measured = Number.isFinite(wanted.vibratoFrom);
+      const from = measured ? Math.max(arrive, wanted.vibratoFrom) : bend.length ? 1 : 0;
+      let start = 0;
+      const parts = chain.filter((n, i) => {
+        const end = start + lengths[i] / total;
+        const inside = end - Math.max(start, from) >= 0.25 * (end - start);
+        start = end;
+        return inside;
+      });
+      if (measured || !chain.some((n) => n.vibrato)) {
+        for (const n of parts.length ? parts : [chain[chain.length - 1]]) {
+          if (!n.vibrato) {
+            n.vibrato = m.VibratoType.Slight;
+            changed = true;
+          }
+        }
+      }
+    } else if (chain.some((n) => n.vibrato)) {
       for (const n of chain) n.vibrato = m.VibratoType.None;
       changed = true;
     }
