@@ -22,24 +22,39 @@ public struct CurveFit: Hashable, Sendable {
 
     public let base: Int
     public let low: Double
+    /// O alto do bend em semitons acima da casa (`base`), sem a meia oscilação do vibrato.
     public let rise: Double
+    /// A altura mais alta do bend (o pré ou até onde sobe), em quartos de tom; 0 sem bend.
     public let quarterTones: Int
-    public let points: [ScoreNote.BendPoint]?
+    /// O bend que o som faz, num tipo do editor (`BendForm`: pré-bend, sobe, volta, com as alturas e o tempo); nil
+    /// sem bend.
+    public let form: BendForm?
     public let vibrato: Bool
     public let trill: Trill?
     public let depth: Double
+    /// O movimento do bend foi visto deslizando (quadros entre a partida e a chegada); sem eles, com quadros vazios no
+    /// meio, pode ser um bend rápido que o rastreador perdeu ou um ligado: o F escreve, as suspeitas não acusam sozinhas.
+    public let certain: Bool
 
-    /// Os pontos no formato que o Guitar Pro 7 guarda (origem, meio de um valor só, destino): o bend que fica,
-    /// `(sai, 0) → (chega, q)` (a altura segue depois do último ponto; o GP7 reduz um Bend a esses dois); o que volta,
-    /// `(sai, 0) → (chega, q) → (segura, q) → (volta, 0)`. Os pontos da Lente perderiam o meio na gravação.
-    public var guitarPro: [ScoreNote.BendPoint]? {
-        guard var list = points, list.count >= 2 else { return nil }
-        if list.count >= 3, list[0].value == 0, list[1].value == 0 { list.removeFirst() }
-        if list.count == 3 {
-            list.insert(.init(offset: max(list[1].offset + 1, list[2].offset - 4), value: list[1].value), at: 2)
-        }
-        return list
+    public init(base: Int, low: Double, rise: Double, quarterTones: Int, form: BendForm?, vibrato: Bool, trill: Trill?,
+                depth: Double, certain: Bool = true) {
+        self.certain = certain
+        self.base = base
+        self.low = low
+        self.rise = rise
+        self.quarterTones = quarterTones
+        self.form = form
+        self.vibrato = vibrato
+        self.trill = trill
+        self.depth = depth
     }
+
+    /// Os pontos do bend (deslocamento 0–60, quartos de tom), no formato que o Guitar Pro 7 guarda.
+    public var points: [ScoreNote.BendPoint]? {
+        form.map { $0.points.map { ScoreNote.BendPoint(offset: $0[0], value: $0[1]) } }
+    }
+
+    public var guitarPro: [ScoreNote.BendPoint]? { points }
 }
 
 /// A curva de uma nota pronta para a Fita: a do motor (já sem os pontos soltos), as tendências de 200 ms (sem o
@@ -55,12 +70,16 @@ public struct SoundNote: Sendable {
     private let topLevel: Double
     private let topQuick: Double
 
-    public init(curve: PitchCurve, start: Double, end: Double, pitch: Double, chord: Bool = false) {
+    /// `next`: a altura da nota seguinte da corda, se ela começa onde esta acaba (uma subida no fim que chega a ela é a
+    /// passagem, não um bend). `prebend`: o pré-bend escrito, em semitons (o som que começa nele e não passa pela casa
+    /// é o pré-bend da casa escrita, não outra nota).
+    public init(curve: PitchCurve, start: Double, end: Double, pitch: Double, chord: Bool = false, next: Int? = nil,
+                prebend: Double? = nil) {
         self.curve = curve
         self.chord = chord
         level = SoundNote.trend(curve.values, width: Int((0.2 / curve.hop).rounded()))
         quick = SoundNote.trend(curve.values, width: max(3, Int((0.04 / curve.hop).rounded())))
-        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord)
+        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord, next: next, prebend: prebend)
         func top(_ series: [Double?]) -> Double {
             var best = -Double.infinity
             for (k, value) in series.enumerated() {
@@ -154,18 +173,21 @@ public struct SoundNote: Sendable {
         }
     }
 
-    /// O bend em quartos de tom pela subida em semitons: abaixo de 0,85 é o ¼ do blues; depois ½, 1, 1½ e 2 tons.
+    /// Uma altura em semitons em quartos de tom, como a TAB escreve: abaixo de 0,3 semitom, 0; até 0,85, o ¼ de tom do
+    /// blues (o limite da Lente do TabLab); depois o semitom inteiro mais perto (½, 1, 1½ tom…), e ¾, 1¼ … só quando o
+    /// som está a 0,1 semitom deles (um bend de 1 tom que chega a 1,7 semitom é "1", como se escreve). Até 3 tons.
+    /// Antes eram só ¼, ½, 1, 1½ e 2 tons, em faixas largas (um ¾ de tom saía de 1).
     public static func quarterTones(rise: Double) -> Int {
         guard rise >= 0.3 else { return 0 }
-        if rise < 0.85 { return 1 }
-        if rise < 1.5 { return 2 }
-        if rise < 2.5 { return 4 }
-        if rise < 3.5 { return 6 }
-        return 8
+        guard rise >= 0.85 else { return 1 }
+        let quarters = 2 * rise
+        let odd = Int(quarters.rounded())
+        if odd % 2 == 1, abs(quarters - Double(odd)) <= 0.2 { return min(BendForm.maxHeight, odd) }
+        return min(BendForm.maxHeight, max(2, 2 * Int(rise.rounded())))
     }
 
     public static func fit(_ curve: PitchCurve, start: Double, end: Double, pitch: Double?,
-                           trills: Bool = true) -> CurveFit? {
+                           trills: Bool = true, next: Int? = nil, prebend: Double? = nil) -> CurveFit? {
         let length = end - start
         guard length > 0.04 else { return nil }
         var times: [Double] = []
@@ -183,16 +205,30 @@ public struct SoundNote: Sendable {
             if let value { head.append(value) }
         }
         let low = percentile(head.count >= 3 ? head : valid, 0.2)
-        let base = Int(low.rounded())
-        let level = trend(values, width: max(3, Int((0.2 / curve.hop).rounded())))
-        var peak = -Double.infinity
-        var peakAt = 0
-        for (i, value) in level.enumerated() {
-            if let value, value > peak {
-                peak = value
-                peakAt = i
+        let fallback = Int(low.rounded())
+        let trill = trills ? trillOf(times: times, values: values, base: fallback, pitch: pitch) : nil
+        // Um salto no último quarto da nota (¾ de semitom ou mais entre dois quadros com altura, seguidos ou com até 7
+        // vazios no meio): dali em diante já é a nota seguinte (um ligado, o rastreador ouvindo a próxima) e fica fora da
+        // medida do bend. Antes o salto entrava no alto (no Highway Star, c. 171, um bend de 1 tom saía 1½ ou 2).
+        if trill == nil {
+            var previous: Int?
+            var cut: Int?
+            for i in values.indices {
+                guard let value = values[i] else { continue }
+                if let p = previous, let before = values[p], times[i] >= start + 0.75 * length, i - p <= 8,
+                   abs(value - before) >= 0.75 {
+                    cut = p + 1
+                    break
+                }
+                previous = i
+            }
+            if let cut, values[..<cut].compactMap({ $0 }).count >= 6 {
+                times.removeSubrange(cut...)
+                values.removeSubrange(cut...)
             }
         }
+        let level = trend(values, width: max(3, Int((0.2 / curve.hop).rounded())))
+        let quick = trend(values, width: max(3, Int((0.04 / curve.hop).rounded())))
         // O vibrato: o que sobra em volta da tendência, em meias voltas que passam de 0,12 semitom.
         var swings = 0
         var sign = 0
@@ -219,43 +255,170 @@ public struct SoundNote: Sendable {
         let cycles = Double(swings) / 2
         let span = firstSwing.flatMap { first in lastSwing.map { $0 - first } } ?? 0
         let frequency = span > 0 ? Double(swings - 1) / 2 / span : 0
-        let trill = trills ? trillOf(times: times, values: values, base: base, pitch: pitch) : nil
         let vibrato = trill == nil && cycles >= 1.5 && frequency >= 3.5 && frequency <= 9 && percentile(sizes, 0.5) >= 0.12
         let depth = sizes.isEmpty ? 0 : percentile(sizes, 0.5)
-        // O vibrato da guitarra só sobe: a tendência fica meia oscilação acima da casa, e isso não é bend.
-        let rise = peak - Double(base) - (vibrato ? depth : 0)
-        let quarters = trill == nil ? quarterTones(rise: rise) : 0
-        var points: [ScoreNote.BendPoint]?
-        if quarters > 0 {
-            // Quando o bend sai e chega, pela curva de 40 ms: a de 200 ms começa a subir 100 ms antes do som.
-            func offset(_ t: Double) -> Double { max(0, min(60, ((t - start) / length * 60).rounded())) }
-            let quick = trend(values, width: max(3, Int((0.04 / curve.hop).rounded())))
-            let amount = Double(quarters) / 2
-            var leave = 0
-            while leave < values.count - 1, !((quick[leave] ?? -.infinity) > Double(base) + 0.2 * amount) { leave += 1 }
+        // A casa: a escrita, quando o som passa perto dela em algum momento da nota (antes o grave do começo virava a
+        // casa: um bend rápido, ou o fim dobrado da nota anterior ainda nos primeiros quadros, a punha um ou dois
+        // semitons acima, e a nota virava "outra altura"), ou quando começa no pré-bend escrito; senão o grave do
+        // começo (a escrita está noutra casa: pelo som, um pré-bend que nunca passa pela casa é igual a uma nota mais
+        // alta).
+        let bottom = percentile(valid, 0.1)
+        var base = fallback
+        if let pitch, trill == nil,
+           abs(bottom - pitch) <= 0.5 || prebend.map({ $0 > 0 && abs(bottom - pitch - $0) <= 0.5 }) == true {
+            base = Int(pitch.rounded())
+        }
+        let ref = Double(base)
+        guard trill == nil else {
+            return CurveFit(base: base, low: low, rise: 0, quarterTones: 0, form: nil, vibrato: false, trill: trill,
+                            depth: depth)
+        }
+        // As três alturas do bend, acima da casa: no ataque (o pré-bend), no alto (sem a meia oscilação do vibrato, que
+        // na guitarra só sobe) e no fim (até onde volta).
+        func median(from: Double, to: Double, _ series: [Double?]) -> Double? {
+            let list = series.indices.compactMap { times[$0] >= from && times[$0] <= to ? series[$0] : nil }
+            return list.count >= 2 ? percentile(list, 0.5) : list.first
+        }
+        // O ataque: o grave do começo (100 ms ou um quinto da nota). Num pré-bend o começo inteiro fica no alto; num
+        // bend rápido a corda passa pela casa; e os primeiros quadros, que ainda ouvem o fim da nota anterior (dobrada,
+        // num solo de bends), não contam sozinhos.
+        let opening = values.indices.compactMap { times[$0] <= start + 0.02 + max(0.1, 0.2 * length) ? values[$0] : nil }
+        let attack = (opening.count >= 2 ? percentile(opening, 0.1) : low) - ref
+        // O alto: com vibrato, pela curva de 200 ms (que tira a oscilação) menos a meia oscilação; sem ele, pela de 40 ms,
+        // que alcança o bend que só chega no fim da nota (no Highway Star, c. 250, um bend de 1 tom que chega a 1,9
+        // semitom no fim saía ¾ pela de 200 ms). Sem os primeiros 50 ms, que ainda ouvem a nota anterior.
+        var peak = -Double.infinity
+        var peakAt = 0
+        let series = vibrato ? level : quick
+        for (i, value) in series.enumerated() where vibrato || times[i] >= start + 0.07 {
+            if let value, value > peak {
+                peak = value
+                peakAt = i
+            }
+        }
+        if peak == -.infinity, let first = level.indices.first(where: { level[$0] != nil }), let value = level[first] {
+            (peak, peakAt) = (value, first)
+        }
+        let rise = peak - ref - (vibrato ? depth : 0)
+        // O fim pela curva de 40 ms (a de 200 ms apagava uma volta curta), nos últimos quadros medidos.
+        let last = times.last ?? end
+        let final = (median(from: last - max(0.05, 0.15 * length), to: last, quick) ?? peak) - ref
+        // Um pré-bend de ao menos meio tom: abaixo disso é o ataque agudo da corda (palhetada forte) ou a afinação.
+        let pre = quarterTones(rise: attack) >= 2 ? quarterTones(rise: attack) : 0
+        let high = max(pre, quarterTones(rise: rise))
+        // O instante (0–60) de `t`, e o tempo do movimento de `from` a `to` (semitons acima da casa) a partir do índice
+        // `index`: de 20 % a 80 % pela curva de 40 ms, estendido até 0 % e 100 % (a de 200 ms começa 100 ms antes).
+        func offset(_ t: Double) -> Double { max(0, min(60, ((t - start) / length * 60).rounded())) }
+        // Se o movimento desliza ou é um degrau (ligado, pull-off, o rastreador trocando de som), na curva crua: a
+        // de 40 ms transforma o degrau numa rampa. Desliza com dois quadros ou mais entre 20 % e 80 %, ou com quadros
+        // sem altura no meio (o rastreador perde a corda que desliza depressa); um salto direto entre dois quadros
+        // seguidos, de um lado ao outro, é degrau. No Highway Star, no White Room e no Sunshine (31/10), os bends não
+        // escritos caíram de 342 para ~115 com isso.
+        var certain = true
+        func glides(from: Double, to: Double, leave: Int, reach: Int) -> Bool {
+            let low = ref + min(from, to) + 0.2 * abs(to - from)
+            let high = ref + max(from, to) - 0.2 * abs(to - from)
+            let first = max(0, leave - 3)
+            let last = min(values.count - 1, reach + 3)
+            guard first < last else { return false }
+            if (first...last).filter({ values[$0].map { $0 > low && $0 < high } ?? false }).count >= 2 { return true }
+            for i in first..<last {
+                if let a = values[i], let b = values[i + 1], (a <= low && b >= high) || (a >= high && b <= low) { return false }
+            }
+            certain = false
+            return true
+        }
+        // O ponto mais grave antes de `index` (de onde a subida sai: os primeiros quadros podem ainda ouvir a nota
+        // anterior, dobrada).
+        func lowest(before index: Int) -> Int {
+            var best = 0
+            var least = Double.infinity
+            for i in 0...max(0, index) where i < quick.count {
+                if let value = quick[i], value < least {
+                    least = value
+                    best = i
+                }
+            }
+            return best
+        }
+        func move(from: Double, to: Double, after index: Int) -> (leave: Int, reach: Int, times: (Double, Double)) {
+            let up = to > from
+            func past(_ value: Double?, _ fraction: Double) -> Bool {
+                guard let value else { return false }
+                let mark = ref + from + (to - from) * fraction
+                return up ? value >= mark : value <= mark
+            }
+            var leave = index
+            while leave < values.count - 1, !past(quick[leave], 0.2) { leave += 1 }
             var reach = leave
-            while reach < values.count - 1, !((quick[reach] ?? -.infinity) >= Double(base) + 0.8 * min(amount, rise)) { reach += 1 }
-            var back = -1
-            for i in peakAt..<level.count {
-                if let value = level[i], value < Double(base) + 0.4 * rise {
-                    back = i
+            while reach < values.count - 1, !past(quick[reach], 0.8) { reach += 1 }
+            let pace = (times[reach] - times[leave]) / 3
+            return (leave, reach, (max(start, times[leave] - pace), min(end, times[reach] + pace)))
+        }
+        var form: BendForm?
+        if high > 0 {
+            let topQ = max(high, 1)
+            if pre == 0 {
+                // Sobe; volta se cai ao menos meio semitom e 40 % da subida depois do alto. Um degrau não é bend.
+                let target = min(Double(topQ) / 2, rise)
+                let rising = move(from: 0, to: target, after: lowest(before: peakAt))
+                if glides(from: 0, to: target, leave: rising.leave, reach: rising.reach) {
+                    var bend = BendForm(kind: .bend, top: topQ, start: offset(rising.times.0), arrive: offset(rising.times.1))
+                    if rise - final >= max(0.5, 0.4 * rise), peakAt < values.count - 1 {
+                        let falling = move(from: rise, to: max(0, final), after: max(peakAt, rising.reach))
+                        if glides(from: rise, to: max(0, final), leave: falling.leave, reach: falling.reach) {
+                            bend.kind = .bendRelease
+                            bend.end = quarterTones(rise: max(0, final))
+                            (bend.hold, bend.back) = (offset(falling.times.0), offset(falling.times.1))
+                        }
+                    }
+                    form = bend
+                }
+            } else if rise - attack >= 0.5 {
+                // Começa dobrada e sobe mais (num degrau, fica o pré-bend).
+                let rising = move(from: attack, to: rise, after: 0)
+                form = glides(from: attack, to: rise, leave: rising.leave, reach: rising.reach)
+                    ? BendForm(kind: .prebendBend, pre: pre, top: max(quarterTones(rise: rise), pre + 1),
+                               start: offset(rising.times.0), arrive: offset(rising.times.1))
+                    : BendForm(kind: .prebend, pre: pre)
+            } else if attack - final >= max(0.5, 0.4 * attack) {
+                // Começa dobrada e volta; um degrau até a casa é outra nota (um ligado), não um pré-bend.
+                let falling = move(from: attack, to: max(0, final), after: 0)
+                if glides(from: attack, to: max(0, final), leave: falling.leave, reach: falling.reach) {
+                    form = BendForm(kind: .prebendRelease, pre: pre, end: quarterTones(rise: max(0, final)),
+                                    start: offset(falling.times.0), arrive: offset(falling.times.1))
+                }
+            } else {
+                form = BendForm(kind: .prebend, pre: pre)
+            }
+            form = form?.valid()
+            // A passagem para a nota seguinte (ligado, slide), não um bend: a subida que só sai no último quarto da nota,
+            // ou que sai depois da metade e chega à altura da seguinte; a volta no último quarto que cai na altura da
+            // seguinte (outra casa).
+            if let current = form {
+                let late = current.start >= 45
+                // Pelo alto da curva de 40 ms: a de 200 ms não alcança o salto no fim de uma nota curta.
+                let quickTop = (quick.compactMap { $0 }.max() ?? peak) - ref
+                let reachesNext = next.map { abs(Double($0) - ref - quickTop) <= 0.5 } ?? false
+                switch current.kind {
+                case .bend where late || (current.start >= 30 && reachesNext):
+                    form = nil
+                case .prebendBend where late || (current.start >= 30 && reachesNext):
+                    form = BendForm(kind: .prebend, pre: current.pre).valid()
+                case .bendRelease where current.hold >= 45
+                    && (next.map { abs(Double($0) - ref) >= 1 && abs(Double($0) - ref - final) <= 0.5 } ?? false):
+                    var kept = current
+                    kept.kind = .bend
+                    form = kept.valid()
+                default:
                     break
                 }
             }
-            // De 20 % a 80 % da subida, estendido até 0 % e 100 %.
-            let pace = (times[reach] - times[leave]) / 3
-            let leaveAt = max(start, times[leave] - pace)
-            let reachAt = min(end, times[reach] + pace)
-            var list = [ScoreNote.BendPoint(offset: 0, value: 0)]
-            if offset(leaveAt) > 3 { list.append(.init(offset: offset(leaveAt), value: 0)) }
-            list.append(.init(offset: max(list[list.count - 1].offset + 1, offset(reachAt)), value: Double(quarters)))
-            if back >= 0, offset(times[back]) > list[list.count - 1].offset + 2 {
-                list.append(.init(offset: offset(times[back]), value: 0))
-            }
-            points = list
         }
-        return CurveFit(base: base, low: low, rise: rise, quarterTones: quarters, points: points, vibrato: vibrato,
-                        trill: trill, depth: depth)
+        let quarters = form.map { max($0.kind.usesPre ? $0.pre : 0, $0.kind.usesTop ? $0.top : 0) } ?? 0
+        return CurveFit(base: base, low: form?.kind.usesPre == true ? ref : low, rise: form == nil ? 0 : max(0, rise),
+                        quarterTones: quarters, form: form, vibrato: vibrato, trill: nil, depth: depth,
+                        certain: form == nil || certain)
     }
 
     /// O trinado: a curva alterna entre dois níveis a ao menos 0,7 semitom, cruzando o meio a cada 35 a 200 ms, em
@@ -300,6 +463,14 @@ public enum SoundDisagreement: Hashable, Sendable {
     case pitch(Int)
     /// O bend que soa, em quartos de tom (0: o som não dobra), longe do escrito.
     case bend(Int)
+    /// O som já começa dobrado (o pré-bend, em quartos de tom) e a escrita não; ou o pré-bend escrito não soa (o som
+    /// parte da casa).
+    case prebend(Int)
+    case noPrebend
+    /// O som volta (até a altura dita, em quartos de tom) e a escrita não; ou a volta escrita não soa.
+    case release(Int)
+    case noRelease
+
     /// Ligados rápidos entre duas casas, que a TAB não tem (ou tem entre outras).
     case trill(low: Int, high: Int)
     /// O trinado escrito que o som não faz.
@@ -314,7 +485,7 @@ public enum SoundDisagreement: Hashable, Sendable {
     public var kind: SuspectKind {
         switch self {
         case .pitch: .pitch
-        case .bend: .bend
+        case .bend, .prebend, .noPrebend, .release, .noRelease: .bend
         case .trill, .noTrill: .trill
         case .attack: .attack
         case .silent: .silent
@@ -421,14 +592,39 @@ extension SoundNote {
             return written == Set([trill.low, trill.high]) ? [] : [.trill(low: trill.low, high: trill.high)]
         }
         if note.trill != nil { return [.noTrill] }
-        // Noutra altura, o bend e o vibrato foram medidos em volta da nota errada: só a altura.
-        if fit.base != note.pitch { return [.pitch(fit.base)] }
-        let written = Int(note.bend.map(\.value).max() ?? 0)
-        guard abs(fit.quarterTones - written) >= 2 else { return [] }
-        // Uma subida que só sai no último quarto da nota é a passagem para a seguinte (ligado, slide), não um bend.
-        let leave = fit.points?.prefix { $0.value == 0 }.last?.offset ?? 0
-        if written == 0, leave >= 45 { return [] }
-        return [.bend(fit.quarterTones)]
+        let written = BendForm(points: note.bend.map { [$0.offset, $0.value] })
+        // Noutra altura, o bend e o vibrato foram medidos em volta da nota errada: só a altura. O pré-bend escrito que
+        // fica parado soa como a nota mais alta: está certo.
+        if fit.base != note.pitch {
+            if let written, written.kind == .prebend, fit.form == nil,
+               abs(Double(fit.base - note.pitch) - Double(written.pre) / 2) <= 0.5 {
+                return []
+            }
+            return [.pitch(fit.base)]
+        }
+        // Um bend não confirmado (sem quadros no meio do movimento) não acusa sozinho uma nota sem bend escrito.
+        let heard = fit.certain || written != nil ? fit.form : nil
+        let heardHeight = heard == nil ? 0 : fit.quarterTones
+        var list: [SoundDisagreement] = []
+        let writtenHeight = Int(note.bend.map(\.value).max() ?? 0)
+        if abs(heardHeight - writtenHeight) >= 2 { list.append(.bend(heardHeight)) }
+        // O tipo, com meio tom de folga: o pré-bend e a volta. Sem bend no som, o `.bend(0)` já diz.
+        func pre(_ form: BendForm?) -> Int { form.map { $0.kind.usesPre ? $0.pre : 0 } ?? 0 }
+        func drop(_ form: BendForm?) -> Int {
+            guard let form, form.kind.usesEnd else { return 0 }
+            return (form.kind == .bendRelease ? form.top : form.pre) - form.end
+        }
+        if pre(heard) >= 2, pre(written) == 0 {
+            list.append(.prebend(pre(heard)))
+        } else if pre(written) >= 2, heard != nil, pre(heard) == 0 {
+            list.append(.noPrebend)
+        }
+        if drop(heard) >= 2, drop(written) == 0 {
+            list.append(.release(heard?.end ?? 0))
+        } else if drop(written) >= 2, heard != nil, drop(heard) == 0 {
+            list.append(.noRelease)
+        }
+        return list
     }
 }
 
@@ -495,6 +691,8 @@ public struct SoundReport: Hashable, Sendable {
     /// A meia oscilação do vibrato, em cents; nil sem vibrato.
     public let vibrato: Int?
     public let trill: CurveFit.Trill?
+    /// O bend que soa, no tipo do editor; nil sem bend.
+    public let form: BendForm?
 }
 
 extension SoundNote {
@@ -518,7 +716,7 @@ extension SoundNote {
         return SoundReport(pitch: fit.base, cents: Int(((held - Double(fit.base)) * 100).rounded()),
                            bend: fit.quarterTones,
                            reached: written > 0 ? Int((max(0, fit.rise) / (written / 2) * 100).rounded()) : nil,
-                           vibrato: fit.vibrato ? Int((fit.depth * 100).rounded()) : nil, trill: fit.trill)
+                           vibrato: fit.vibrato ? Int((fit.depth * 100).rounded()) : nil, trill: fit.trill, form: fit.form)
     }
 }
 

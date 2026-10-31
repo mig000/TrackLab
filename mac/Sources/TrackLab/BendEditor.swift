@@ -36,6 +36,12 @@ struct BendEditor: View {
             if let note = summary(form) {
                 Text(note).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
+            if form == nil, let suggested = model.selectedBendSuggestion() {
+                Text("O som sugere: \(suggested.spoken) (F escreve)")
+                    .font(.caption)
+                    .foregroundStyle(Self.heard)
+                    .lineLimit(1)
+            }
             if let form {
                 heights(form)
                 graph(form)
@@ -160,14 +166,16 @@ struct BendEditor: View {
     /// pontos de arrastar e os do som medido.
     private func graph(_ form: BendForm) -> some View {
         let sound = model.selectedBendSound()
+        let suggested = model.selectedBendSuggestion().flatMap { $0.points == form.points ? nil : $0 }
         let highest = max(4, Int(form.points.map { $0[1] }.max() ?? 0),
-                          Int((sound.map(\.quarterTones).max() ?? 0).rounded(.up)))
+                          Int((sound.map(\.quarterTones).max() ?? 0).rounded(.up)),
+                          Int(suggested?.points.map { $0[1] }.max() ?? 0))
         let top = Double(min(BendForm.maxHeight, highest + 1))
         return VStack(alignment: .leading, spacing: 2) {
             GeometryReader { geometry in
                 let plot = Self.plot(geometry.size)
                 Canvas { context, _ in
-                    draw(form, sound: sound, top: top, plot: plot, in: &context)
+                    draw(form, sound: sound, suggested: suggested, top: top, plot: plot, in: &context)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
@@ -181,6 +189,12 @@ struct BendEditor: View {
             Text(times(form) + (sound.isEmpty ? "" : " · ● o som"))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
+            if let suggested {
+                Text("╌ o som sugere: \(suggested.spoken) (F escreve)")
+                    .font(.caption2)
+                    .foregroundStyle(Self.heard)
+                    .lineLimit(1)
+            }
         }
     }
 
@@ -188,8 +202,8 @@ struct BendEditor: View {
         CGRect(x: 16, y: 6, width: max(1, size.width - 22), height: max(1, size.height - 12))
     }
 
-    private func draw(_ form: BendForm, sound: [(fraction: Double, quarterTones: Double)], top: Double, plot: CGRect,
-                      in context: inout GraphicsContext) {
+    private func draw(_ form: BendForm, sound: [(fraction: Double, quarterTones: Double)], suggested: BendForm?,
+                      top: Double, plot: CGRect, in context: inout GraphicsContext) {
         let x = { (offset: Double) in plot.minX + offset / 60 * plot.width }
         let y = { (q: Double) in plot.maxY - min(max(q, -0.5), top) / top * plot.height }
         var grid = Path()
@@ -214,6 +228,15 @@ struct BendEditor: View {
             let point = CGPoint(x: x(sample.fraction * 60), y: y(sample.quarterTones))
             context.fill(Path(ellipseIn: CGRect(x: point.x - 1.4, y: point.y - 1.4, width: 2.8, height: 2.8)),
                          with: .color(Self.heard.opacity(0.85)))
+        }
+        if let suggested {
+            // O que o som sugere (o F), tracejado por baixo do escrito.
+            var hint = Path()
+            let list = suggested.points
+            hint.move(to: CGPoint(x: plot.minX, y: y(list[0][1])))
+            for point in list { hint.addLine(to: CGPoint(x: x(point[0]), y: y(point[1]))) }
+            hint.addLine(to: CGPoint(x: plot.maxX, y: y(list[list.count - 1][1])))
+            context.stroke(hint, with: .color(Self.heard), style: StrokeStyle(lineWidth: 1.4, dash: [4, 3]))
         }
         var line = Path()
         let points = form.points

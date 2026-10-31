@@ -227,15 +227,32 @@ motor mede só pelos harmônicos, entre as vizinhas (até meio semitom delas), s
 suspeitas nem na afinação; o resumo da nota vale. Editável como na Lente: um clique numa faixa liga a edição e escolhe
 a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao soltar, mede o som de novo em volta da
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
-bend e o vibrato do som (`fit` na página). O Guitar Pro 7 guarda o bend como origem, meio de um valor só e destino, e
-reduz um Bend aos dois da ponta: o encaixe manda `(sai, 0) → (chega, q)` ou, se volta, quatro pontos
-(`CurveFit.guitarPro`). O trinado se escreve: a nota na de baixo e o trinado na de cima (`fit` com `trill`, a altura MIDI, e `trillSpeed`, a
+bend e o vibrato do som (`fit` na página). O bend do som sai num tipo do editor (`CurveFit.form`, um `BendForm`), nos
+pontos que o Guitar Pro 7 guarda (`CurveFit.guitarPro`). A detecção (`SoundNote.fit`, refeita em 31/10 e medida nas
+três músicas, abaixo): a casa é a escrita quando o som passa perto dela, ou quando começa no pré-bend escrito (antes o
+grave do começo virava a casa, e um bend rápido ou o fim dobrado da nota anterior, que o rastreador ainda ouve nos
+primeiros quadros num solo de bends, punham a nota um ou dois semitons acima, "outra altura"); três alturas acima da
+casa dizem o tipo: o ataque (o grave dos primeiros 100 ms ou um quinto da nota; pré-bend de meio tom para cima), o alto
+(com vibrato, a curva de 200 ms menos a meia oscilação; sem ele, a de 40 ms, que alcança o bend que só chega no fim da
+nota, sem os primeiros 50 ms) e o fim (a curva de 40 ms no último sétimo); um salto de ¾ de semitom no último quarto da
+nota (entre dois quadros com altura, seguidos ou com até 7 vazios no meio) já é a nota seguinte e fica fora da medida; as alturas no semitom
+inteiro mais perto, ¼ de tom até 0,85 semitom (o limite da Lente do TabLab), ¾, 1¼… só a 0,1 semitom deles, até 3 tons
+(`quarterTones(rise:)`); a volta mede quando começa, quando acaba e até onde vai. Um movimento precisa deslizar na curva
+crua: um salto direto entre dois quadros seguidos é degrau (ligado, pull-off, o rastreador trocando de som) e não é
+bend nem volta; com quadros vazios no meio (o rastreador perde a corda que desliza depressa) o F escreve, mas o bend
+fica `certain` falso e não acusa sozinho uma nota sem bend escrito. A passagem para a nota seguinte não é bend (no F
+também, que antes a escrevia: o "½" do c. 1 do Sunshine): a subida que só sai no último quarto, ou depois da metade e
+chega à altura da seguinte (`next`, a nota da corda que começa onde esta acaba, pelo alto da curva de 40 ms), e a volta
+no último quarto que cai na altura da seguinte, noutra casa. O trinado se escreve: a nota na de baixo e o trinado na de cima (`fit` com `trill`, a altura MIDI, e `trillSpeed`, a
 figura de cada troca medida contra a semínima, `CurveFit.Trill.speed`). O Guitar Pro guarda a velocidade numa XProperty
 da nota (688062467: a duração de cada troca a 240 por semínima, 30 é fusa; visto num arquivo feito no Guitar Pro 8) que o
 alphaTab ignorava: o `vendor` agora lê e grava (ajuste `TrackLab:`); o `trackNotes` manda a altura do
 trinado escrito (`ScoreNote.trill`) e um trinado escrito entre as mesmas notas não é suspeito, um que o som não faz é.
 Notas suspeitas (`SoundNote.checks`, tipos em `SuspectKind`): o som discorda da escrita na altura, no bend (meio tom de
-diferença; uma subida que só sai no último quarto da nota é a passagem para a seguinte) ou no trinado
+diferença na altura mais alta; pelo tipo, com meio tom de folga: o som começa dobrado e a escrita não, `.prebend`, ou o
+pré-bend escrito não soa, `.noPrebend`; o som volta e a escrita não, `.release`, ou a volta escrita não soa,
+`.noRelease`; o pré-bend escrito parado soa como a nota mais alta e está certo; o tempo de chegada não acusa, porque o
+Songsterr escreve toda subida "ao longo da nota") ou no trinado
 (`disagreements`); a nota não soa (no corpo dela, menos de um quinto dos pontos com altura); o ataque a mais de 60 ms
 do começo escrito; o vibrato não escrito (vem desligado: no Sunshine eram 22 das 75 da primeira versão); e o som sem
 nota escrita (`HeardSound.unwritten`: um som forte da faixa, até 18 dB abaixo do mais forte em volta, sem nota de
@@ -245,7 +262,18 @@ com quantas há de cada um (`suspectKinds`, guardado); Tab numa nota a escolhe, 
 inserção no tique dele (na grade), na corda em que a altura cai mais perto da casa da nota escrita mais próxima, com a
 casa sugerida em Pôr nota (`caretPitch` na página); a Lente contorna em vermelho as notas e os sons sem nota dos tipos
 ligados. Sunshine limpo (30/10): altura 35, bend 12, trinado 5, sem nota 87, não soa 1, ataque 42, vibrato 25. A
-calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Com o espectro à
+calibração dos limites vem da TAB corrigida pelo Miguel (o original e as versões ficam no pacote). Medição da detecção
+de bend (31/10; `node web/tools/bend-curves.cjs <motor> <arquivo>` extrai as curvas das guitarras do repertório e
+`TRACKLAB_BEND_BENCH=<arquivo> mac/test.sh --filter medicaoDosBends` mede): 2.117 notas fora de acorde das três
+músicas, 171 com bend escrito; a de antes → a nova: o mesmo tipo do escrito 109 → 119, tipo e alturas 50 → 54, o som
+"não dobra" 34 → 28, suspeita de altura em nota com bend escrito 74 → 62, bend de meio tom ou mais não escrito 145 → 36
+(confirmados), suspeitas de bend 103 → 43 (mais 22 pelo tipo), de altura 450 → 402, notas suspeitas 553 → 454. Das três
+notas em que a antiga acertava e a nova errava antes dos dois últimos ajustes (o alto pela curva rápida e o salto no
+fim), duas eram erro da nova (Highway Star, c. 171 e c. 250) e uma era acerto (o "½" do c. 1 do Sunshine tinha sido
+escrito pelo F antigo, e era a passagem). Na
+linha do som da coluna, o bend em palavras (`BendForm.spoken`: "sobe 1 e volta a ½"); no gráfico do editor, tracejado,
+o que o som sugere (o que o F escreveria; numa nota sem bend escrito, uma linha "O som sugere"). A linha do som e o
+gráfico leem `pitchCurvesVersion` (antes podiam ficar com a medida de antes de a afinação da gravação ser refeita). Com o espectro à
 vista, o app mede as curvas da pista inteira (e da segunda) em lotes de 120, meio segundo depois da última mudança de
 notas, pista ou mapa (a chave da curva leva o começo e o fim da nota em segundos; um pedido que falha solta as notas e
 espera 5 s, três vezes no máximo; um espectro que falha é pedido de novo na próxima vez); a Fita contorna as suspeitas em vermelho e conta no canto. Tab / ⇧Tab (também fora da edição,

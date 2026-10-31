@@ -496,10 +496,17 @@ final class SongModel {
             curvesRetryAt = Date().addingTimeInterval(5)
             return false
         }
+        // A nota seguinte da corda, se começa onde a nota acaba (a subida no fim que chega a ela é a passagem).
+        let line = scoreNotes.indices.contains(track) ? scoreNotes[track] : []
+        func next(_ note: ScoreNote) -> Int? {
+            line.first { $0.string == note.string && abs($0.tick - (note.tick + note.duration)) < 1 }?.pitch
+        }
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
+            let prebend = (note.bend.first?.value ?? 0) / 2
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
-                               chord: chords.contains(item.key), plain: note.bend.isEmpty)
+                               chord: chords.contains(item.key), plain: note.bend.isEmpty, next: next(note),
+                               prebend: prebend > 0 ? prebend : nil)
             rawCurves[item.key] = raw
             soundNotes[item.key] = raw.sound(tuning: tuning)
         }
@@ -515,9 +522,12 @@ final class SongModel {
         let pitch: Int
         let chord: Bool
         let plain: Bool
+        let next: Int?
+        let prebend: Double?
 
         func sound(tuning: Double) -> SoundNote {
-            SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord)
+            SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord,
+                      next: next, prebend: prebend)
         }
     }
 
@@ -1099,6 +1109,7 @@ final class SongModel {
     /// O som da nota escolhida no tempo dela, para o gráfico do bend: (fração 0–1 da batida, quartos de tom acima da
     /// altura escrita), da curva medida pela Lente (já com a afinação da gravação descontada). Vazio sem medida.
     func selectedBendSound() -> [(fraction: Double, quarterTones: Double)] {
+        _ = pitchCurvesVersion   // as curvas refeitas (a afinação da gravação recalculada) redesenham o gráfico
         guard let selection = tabSelection, let tick = selection.ownTick, let own = selection.ownLength, own > 0,
               let (note, track) = selectedScoreNote(), let sound = soundNotes[curveKey(note, track: track)] else { return [] }
         let start = grid.seconds(at: tick)
@@ -1112,6 +1123,16 @@ final class SongModel {
             out.append(((t - start) / (end - start), (value - Double(selection.pitch)) * 2))
         }
         return out
+    }
+
+    /// O bend que o som da nota escolhida faz (o que o F escreveria), para o gráfico do editor: nil sem medida, sem bend
+    /// no som, noutra casa, ou numa nota ligada (o som é medido na cadeia inteira, e os pontos da nota são da batida).
+    func selectedBendSuggestion() -> BendForm? {
+        _ = pitchCurvesVersion
+        guard let selection = tabSelection, let own = selection.ownLength, let length = selection.length,
+              abs(own - length) < 1, let (note, track) = selectedScoreNote(),
+              let fit = soundNotes[curveKey(note, track: track)]?.fit, fit.base == selection.pitch else { return nil }
+        return fit.form
     }
 
     // MARK: - Notas no espectro (a Lente do TabLab)
@@ -1249,6 +1270,10 @@ final class SongModel {
             switch reason {
             case let .pitch(pitch): "soa \(pitchName(pitch))"
             case let .bend(quarterTones): quarterTones > 0 ? "o som dobra \(bendName(quarterTones))" : "o som não dobra"
+            case let .prebend(quarterTones): "o som já começa dobrado (pré-bend \(bendName(quarterTones)))"
+            case .noPrebend: "o pré-bend escrito não soa (o som parte da casa)"
+            case let .release(quarterTones): "o som volta" + (quarterTones > 0 ? " a \(bendName(quarterTones))" : "")
+            case .noRelease: "a volta escrita não soa"
             case let .trill(low, high): "trinado \(pitchName(low))⇄\(pitchName(high))"
             case .noTrill: "o som não faz o trinado escrito"
             case let .attack(ms): "o ataque soa \(abs(ms)) ms \(ms < 0 ? "antes" : "depois")"
@@ -1262,6 +1287,7 @@ final class SongModel {
     /// O que o som fez na nota escolhida, em palavras (a linha embaixo da escolha na barra de edição): "soou D4 +12
     /// cents · bend 1 tom, 90 % do escrito · vibrato de 25 cents". Com a afinação da gravação já descontada.
     var soundSummary: String? {
+        _ = pitchCurvesVersion   // a linha acompanha as curvas refeitas (antes podia ficar com a medida de antes)
         guard let (note, track) = selectedScoreNote() else { return nil }
         guard pitchStem(track: track).measured else { return nil }
         // Sem o espectro as curvas não são medidas: nada a dizer.
@@ -1274,9 +1300,8 @@ final class SongModel {
         var parts = ["Soou \(Self.pitchName(report.pitch))"
                      + (abs(report.cents) >= 5 ? " \(report.cents > 0 ? "+" : "−")\(abs(report.cents)) cents" : "")]
         let written = Int(note.bend.map(\.value).max() ?? 0)
-        if report.bend > 0 {
-            parts.append("bend \(Self.bendName(report.bend))"
-                         + (report.reached.map { ", \($0) % do escrito" } ?? ", não escrito"))
+        if let form = report.form {
+            parts.append("bend: " + form.spoken + (report.reached.map { ", \($0) % do escrito" } ?? ", não escrito"))
         } else if written > 0 {
             parts.append("não dobrou (escrito: \(Self.bendName(written)))")
         }
@@ -1545,11 +1570,15 @@ final class SongModel {
             tabMessage = "Encaixou no som: \(name) em \(figure) · ⌘Z desfaz"
             return
         }
-        // Só o que muda, como a Lente: a altura, o bend (pelo tamanho) e o vibrato.
-        let before = Int(note.bend.map(\.value).max() ?? 0)
+        // Só o que muda, como a Lente: a altura, o bend (o tipo, as alturas e o tempo) e o vibrato.
+        let written = BendForm(points: note.bend.map { [$0.offset, $0.value] })
         var parts: [String] = []
         if fit.base != note.pitch { parts.append(Self.pitchName(fit.base)) }
-        if fit.quarterTones != before { parts.append(fit.quarterTones > 0 ? "bend \(Self.bendName(fit.quarterTones))" : "sem bend") }
+        if let heard = fit.form, let written, heard.kind == written.kind, heard.spoken == written.spoken {
+            if heard.points != written.points { parts.append("o tempo do bend") }
+        } else if fit.form != nil || !note.bend.isEmpty {
+            parts.append(fit.form.map { "bend: \($0.spoken)" } ?? "sem bend")
+        }
         if fit.vibrato != (note.vibrato > 0) { parts.append(fit.vibrato ? "vibrato" : "sem vibrato") }
         if note.trill != nil { parts.append("sem trinado") }
         guard !parts.isEmpty else {
@@ -1566,7 +1595,8 @@ final class SongModel {
     }
 
     static func bendName(_ quarterTones: Int) -> String {
-        [1: "¼", 2: "½", 3: "¾", 4: "1 tom", 6: "1½ tom", 8: "2 tons"][quarterTones] ?? "\(Double(quarterTones) / 4) tom"
+        let name = BendForm.name(quarterTones)
+        return quarterTones < 4 ? name : quarterTones < 8 ? "\(name) tom" : "\(name) tons"
     }
 
     /// A gravação da TAB em curso: a seguinte espera por ela.

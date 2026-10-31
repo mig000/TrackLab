@@ -443,9 +443,8 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     let bend = try #require(SoundNote(curve: soundCurve(1, 2) { $0 < 1.25 ? 60 : min(62, 60 + ($0 - 1.25) * 20) },
                                       start: 1, end: 2, pitch: 60).fit)
     #expect(bend.base == 60 && bend.quarterTones == 4 && !bend.vibrato)
-    let points = try #require(bend.points)
-    #expect(points.first == .init(offset: 0, value: 0) && points.last?.value == 4 && points.count <= 4)
-    // No Guitar Pro 7: sai (o ponto 0 parado some) e chega; a altura fica.
+    #expect(bend.form?.kind == .bend && bend.form?.top == 4 && bend.certain)
+    // No Guitar Pro 7: sai (o tempo parado antes fica implícito) e chega; a altura fica.
     let gp = try #require(bend.guitarPro)
     #expect(gp.count == 2 && gp[0].value == 0 && gp[0].offset > 3 && gp[1].value == 4)
     let back = try #require(SoundNote(curve: soundCurve(1, 2) { t in
@@ -516,9 +515,9 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
                            start: 1, end: 2, pitch: 60)
     #expect(rising.disagreements(with: plain) == [.bend(4)])
     #expect(rising.disagreements(with: bent).isEmpty)
-    // Subindo só nos últimos 120 ms: a passagem para a nota seguinte, não um bend.
+    // Subindo só nos últimos 120 ms: a passagem para a nota seguinte, não um bend (nem no F, que antes a escrevia).
     let leaving = SoundNote(curve: soundCurve(1, 2) { $0 < 1.88 ? 60 : 60 + ($0 - 1.88) * 25 }, start: 1, end: 2, pitch: 60)
-    #expect((leaving.fit?.quarterTones ?? 0) >= 2 && leaving.disagreements(with: plain).isEmpty)
+    #expect(leaving.fit?.form == nil && leaving.disagreements(with: plain).isEmpty)
     // O trinado: suspeito sem estar escrito, certo escrito entre as mesmas duas notas; escrito e não tocado, suspeito.
     let trilling = SoundNote(curve: soundCurve(1, 2) { Int(($0 - 1) / 0.08) % 2 == 0 ? 60 : 62 }, start: 1, end: 2, pitch: 60)
     #expect(trilling.disagreements(with: plain) == [.trill(low: 60, high: 62)])
@@ -685,4 +684,75 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(BendForm.make(.bend).with(height: 40).top == 12 && BendForm.make(.bend).with(height: 0).top == 1)
     #expect(BendForm.make(.bend).timed(.late).value(at: 37.5) == 2)
     #expect([1, 2, 3, 4, 5, 6, 10, 12].map(BendForm.name) == ["¼", "½", "¾", "1", "1¼", "1½", "2½", "3"])
+}
+
+
+@Test func bendPeloSomNoTipoDoEditor() throws {
+    func fit(next: Int? = nil, prebend: Double? = nil, _ f: @escaping (Double) -> Double?) throws -> CurveFit {
+        let count = Int((1 / 0.008).rounded()) + 1
+        let curve = PitchCurve(from: 1, hop: 0.008, values: (0..<count).map { f(1 + Double($0) * 0.008) })
+        return try #require(SoundNote(curve: curve, start: 1, end: 2, pitch: 60, next: next, prebend: prebend).fit)
+    }
+    let glide = { (t: Double, from: Double, at: Double, to: Double, speed: Double) -> Double in
+        t < at ? from : from < to ? min(to, from + (t - at) * speed) : max(to, from - (t - at) * speed)
+    }
+    // Começa um tom acima e desce até a casa: pré-bend que volta (antes a casa virava o Ré, "outra altura").
+    let release = try fit { glide($0, 62, 1.3, 60, 10) }
+    #expect(release.base == 60 && release.form?.kind == .prebendRelease && release.form?.pre == 4 && release.form?.end == 0)
+    // Começa meio tom acima e sobe a um tom: com o pré-bend escrito, pré e bend da casa escrita; sem ele, pelo som é
+    // igual a uma nota uma casa acima com bend de meio tom (fica a suspeita de altura).
+    let preBend = try fit(prebend: 1) { glide($0, 61, 1.4, 62, 8) }
+    #expect(preBend.base == 60 && preBend.form?.kind == .prebendBend && preBend.form?.pre == 2 && preBend.form?.top == 4)
+    #expect(try fit { glide($0, 61, 1.4, 62, 8) }.base == 61)
+    // ¾ de tom quando o som está nele; um tom que chega a 1,7 semitom é "1", como se escreve.
+    #expect(try fit { glide($0, 60, 1.2, 61.5, 15) }.form?.top == 3)
+    #expect(try fit { glide($0, 60, 1.2, 61.7, 15) }.form?.top == 4)
+    #expect(SoundNote.quarterTones(rise: 0.5) == 1 && SoundNote.quarterTones(rise: 5.9) == 12)
+    // Sobe um tom e volta a meio tom.
+    let partial = try fit { t in t < 1.55 ? glide(t, 60, 1.2, 62, 15) : glide(t, 62, 1.6, 61, 10) }
+    #expect(partial.form?.kind == .bendRelease && partial.form?.top == 4 && partial.form?.end == 2)
+    // Um degrau de um quadro para o outro (ligado, pull-off): não é bend.
+    #expect(try fit { $0 < 1.4 ? 60 : 62 }.form == nil)
+    // O rastreador perdido no meio de uma subida rápida: o F escreve o bend, mas a nota sem bend não fica suspeita.
+    let lost = try fit { $0 < 1.4 ? 60 : $0 < 1.43 ? nil : 62 }
+    #expect(lost.form?.kind == .bend && !lost.certain)
+    let plain = ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1)
+    let lostNote = SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: (0...125).map { i -> Double? in
+        let t = 1 + Double(i) * 0.008
+        return t < 1.4 ? 60 : t < 1.43 ? nil : 62
+    }), start: 1, end: 2, pitch: 60)
+    #expect(lostNote.disagreements(with: plain).isEmpty)
+    // Os primeiros quadros ainda ouvem a nota anterior, dobrada (num solo de bends): o bend sai da casa, não é pré.
+    let polluted = try fit { $0 < 1.05 ? 62 : glide($0, 60, 1.3, 62, 12) }
+    #expect(polluted.base == 60 && polluted.form?.kind == .bend)
+    // Sem vibrato, o alto pela curva de 40 ms: o bend que só chega a 1,95 semitom no fim da nota é de 1 tom (pela de
+    // 200 ms saía ¾; Highway Star, c. 250).
+    #expect(try fit { 60 + 1.95 * max(0, $0 - 1.05) / 0.95 }.form?.top == 4)
+    // O salto no fim da nota (a seguinte já soando), seguido ou com quadros vazios no meio, fica fora do alto (Highway
+    // Star, c. 171: o bend de 1 tom saía 1½ ou 2).
+    #expect(try fit { $0 < 1.92 ? glide($0, 60, 1.2, 62, 10) : 64 }.form?.top == 4)
+    #expect(try fit { $0 < 1.88 ? glide($0, 60, 1.2, 62, 10) : $0 < 1.92 ? nil : 64 }.form?.top == 4)
+    // A subida depois da metade que chega à nota seguinte é a passagem; sem a seguinte, é bend.
+    #expect(try fit(next: 62) { glide($0, 60, 1.6, 62, 12) }.form == nil)
+    #expect(try fit { glide($0, 60, 1.6, 62, 12) }.form?.kind == .bend)
+}
+
+@Test func suspeitasDeBendPeloTipo() {
+    func sound(_ f: @escaping (Double) -> Double) -> SoundNote {
+        SoundNote(curve: PitchCurve(from: 1, hop: 0.008, values: (0...125).map { f(1 + Double($0) * 0.008) }),
+                  start: 1, end: 2, pitch: 60)
+    }
+    func note(_ bend: [[Double]]) -> ScoreNote {
+        ScoreNote(tick: 0, duration: 960, pitch: 60, string: 2, fret: 1, bend: bend.map { .init(offset: $0[0], value: $0[1]) })
+    }
+    // O pré-bend escrito parado soa como a nota mais alta: está certo.
+    #expect(sound { _ in 62 }.disagreements(with: note([[0, 4], [60, 4]])).isEmpty)
+    #expect(sound { _ in 62 }.disagreements(with: note([])) == [.pitch(62)])
+    // O som começa dobrado e volta, com o bend escrito só subindo: pré-bend e volta não escritos.
+    let releasing = sound { $0 < 1.3 ? 62 : max(60, 62 - ($0 - 1.3) * 10) }
+    #expect(releasing.disagreements(with: note([[0, 0], [15, 4]])) == [.prebend(4), .release(0)])
+    // O bend escrito que volta e o som que só sobe: a volta não soa.
+    let rising = sound { $0 < 1.2 ? 60 : min(62, 60 + ($0 - 1.2) * 15) }
+    #expect(rising.disagreements(with: note([[0, 0], [15, 4], [45, 4], [60, 0]])) == [.noRelease])
+    #expect(rising.disagreements(with: note([[0, 0], [15, 4]])).isEmpty)
 }

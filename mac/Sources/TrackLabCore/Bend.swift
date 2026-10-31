@@ -219,6 +219,19 @@ public struct BendForm: Hashable, Sendable {
         return form.valid()
     }
 
+    /// O bend em palavras, para a linha do som e as mensagens: "sobe 1", "pré ½ → 1", "sobe 1 e volta a ½".
+    public var spoken: String {
+        let name = Self.name
+        return switch kind {
+        case .bend: "sobe \(name(top))"
+        case .bendRelease: "sobe \(name(top)) e volta" + (end > 0 ? " a \(name(end))" : "")
+        case .release: "volta de \(name(pre))" + (end > 0 ? " a \(name(end))" : "")
+        case .prebend: "pré-bend \(name(pre))"
+        case .prebendBend: "pré \(name(pre)) → \(name(top))"
+        case .prebendRelease: "pré \(name(pre)) e volta" + (end > 0 ? " a \(name(end))" : "")
+        }
+    }
+
     /// O nome de uma altura em quartos de tom, como a TAB escreve: ¼, ½, ¾, 1, 1¼ … 3.
     public static func name(_ quarterTones: Int) -> String {
         guard quarterTones > 0 else { return "0" }
