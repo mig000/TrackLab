@@ -229,9 +229,12 @@ a nota na TAB (`select`); arrastar para cima ou para baixo muda a altura e, ao s
 altura nova e encaixa (⌥: só a altura); F (ou "Encaixar no som") encaixa a nota escolhida: a altura presa no traste, o
 bend e o vibrato do som (`fit` na página). O bend do som sai num tipo do editor (`CurveFit.form`, um `BendForm`), nos
 pontos que o Guitar Pro 7 guarda (`CurveFit.guitarPro`). A detecção (`SoundNote.fit`, refeita em 31/10 e medida nas
-três músicas, abaixo): a casa é a escrita quando o som passa perto dela, ou quando começa no pré-bend escrito (antes o
+três músicas, abaixo): a casa é a escrita quando o som passa perto dela, ou quando fica entre ela e o alto do bend
+escrito (`written`, os pontos do bend da nota: o rastreador perdeu o começo de um bend rápido, ou é um pré-bend; antes o
 grave do começo virava a casa, e um bend rápido ou o fim dobrado da nota anterior, que o rastreador ainda ouve nos
-primeiros quadros num solo de bends, punham a nota um ou dois semitons acima, "outra altura"); três alturas acima da
+primeiros quadros num solo de bends, punham a nota um ou dois semitons acima, "outra altura"); se o som nunca passa
+pela casa e o bend escrito sai dela, o começo não é pré-bend (a subida perdida; sem isso, 30 bends escritos das músicas
+viravam "pré e bend"); três alturas acima da
 casa dizem o tipo: o ataque (o grave dos primeiros 100 ms ou um quinto da nota; pré-bend de meio tom para cima), o alto
 (com vibrato, a curva de 200 ms menos a meia oscilação; sem ele, a de 40 ms, que alcança o bend que só chega no fim da
 nota, sem os primeiros 50 ms) e o fim (a curva de 40 ms no último sétimo); um salto de ¾ de semitom no último quarto da
@@ -270,7 +273,25 @@ músicas, 171 com bend escrito; a de antes → a nova: o mesmo tipo do escrito 1
 (confirmados), suspeitas de bend 103 → 43 (mais 22 pelo tipo), de altura 450 → 402, notas suspeitas 553 → 454. Das três
 notas em que a antiga acertava e a nova errava antes dos dois últimos ajustes (o alto pela curva rápida e o salto no
 fim), duas eram erro da nova (Highway Star, c. 171 e c. 250) e uma era acerto (o "½" do c. 1 do Sunshine tinha sido
-escrito pelo F antigo, e era a passagem). Na
+escrito pelo F antigo, e era a passagem). Com a casa pelo bend escrito (31/10, à tarde), nas músicas: o mesmo tipo 119 →
+129, tipo e alturas 54 → 85, "não dobra" 28 → 18, suspeita de altura em nota com bend escrito 62 → 19, de altura 402 →
+359, notas suspeitas 454 → 418 (as de bend 43 → 49: notas que eram "outra altura" passam a "dobrou meio tom a menos",
+na casa certa). Segundo conjunto, de fora do repertório: os licks de `Blues Licks` no HD externo (BB King, Buddy Guy,
+Johnny Winter, SRV, Clapton, Gary Moore…, Guitar Pro 8 com o áudio dentro e os pontos de sincronia; o tempo de cada
+nota pelos pontos, o andamento "modificado" deles, que é o do áudio, e as curvas pelo `media/pitch.py` no MP3 de
+dentro): 20 licks, 607 notas fora de acorde, 77 com bend escrito (o do Florent Passamonti, dedilhado, ficou fora).
+Três estavam fora de sincronia (busca de deslocamento e escala pelas notas sem bend na altura: Billy Gibbons 1 +60 ms,
+45 → 88 %; Joe Bonamassa 2 +120 ms × 0,98, 59 → 85 %; Johnny Winter 1 −630 ms × 1,0125, 42 → 76 %), e o
+`FramePadding` do áudio não explica (no Joe Bonamassa 1 e no SRV 2 ele piora). Nos licks, a versão de antes → a das
+músicas → esta: o mesmo tipo 63 → 63 → 65, tipo e alturas 22 → 28 → 39, suspeita de altura em nota com bend escrito
+28 → 21 → 1, de altura 128 → 97 → 77, notas suspeitas (a das músicas → esta) 120 → 103. Terceiro: o `reference.gp` da
+mesma pasta ("Death by Slow Blues Workout", 12/8 com anacruse, revisado pelo Miguel noutro projeto): 273 notas, 194
+fora de acorde, 21 com bend escrito, quase todos de ¼ de tom; sincroniza no andamento escrito (90) com o áudio 0,69 s
+adiantado (o `FramePadding` dele, −30.500 quadros; o ponto de sincronia do último compasso fica 4 s fora), 88 % das
+notas sem bend na altura. Ali as duas versões de 31/10 dão o mesmo: o mesmo tipo 11 de 21, tipo e alturas 8, "não
+dobra" 4, notas suspeitas 32. O que ele mostrou: das 11 notas sem bend escrito acusadas de "outra altura e bend", 6 são
+slide ou ligado de uma ou duas casas abaixo (o som entra subindo e fica na escrita); nas músicas e nos licks há 60 e 27
+assim, e o `trackNotes` não manda slides nem ligados. Na
 linha do som da coluna, o bend em palavras (`BendForm.spoken`: "sobe 1 e volta a ½"); no gráfico do editor, tracejado,
 o que o som sugere (o que o F escreveria; numa nota sem bend escrito, uma linha "O som sugere"). A linha do som e o
 gráfico leem `pitchCurvesVersion` (antes podiam ficar com a medida de antes de a afinação da gravação ser refeita). Com o espectro à

@@ -45,10 +45,8 @@ import Testing
                 let written = ScoreNote(tick: note.tick, duration: note.duration, pitch: note.pitch, string: note.string,
                                         fret: note.fret, vibrato: note.vibrato, bend: pairs, trill: note.trill)
                 let shifted = curve(note).shifted(by: -tuning)
-                let prebend = (pairs.first?.value ?? 0) / 2
                 let sound = SoundNote(curve: shifted, start: note.start, end: note.end, pitch: Double(note.pitch),
-                                      next: note.next.flatMap { $0.gap < 1 ? $0.pitch : nil },
-                                      prebend: prebend > 0 ? prebend : nil)
+                                      next: note.next.flatMap { $0.gap < 1 ? $0.pitch : nil }, written: pairs)
                 guard let fit = sound.fit, fit.trill == nil else { continue }
                 let wrote = BendForm(points: pairs.map { [$0.offset, $0.value] })
                 let heard = fit.form

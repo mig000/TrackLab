@@ -503,10 +503,9 @@ final class SongModel {
         }
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
-            let prebend = (note.bend.first?.value ?? 0) / 2
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
                                chord: chords.contains(item.key), plain: note.bend.isEmpty, next: next(note),
-                               prebend: prebend > 0 ? prebend : nil)
+                               written: note.bend)
             rawCurves[item.key] = raw
             soundNotes[item.key] = raw.sound(tuning: tuning)
         }
@@ -523,11 +522,11 @@ final class SongModel {
         let chord: Bool
         let plain: Bool
         let next: Int?
-        let prebend: Double?
+        let written: [ScoreNote.BendPoint]
 
         func sound(tuning: Double) -> SoundNote {
             SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord,
-                      next: next, prebend: prebend)
+                      next: next, written: written)
         }
     }
 

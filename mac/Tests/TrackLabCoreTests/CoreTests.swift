@@ -688,10 +688,11 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
 
 
 @Test func bendPeloSomNoTipoDoEditor() throws {
-    func fit(next: Int? = nil, prebend: Double? = nil, _ f: @escaping (Double) -> Double?) throws -> CurveFit {
+    func fit(next: Int? = nil, written: [[Double]] = [], _ f: @escaping (Double) -> Double?) throws -> CurveFit {
         let count = Int((1 / 0.008).rounded()) + 1
         let curve = PitchCurve(from: 1, hop: 0.008, values: (0..<count).map { f(1 + Double($0) * 0.008) })
-        return try #require(SoundNote(curve: curve, start: 1, end: 2, pitch: 60, next: next, prebend: prebend).fit)
+        let points = written.map { ScoreNote.BendPoint(offset: $0[0], value: $0[1]) }
+        return try #require(SoundNote(curve: curve, start: 1, end: 2, pitch: 60, next: next, written: points).fit)
     }
     let glide = { (t: Double, from: Double, at: Double, to: Double, speed: Double) -> Double in
         t < at ? from : from < to ? min(to, from + (t - at) * speed) : max(to, from - (t - at) * speed)
@@ -701,7 +702,7 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(release.base == 60 && release.form?.kind == .prebendRelease && release.form?.pre == 4 && release.form?.end == 0)
     // Começa meio tom acima e sobe a um tom: com o pré-bend escrito, pré e bend da casa escrita; sem ele, pelo som é
     // igual a uma nota uma casa acima com bend de meio tom (fica a suspeita de altura).
-    let preBend = try fit(prebend: 1) { glide($0, 61, 1.4, 62, 8) }
+    let preBend = try fit(written: [[0, 2], [30, 4]]) { glide($0, 61, 1.4, 62, 8) }
     #expect(preBend.base == 60 && preBend.form?.kind == .prebendBend && preBend.form?.pre == 2 && preBend.form?.top == 4)
     #expect(try fit { glide($0, 61, 1.4, 62, 8) }.base == 61)
     // ¾ de tom quando o som está nele; um tom que chega a 1,7 semitom é "1", como se escreve.
@@ -732,6 +733,13 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // Star, c. 171: o bend de 1 tom saía 1½ ou 2).
     #expect(try fit { $0 < 1.92 ? glide($0, 60, 1.2, 62, 10) : 64 }.form?.top == 4)
     #expect(try fit { $0 < 1.88 ? glide($0, 60, 1.2, 62, 10) : $0 < 1.92 ? nil : 64 }.form?.top == 4)
+    // O rastreador perdeu o começo de um bend rápido de 1 tom (o som já sai em +0,8): com o bend escrito, a casa é a
+    // escrita e o bend é de 1 tom, sem pré-bend (antes saía "½ a partir da casa de cima", e com a casa escrita "pré ¼ e
+    // 1"); sem bend escrito, pelo som é a casa de cima.
+    let missed = { (t: Double) -> Double? in t < 1.05 ? nil : min(62, 60.8 + (t - 1.05) * 6) }
+    let bend = try fit(written: [[0, 0], [15, 4]], missed)
+    #expect(bend.base == 60 && bend.form?.kind == .bend && bend.form?.top == 4)
+    #expect(try fit(missed).base == 61)
     // A subida depois da metade que chega à nota seguinte é a passagem; sem a seguinte, é bend.
     #expect(try fit(next: 62) { glide($0, 60, 1.6, 62, 12) }.form == nil)
     #expect(try fit { glide($0, 60, 1.6, 62, 12) }.form?.kind == .bend)

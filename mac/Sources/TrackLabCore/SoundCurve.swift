@@ -71,15 +71,15 @@ public struct SoundNote: Sendable {
     private let topQuick: Double
 
     /// `next`: a altura da nota seguinte da corda, se ela começa onde esta acaba (uma subida no fim que chega a ela é a
-    /// passagem, não um bend). `prebend`: o pré-bend escrito, em semitons (o som que começa nele e não passa pela casa
-    /// é o pré-bend da casa escrita, não outra nota).
+    /// passagem, não um bend). `written`: os pontos do bend escrito (o som que fica entre a casa e o alto escrito é o
+    /// bend da casa escrita, também quando o rastreador perde o começo de um bend rápido ou é um pré-bend).
     public init(curve: PitchCurve, start: Double, end: Double, pitch: Double, chord: Bool = false, next: Int? = nil,
-                prebend: Double? = nil) {
+                written: [ScoreNote.BendPoint] = []) {
         self.curve = curve
         self.chord = chord
         level = SoundNote.trend(curve.values, width: Int((0.2 / curve.hop).rounded()))
         quick = SoundNote.trend(curve.values, width: max(3, Int((0.04 / curve.hop).rounded())))
-        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord, next: next, prebend: prebend)
+        fit = SoundNote.fit(curve, start: start, end: end, pitch: pitch, trills: !chord, next: next, written: written)
         func top(_ series: [Double?]) -> Double {
             var best = -Double.infinity
             for (k, value) in series.enumerated() {
@@ -187,7 +187,7 @@ public struct SoundNote: Sendable {
     }
 
     public static func fit(_ curve: PitchCurve, start: Double, end: Double, pitch: Double?,
-                           trills: Bool = true, next: Int? = nil, prebend: Double? = nil) -> CurveFit? {
+                           trills: Bool = true, next: Int? = nil, written: [ScoreNote.BendPoint] = []) -> CurveFit? {
         let length = end - start
         guard length > 0.04 else { return nil }
         var times: [Double] = []
@@ -259,15 +259,20 @@ public struct SoundNote: Sendable {
         let depth = sizes.isEmpty ? 0 : percentile(sizes, 0.5)
         // A casa: a escrita, quando o som passa perto dela em algum momento da nota (antes o grave do começo virava a
         // casa: um bend rápido, ou o fim dobrado da nota anterior ainda nos primeiros quadros, a punha um ou dois
-        // semitons acima, e a nota virava "outra altura"), ou quando começa no pré-bend escrito; senão o grave do
-        // começo (a escrita está noutra casa: pelo som, um pré-bend que nunca passa pela casa é igual a uma nota mais
-        // alta).
+        // semitons acima, e a nota virava "outra altura"), ou, numa nota com bend escrito, quando o som fica entre a casa
+        // e o alto escrito (o rastreador perdeu o começo de um bend rápido, ou é um pré-bend: nos licks do Buddy Guy e do
+        // BB King o bend de 1 tom saía "½ a partir da casa de cima"); senão o grave do começo (a escrita está noutra
+        // casa: pelo som, um pré-bend parado é igual a uma nota mais alta).
         let bottom = percentile(valid, 0.1)
+        let writtenTop = (written.map(\.value).max() ?? 0) / 2
+        let nearFret = pitch.map { abs(bottom - $0) <= 0.5 } ?? false
+        let inWritten = pitch.map { writtenTop > 0 && bottom >= $0 - 0.5 && bottom <= $0 + writtenTop + 0.5 } ?? false
         var base = fallback
-        if let pitch, trill == nil,
-           abs(bottom - pitch) <= 0.5 || prebend.map({ $0 > 0 && abs(bottom - pitch - $0) <= 0.5 }) == true {
-            base = Int(pitch.rounded())
-        }
+        if let pitch, trill == nil, nearFret || inWritten { base = Int(pitch.rounded()) }
+        // O som nunca passa pela casa e o bend escrito sai dela: o rastreador perdeu o começo da subida (ou ouve o fim da
+        // nota anterior), e o que ele ouve no começo não é um pré-bend (nas músicas, a dica fazia 30 bends escritos
+        // virarem "pré e bend").
+        let missedStart = !nearFret && inWritten && (written.first?.value ?? 0) == 0
         let ref = Double(base)
         guard trill == nil else {
             return CurveFit(base: base, low: low, rise: 0, quarterTones: 0, form: nil, vibrato: false, trill: trill,
@@ -304,7 +309,7 @@ public struct SoundNote: Sendable {
         let last = times.last ?? end
         let final = (median(from: last - max(0.05, 0.15 * length), to: last, quick) ?? peak) - ref
         // Um pré-bend de ao menos meio tom: abaixo disso é o ataque agudo da corda (palhetada forte) ou a afinação.
-        let pre = quarterTones(rise: attack) >= 2 ? quarterTones(rise: attack) : 0
+        let pre = !missedStart && quarterTones(rise: attack) >= 2 ? quarterTones(rise: attack) : 0
         let high = max(pre, quarterTones(rise: rise))
         // O instante (0–60) de `t`, e o tempo do movimento de `from` a `to` (semitons acima da casa) a partir do índice
         // `index`: de 20 % a 80 % pela curva de 40 ms, estendido até 0 % e 100 % (a de 200 ms começa 100 ms antes).
