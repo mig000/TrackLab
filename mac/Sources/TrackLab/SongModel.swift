@@ -333,7 +333,9 @@ final class SongModel {
         for stem in Stem.allCases {
             if let file = active[stem.rawValue] { files.append((stem.rawValue, detail.url(file))) }
         }
-        for (id, track) in detail.synth?.ids ?? [] {
+        // A TAB sintetizada é um extra: um arquivo dela que falta (apagado, uma síntese interrompida) não impede a música
+        // de abrir; o motor a dá como velha e ela é refeita.
+        for (id, track) in detail.synth?.ids ?? [] where FileManager.default.fileExists(atPath: detail.url(track.file).path) {
             files.append((id, detail.url(track.file)))
         }
         guard !files.isEmpty else {

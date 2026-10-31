@@ -92,6 +92,13 @@ def test_each_track_lands_on_the_video_audio_and_goes_stale_with_a_new_map(tmp_p
     assert stems.synth_state(song)["stale"] is True
     assert stems.synthesize_tab(song, font=font, engine="fluidsynth")["reused"] is True
     assert stems.synth_state(song)["stale"] is False
+    # Um arquivo dela que falta também (o app abre a música sem ele e a refaz).
+    track_file = song.file(result["tracks"]["0"]["file"])
+    kept = track_file.read_bytes()
+    track_file.unlink()
+    assert stems.synth_state(song)["stale"] is True
+    track_file.write_bytes(kept)
+    assert stems.synth_state(song)["stale"] is False
     song.save_tempo_map({"schemaVersion": 1, "source": "reference", "points": bars(2.0, start=2.0)})
     assert stems.synth_state(song)["stale"] is True
     again = stems.synthesize_tab(song, font=font, engine="fluidsynth")

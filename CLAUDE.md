@@ -73,8 +73,10 @@ Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytes
   (`web/tools/gp-midi.cjs` + mido). O SoundFont é o de `TRACKLAB_SOUNDFONT`, `config.json` → `soundfont`, ou o
   primeiro de `~/TrackLab/Sons` (lá está o GeneralUser GS 1.471; os testes usam o Sonivox do alphaTab, Apache 2.0). Cada pista vira `synth/<chave>/t<pista>.flac` no tamanho do áudio do vídeo, a partir de onde o tique 0 cai;
   um ganho só leva todas juntas a 80 % do volume do vídeo. A chave junta GP, mapa, SoundFont e versão; o `GET songs/{id}`
-  marca `synth.stale` quando o mapa, a partitura ou a versão (`version` no manifesto) mudou depois (o app refaz ao abrir
-  e oferece "Atualizar a TAB sintetizada").
+  marca `synth.stale` quando o mapa, a partitura ou a versão (`version` no manifesto) mudou depois, ou quando falta um
+  arquivo dela (o app abre a música sem ele, refaz ao abrir e oferece "Atualizar a TAB sintetizada"). A importação do
+  Songsterr grava a ligada depois de um bend com um Hold no alto (62 no Highway Star, 6 no Sunshine): o mesmo som que sem
+  ele (conferido no MIDI), mas o desenho mostra o pontilhado.
 - Espectro (`media/spectrum.py`, `GET songs/{id}/spectrum?stem=guitar`): a receita da Lente do TabLab (mono 22 050 Hz,
   Hann, hop 256, FFT 4096 abaixo do Dó central e 2048 acima, linhas de 1/3 de semitom do MIDI 28 ao 96, cada uma o centro
   interpolado ou as raias de dentro de ±1/6 de semitom, −90 a 0 dB num byte) em numpy, guardada em

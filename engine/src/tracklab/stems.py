@@ -184,7 +184,7 @@ def synthesize_tab(package: SongPackage, *, progress: Progress | None = None, ca
 
 def synth_state(package: SongPackage) -> dict | None:
     """A TAB sintetizada do manifesto, com `stale` quando o mapa de tempo, a partitura ou o procedimento (uma síntese de
-    uma versão anterior do TrackLab) mudou depois dela."""
+    uma versão anterior do TrackLab) mudou depois dela, ou quando falta um arquivo dela."""
     manifest = package.manifest
     done, entry = manifest.get("synth"), manifest.get("tempoMap")
     if not done:
@@ -192,7 +192,8 @@ def synth_state(package: SongPackage) -> dict | None:
     current = sha256_file(package.file(entry["file"])) if entry and package.file(entry["file"]).is_file() else None
     score = (manifest.get("score") or {}).get("sha256")
     return {**done, "stale": current != done.get("tempoSHA256") or (score is not None and score != done.get("scoreSHA256"))
-            or done.get("version") != synth_media.PROCEDURE}
+            or done.get("version") != synth_media.PROCEDURE
+            or not all(package.file(t["file"]).is_file() for t in done.get("tracks", {}).values())}
 
 
 def _publish(package: SongPackage, key: str, build, progress, stage: str, *, activate: bool) -> dict:
