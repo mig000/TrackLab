@@ -53,6 +53,9 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
     var onShift: ((Double) -> Void)?
     var onShiftEnd: ((Double) -> Void)?
+    /// O botão direito na página: a nota sob o ponto (já descrita, como a escolha) ou o compasso (o número, a fórmula e
+    /// a seção do Guitar Pro), e o ponto em coordenadas da WKWebView, para o app abrir o menu ali.
+    var onContext: ((_ note: TabSelection?, _ bar: TabBarInfo?, _ section: String?, _ point: CGPoint) -> Void)?
     private(set) var ready = false
     private var pending: [String: Any]?
     private var points: [[String: Any]] = []
@@ -325,6 +328,12 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                              BarChange(page: body["change"] as? [String: Any]))
             case "hear":
                 onHear?(body)
+            case "context":
+                let note = (body["note"] as? [String: Any]).flatMap(TabSelection.init(page:))
+                let bar = TabBarInfo(page: body["bar"] as? [String: Any])
+                let section = (body["bar"] as? [String: Any])?["section"] as? String
+                let point = CGPoint(x: (body["x"] as? NSNumber)?.doubleValue ?? 0, y: (body["y"] as? NSNumber)?.doubleValue ?? 0)
+                onContext?(note, bar, section, point)
             case "clip":
                 if let clip = body["clip"] as? [String: Any] {
                     onClip?(clip, (body["beats"] as? NSNumber)?.intValue ?? 0, body["cut"] as? Bool ?? false)

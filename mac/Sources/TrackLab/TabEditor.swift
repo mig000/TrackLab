@@ -19,7 +19,6 @@ import TrackLabCore
 ///     Tab ⇧Tab      a nota suspeita seguinte / anterior (o som discorda da escrita; vale também fora da edição)
 struct TabEditPanel: View {
     let model: SongModel
-    static let width = 252.0
     /// A casa da nota nova no cursor de inserção (com o mouse: − + e Pôr nota; o teclado digita direto).
     @Local private var newFret = 0
     /// A fórmula escolhida para o compasso (começa na dele).
@@ -83,82 +82,71 @@ struct TabEditPanel: View {
 
     var body: some View {
         let selection = model.tabSelection
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(spacing: 0) {
+            InspectorHead(title: selection.map { $0.count > 1 ? "\($0.count) notas" : "Nota" } ?? (model.tabCaret != nil ? "Nota nova" : "Nota")) {
+                Button { model.showKeys = true } label: { Image(systemName: "keyboard") }
+                    .buttonStyle(.borderless)
+                    .help("As teclas da edição (⌘/)")
+                    .accessibilityLabel("Teclas")
+            }
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 14) {
-                    noteSection(selection)
-                    Divider()
+                VStack(alignment: .leading, spacing: 10) {
+                    noteCard(selection)
                     ReadingCards(model: model)
-                    Divider()
-                    durationSection(selection)
-                    Divider()
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
                     BendEditor(model: model, selection: selection)
-                    Divider()
-                    articulations(selection)
-                    Divider()
-                    soundSection(selection)
-                    Divider()
-                    timeSection(selection)
-                    Divider()
-                    barSection
-                    Divider()
-                    suspectsSection
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+                    InspectorGroup("Articulações", summary: techniqueSummary(selection), key: "articulacoes", open: false) {
+                        articulations(selection)
+                    }
+                    InspectorGroup("Duração e tempo", summary: [selection?.figure, SongModel.grids.first { $0.ticks == model.gridTicks }.map { "grade \($0.name)" }]
+                        .compactMap { $0 }.joined(separator: " · "), key: "duracao", open: false) {
+                        durationSection(selection)
+                        Divider()
+                        timeSection(selection)
+                    }
+                    InspectorGroup(model.tabBar.map { "Compasso \($0.index + 1)" } ?? "Compasso",
+                                   summary: model.tabBar.map { "\($0.numerator)/\($0.denominator)" }, key: "compasso", open: false) {
+                        barSection
+                    }
+                    InspectorGroup("Suspeitas", summary: "\(model.suspects(track: model.scoreTrack).count)", key: "suspeitas", open: false) {
+                        suspectsSection
+                    }
                 }
-                .padding(12)
+                .padding(10)
             }
             Divider()
             footer
         }
-        .frame(width: Self.width)
         .controlSize(.small)
     }
 
     // MARK: - Partes
 
-    private func title(_ text: String, keys: String? = nil) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(text).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            Spacer(minLength: 4)
-            if let keys { KeyHint(keys) }
-        }
+    private func techniqueSummary(_ selection: TabSelection?) -> String {
+        let on = Set(selection?.techniques ?? [])
+        let names = Self.groups.flatMap(\.items).filter { on.contains($0.key) }.map(\.label)
+        return names.isEmpty ? "nenhuma" : names.joined(separator: ", ")
     }
 
-    /// A nota: onde está, a figura, a casa, a altura, a corda (a mesma altura em outra corda) e andar de nota em nota.
-    private func noteSection(_ selection: TabSelection?) -> some View {
+    /// O cartão da nota: a altura, onde está e a figura; a casa (− +), a corda (a mesma altura em cada corda); e o que
+    /// o som fez, com o Encaixar. Com o cursor de inserção: a nota nova, a casa e a voz.
+    private func noteCard(_ selection: TabSelection?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            title((selection?.count ?? 1) > 1 ? "\(selection?.count ?? 0) notas escolhidas" : "Nota", keys: "Esc solta")
-            VStack(alignment: .leading, spacing: 1) {
-                if let selection, selection.count > 1 {
-                    // Com várias: de onde a onde, e a principal (a última clicada), cujos valores a coluna mostra.
-                    Text(selection.span ?? "")
-                        .font(.caption.weight(.medium).monospacedDigit())
-                        .lineLimit(2, reservesSpace: true)
-                    Text("Principal: " + [selection.place, selection.pitchName].compactMap { $0 }.joined(separator: " · "))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if selection == nil, let caret = model.tabCaret {
-                    // O cursor de inserção: a casa digitada põe a nota ali.
-                    Text("Nota nova · corda \(caret.string)")
-                        .font(.callout.weight(.medium).monospacedDigit())
-                        .lineLimit(2, reservesSpace: true)
-                    Text(caret.place + (caret.inside ? (caret.rest ? " · no meio da pausa" : " · no meio da nota, que se divide")
-                                        : (caret.rest ? " · na pausa" : " · no acorde"))
-                         + " — digite a casa (0–9; 10–24 em dois dígitos)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(selection?.place ?? "Clique numa nota da TAB")
-                        .font(.callout.weight(.medium).monospacedDigit())
-                        .lineLimit(2, reservesSpace: true)
-                    Text(selection.map { [$0.pitchName, $0.figure, $0.voice > 1 ? "voz \($0.voice)" : nil].compactMap { $0 }
-                        .joined(separator: " · ") }
-                         ?? "Clique numa linha vazia para pôr uma nota; ⇧ clique ou ⇧← → escolhem várias; ⌘ clique põe ou tira uma; o botão direito toca sintetizada")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if selection == nil, model.tabCaret != nil {
-                // O cursor de inserção, com o mouse: a casa e Pôr nota.
+            if let selection, selection.count > 1 {
+                // Com várias: de onde a onde, e a principal (a última clicada), cujos valores a coluna mostra.
+                Text(selection.span ?? "").font(.callout.weight(.semibold).monospacedDigit()).lineLimit(2)
+                Text("Principal: " + [selection.place, selection.pitchName].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if selection == nil, let caret = model.tabCaret {
+                Text("Nota nova · corda \(caret.string)").font(.callout.weight(.semibold).monospacedDigit())
+                Text(caret.place + (caret.inside ? (caret.rest ? " · no meio da pausa" : " · no meio da nota, que se divide")
+                                    : (caret.rest ? " · na pausa" : " · no acorde")))
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 HStack(spacing: 4) {
                     Text("Casa").font(.caption).foregroundStyle(.secondary)
                     Button { newFret = max(0, newFret - 1) } label: { Image(systemName: "minus") }
@@ -170,11 +158,9 @@ struct TabEditPanel: View {
                     Button("Pôr nota") { model.tabEdit("fret", newFret) }
                         .help("Põe a nota nova nessa corda, na casa escolhida (ou digite a casa: 0–9, dois dígitos para 10–24)")
                 }
-                // Um som sem nota escrita (Tab nas suspeitas) já vem com a casa da altura dele.
                 .onChange(of: model.tabCaret, initial: true) {
                     if let fret = model.tabCaret?.fret { newFret = fret }
                 }
-                // Em que voz a nota nova entra: a 2 tem as batidas dela (uma linha de baixo sob uma melodia, por exemplo).
                 Picker("Voz", selection: Binding(get: { model.tabCaret?.voice ?? 1 }, set: { model.tabEdit("voice", $0) })) {
                     Text("Voz 1").tag(1)
                     Text("Voz 2").tag(2)
@@ -182,76 +168,49 @@ struct TabEditPanel: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .help("A voz da nota nova; na voz 2 ela entra no tempo do clique, com as pausas da voz 2 em volta")
-            }
-            // Com o cursor de inserção, a casa é a da nota nova (acima); a da nota escolhida some.
-            if !(selection == nil && model.tabCaret != nil) {
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
-                GridRow {
-                    Text("Casa").font(.caption).foregroundStyle(.secondary)
-                    HStack(spacing: 4) {
-                        // Uma casa abaixo ou acima na mesma corda é meio tom: com várias notas, vale para todas.
-                        Button { model.tabEdit("transpose", -1) } label: { Image(systemName: "minus") }
-                            .disabled((selection?.fret ?? 0) <= 0)
-                        Text(selection.map { "\($0.fret)" } ?? "–")
-                            .font(.title3.weight(.semibold).monospacedDigit())
-                            .frame(minWidth: 28)
-                        Button { model.tabEdit("transpose", 1) } label: { Image(systemName: "plus") }
-                            .disabled((selection?.fret ?? Self.maxFret) >= Self.maxFret)
-                    }
-                    .help("A casa na mesma corda; as teclas 0–9 digitam a casa (dois dígitos em 0,6 s: 10–24)")
-                    KeyHint("0–9")
-                }
-                GridRow {
-                    Text("Altura").font(.caption).foregroundStyle(.secondary)
-                    HStack(spacing: 4) {
-                        Button("−½") { model.tabEdit("transpose", -1) }
-                        Text(selection?.pitchName ?? "–").font(.callout.monospacedDigit()).frame(minWidth: 44)
-                        Button("+½") { model.tabEdit("transpose", 1) }
-                    }
-                    .help("Meio tom abaixo ou acima, na mesma corda")
-                    KeyHint("⌥↑↓")
-                }
-            }
-            .disabled(selection == nil)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Corda (a mesma altura)").font(.caption).foregroundStyle(.secondary)
+            } else if let selection {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(selection.pitchName).font(.title3.weight(.semibold))
                     Spacer()
-                    KeyHint("↑↓")
+                    Text([selection.place, selection.figure, selection.voice > 1 ? "voz \(selection.voice)" : nil].compactMap { $0 }
+                        .joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
+                HStack(spacing: 4) {
+                    Text("Casa").font(.caption).foregroundStyle(.secondary)
+                    Button { model.tabEdit("transpose", -1) } label: { Image(systemName: "minus") }
+                        .disabled(selection.fret <= 0)
+                    Text("\(selection.fret)").font(.title3.weight(.semibold).monospacedDigit()).frame(minWidth: 28)
+                    Button { model.tabEdit("transpose", 1) } label: { Image(systemName: "plus") }
+                        .disabled(selection.fret >= Self.maxFret)
+                    Text("corda \(selection.string)").font(.caption).foregroundStyle(.secondary).padding(.leading, 6)
+                    Spacer()
+                }
+                .help("A casa na mesma corda (meio tom por casa); as teclas 0–9 digitam a casa")
                 stringButtons(selection)
+            } else {
+                Text("Clique numa nota da TAB").font(.callout.weight(.medium))
+                Text("Numa linha vazia, põe uma nota; ⇧ clique ou ⇧← → escolhem várias; o botão direito tem a edição rápida.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            HStack(spacing: 4) {
-                Button { model.tabEdit("nav", -1) } label: { Label("Anterior", systemImage: "chevron.left") }
-                    .help("A nota anterior (←)")
-                Button { model.tabEdit("nav", 1) } label: { Label("Seguinte", systemImage: "chevron.right") }
-                    .help("A nota seguinte (→)")
-                Spacer()
-                Button { model.listenSelection() } label: { Image(systemName: "ear") }
-                    .help("Ouvir: o trecho das notas escolhidas vira o loop e toca (O, ou ⌥Espaço)")
-                    .accessibilityLabel("Ouvir")
-                Button(role: .destructive) { model.tabEdit("delete") } label: { Image(systemName: "trash") }
-                    .help("Apagar a nota, ou as escolhidas (⌫)")
-                    .accessibilityLabel("Apagar")
+            if selection != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    let sound = model.soundSummary
+                    Text(sound ?? "Sem medida: a Lente à vista mede o som das notas.")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(sound == nil ? Color.secondary : Color(red: 1, green: 138 / 255, blue: 61 / 255))
+                        .lineLimit(2)
+                        .help(sound ?? "")
+                    Spacer(minLength: 4)
+                    Button { model.fitToSound() } label: { HStack(spacing: 3) { Text("Encaixar"); KeyHint("F") } }
+                        .disabled(sound == nil)
+                        .help("F: a altura, o bend e o vibrato que o som da nota tem (pela curva do espectro)")
+                }
             }
-            .labelStyle(.titleAndIcon)
-            .disabled(selection == nil && model.tabCaret == nil)
-            // Copiar e colar: as batidas inteiras das notas escolhidas; colar a partir da nota ou da linha escolhida,
-            // por cima do que estava (também noutra música).
-            HStack(spacing: 4) {
-                Button { model.copyTab(cut: false) } label: { Label("Copiar", systemImage: "doc.on.doc") }
-                    .disabled(selection == nil)
-                    .help("⌘C: copia as batidas das notas escolhidas (o acorde inteiro, as articulações)")
-                Button { model.copyTab(cut: true) } label: { Label("Recortar", systemImage: "scissors") }
-                    .disabled(selection == nil)
-                    .help("⌘X: copia e deixa pausa no lugar")
-                Button { model.pasteTab() } label: { Label("Colar", systemImage: "doc.on.clipboard") }
-                    .disabled(selection == nil && model.tabCaret == nil)
-                    .help("⌘V: cola a partir da nota escolhida ou da linha vazia, por cima do que estava")
-            }
-            .labelStyle(.titleAndIcon)
         }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
     }
 
     /// Uma corda por botão (1, a mais aguda, à esquerda), com a casa em que a mesma altura cai nela; a da nota marcada.
@@ -278,7 +237,7 @@ struct TabEditPanel: View {
                     } label: { label }
                         .buttonStyle(.bordered)
                         .disabled(selection == nil || fret == nil)
-                        .help(fret.map { "Corda \(string), casa \($0)" } ?? "Corda \(string): a nota não cabe nela")
+                        .help(fret.map { "Corda \(string), casa \($0) (↑↓)" } ?? "Corda \(string): a nota não cabe nela")
                 }
             }
         }
@@ -288,9 +247,7 @@ struct TabEditPanel: View {
     /// mais longa não passa da nota seguinte.
     private func durationSection(_ selection: TabSelection?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            title("Duração", keys: "− =  .  T")
-            // As seis figuras numa linha, do mesmo tamanho, como na paleta do Guitar Pro (os números 1, ½ … 1/32 tinham
-            // larguras diferentes e não cabiam juntos).
+            // As seis figuras numa linha, do mesmo tamanho, como na paleta do Guitar Pro.
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 6), spacing: 3) {
                 ForEach(SongModel.figures, id: \.ticks) { figure in
                     let label = NotationIconView(icon: .glyph(Bravura.figure(figure.ticks), size: 17, lift: -0.42))
@@ -311,46 +268,33 @@ struct TabEditPanel: View {
             .disabled(selection == nil)
             HStack(spacing: 4) {
                 Toggle(isOn: Binding(get: { selection?.dotted ?? false }, set: { model.setFigure(dotted: $0) })) {
-                    HStack(spacing: 3) {
-                        NotationIconView(icon: .glyph(Bravura.quarter + Bravura.dot, size: 17, lift: -0.42))
-                        KeyHint(".")
-                    }
-                    .accessibilityLabel("Pontuada")
+                    NotationIconView(icon: .glyph(Bravura.quarter + Bravura.dot, size: 17, lift: -0.42)).accessibilityLabel("Pontuada")
                 }
                 .toggleStyle(.button)
                 .help("Ponto: a figura e mais a metade dela (.)")
                 Toggle(isOn: Binding(get: { selection?.triplet ?? false }, set: { model.setFigure(triplet: $0) })) {
-                    HStack(spacing: 3) { Text("⌐3¬").font(.system(size: 12, weight: .semibold, design: .serif)); KeyHint("T") }
-                        .accessibilityLabel("Tercina")
+                    Text("⌐3¬").font(.system(size: 12, weight: .semibold, design: .serif)).accessibilityLabel("Tercina")
                 }
                 .toggleStyle(.button)
                 .help("Tercina: três no tempo de duas (T)")
-                Spacer(minLength: 0)
                 Button { model.tabEdit("rest") } label: {
-                    HStack(spacing: 3) {
-                        NotationIconView(icon: .glyph(Bravura.quarterRest, size: 17, lift: -0.25))
-                        KeyHint("⇧⌫")
-                    }
-                    .accessibilityLabel("Pausa")
+                    NotationIconView(icon: .glyph(Bravura.quarterRest, size: 17, lift: -0.25)).accessibilityLabel("Pausa")
                 }
                 .help("A batida da nota (o acorde, as ligadas) vira pausa; as outras notas ficam no lugar (⇧⌫)")
-            }
-            .disabled(selection == nil)
-            Button { model.splitNote() } label: {
-                HStack(spacing: 3) { Text("Dividir em duas ligadas"); KeyHint("/") }.frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
+                Button { model.splitNote() } label: { HStack(spacing: 3) { Text("Dividir"); KeyHint("/") } }
+                    .disabled(selection == nil && model.tabCaret == nil)
+                    .help("A nota vira duas ligadas com o mesmo som, para a segunda ter articulação dela: no cursor, se ele "
+                          + "está dentro da nota, na agulha, se ela está dentro da escolhida, ou no meio; na grade (/)")
             }
             .disabled(selection == nil && model.tabCaret == nil)
-            .help("A nota vira duas ligadas com o mesmo som, para a segunda ter articulação dela (o vibrato no fim de um "
-                  + "bend): no cursor, se ele está dentro da nota, na agulha, se ela está dentro da escolhida, ou no meio; "
-                  + "na grade (/)")
         }
     }
 
-    /// Todas as articulações à vista, com a tecla de cada uma; as ligadas da nota escolhida ficam marcadas.
+    /// Todas as articulações, em três grupos; as ligadas da nota escolhida ficam marcadas.
     private func articulations(_ selection: TabSelection?) -> some View {
         let on = Set(selection?.techniques ?? [])
         return VStack(alignment: .leading, spacing: 8) {
-            title("Articulações")
             ForEach(Self.groups, id: \.name) { group in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(group.name).font(.caption2).foregroundStyle(.tertiary)
@@ -358,14 +302,11 @@ struct TabEditPanel: View {
                         ForEach(group.items) { item in
                             Toggle(isOn: Binding(get: { on.contains(item.key) },
                                                  set: { _ in model.toggleTechnique(item.key) })) {
-                                HStack(spacing: 3) {
+                                Group {
                                     if let icon = item.icon {
                                         NotationIconView(icon: icon).accessibilityLabel(item.label)
                                     } else {
                                         Text(item.label)
-                                    }
-                                    if let shortcut = item.shortcut {
-                                        Text(shortcut).font(.caption2.monospaced()).foregroundStyle(.secondary)
                                     }
                                 }
                                 .frame(maxWidth: .infinity)
@@ -380,59 +321,17 @@ struct TabEditPanel: View {
         .disabled(selection == nil)
     }
 
-    /// O que o som fez na nota (com a Lente, que mede as curvas) e o encaixe.
-    private func soundSection(_ selection: TabSelection?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // O encaixe na linha do título: o que o som fez cabe em duas linhas embaixo.
-            HStack(alignment: .firstTextBaseline) {
-                Text("Som").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                Spacer(minLength: 4)
-                Button { model.fitToSound() } label: {
-                    HStack(spacing: 3) { Text("Encaixar"); KeyHint("F") }
-                }
-                .disabled(selection == nil)
-                .help("F: a altura, o bend e o vibrato que o som da nota tem (pela curva do espectro)")
-            }
-            let sound = model.soundSummary
-            Text(sound ?? (selection == nil ? " " : "Sem medida: a Lente à vista mede o som das notas."))
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(sound == nil ? Color.secondary : Color(red: 1, green: 138 / 255, blue: 61 / 255))
-                .lineLimit(2, reservesSpace: true)
-                .help(sound ?? "")
-        }
-    }
-
-    /// O tempo das notas: as barras de duração embaixo delas (D), a grade e um passo para os lados.
+    /// O tempo das notas: um passo da grade para os lados (as barras de duração e a grade ficam no canto da TAB).
     private func timeSection(_ selection: TabSelection?) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            title("Tempo da nota", keys: "D")
-            Toggle(isOn: Binding(get: { model.showDurations }, set: { model.showDurations = $0 })) {
-                Label("Barras de duração", systemImage: "ruler")
-            }
-            .toggleStyle(.button)
-            .help("D: uma barra embaixo de cada nota, do tamanho do som; arraste o meio para mover no tempo, as pontas "
-                  + "para mudar o começo ou o fim (passa da barra de compasso com ligadura). Com ⌥, na grade de 1/32.")
-            HStack(spacing: 6) {
-                Text("Grade").font(.caption).foregroundStyle(.secondary)
-                Picker("Grade", selection: Binding(get: { model.gridTicks }, set: { model.gridTicks = $0 })) {
-                    ForEach(SongModel.grids, id: \.ticks) { grid in Text(grid.name).tag(grid.ticks) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                .help("Onde as notas podem cair ao mudar de tempo: arrastar o número da nota na TAB, as barras de duração, ⌥← ⌥→ "
-                      + "e o arrasto lateral na Lente param nas posições desta grade, contadas do começo do compasso "
-                      + "(1/16: a cada semicolcheia; tercina de 1/8: a cada terço de tempo). Com ⌥, 1/32.")
-            }
-            HStack(spacing: 4) {
-                Button { model.shiftSelected(-1) } label: { Label("Mais cedo", systemImage: "arrow.left") }
-                Button { model.shiftSelected(1) } label: { Label("Mais tarde", systemImage: "arrow.right") }
-                Spacer()
-                KeyHint("⌥←→")
-            }
-            .labelStyle(.titleAndIcon)
-            .disabled(selection == nil)
-            .help("A nota um passo da grade mais cedo ou mais tarde, com a mesma duração")
+        HStack(spacing: 4) {
+            Button { model.shiftSelected(-1) } label: { Label("Mais cedo", systemImage: "arrow.left") }
+            Button { model.shiftSelected(1) } label: { Label("Mais tarde", systemImage: "arrow.right") }
+            Spacer()
+            KeyHint("⌥←→")
         }
+        .labelStyle(.titleAndIcon)
+        .disabled(selection == nil)
+        .help("A nota um passo da grade mais cedo ou mais tarde, com a mesma duração (a grade está no canto da TAB)")
     }
 
     /// O compasso da escolha, em todas as pistas: pôr um antes ou depois, apagá-lo, mudar a fórmula. O mapa de tempo
@@ -440,7 +339,6 @@ struct TabEditPanel: View {
     private var barSection: some View {
         let bar = model.tabBar
         return VStack(alignment: .leading, spacing: 6) {
-            title(bar.map { "Compasso \($0.index + 1) · \($0.numerator)/\($0.denominator)" } ?? "Compasso")
             HStack(spacing: 4) {
                 Button { model.editBar("insert-before") } label: { Label("Antes", systemImage: "plus") }
                     .help("Põe um compasso vazio antes deste (em todas as pistas, com a mesma fórmula)")
@@ -478,11 +376,42 @@ struct TabEditPanel: View {
     }
 
     /// O que o som tem de diferente da TAB, de uma suspeita em uma (Tab, ⇧Tab), com o filtro por tipo e quantas há de
-    /// cada um na pista.
-    private var suspectsSection: some View {
+    /// cada um na pista (o mesmo filtro do selo no canto da Lente).
+    private var suspectsSection: some View { SuspectFilter(model: model) }
+
+    static let suspectHelp: [SuspectKind: String] = [
+        .pitch: "O som da nota está noutra altura (a medida perto da escrita: de 2 semitons abaixo a 4 acima)",
+        .bend: "O som dobra diferente do escrito (meio tom ou mais), ou não dobra",
+        .trill: "Ligados rápidos que a TAB não tem, ou o trinado escrito que o som não faz",
+        .unwritten: "Um ataque forte no espectro, numa altura que nenhuma nota escrita tem ali (Tab põe o cursor nele, com a casa)",
+        .silent: "A nota escrita quase não tem altura no som (não soa, ou soa muito fraco)",
+        .attack: "O ataque medido a mais de 60 ms do começo escrito (o ritmo da TAB, ou o mapa de tempo ali)",
+        .vibrato: "O som tem vibrato e a TAB não escreve (muita TAB omite: vem desligado)",
+    ]
+
+    /// O aviso da página (por que a nota não andou) e Concluir: sempre no mesmo lugar.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Text(model.tabMessage ?? " ")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .help(model.tabMessage ?? "")
+            Spacer()
+            Button("Concluir") { model.editingTab = false }
+                .help("Volta a Estudar (⌘E; Esc sem nota escolhida)")
+        }
+        .padding(10)
+    }
+}
+
+/// O filtro das suspeitas: a anterior e a seguinte (⇧Tab, Tab) e os tipos ligados, com quantas há de cada um.
+struct SuspectFilter: View {
+    let model: SongModel
+
+    var body: some View {
         let counts = model.suspectCounts(track: model.scoreTrack)
-        return VStack(alignment: .leading, spacing: 6) {
-            title("Suspeitas", keys: "Tab ⇧Tab")
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Button { model.nextSuspect(-1) } label: { Image(systemName: "chevron.left") }
                     .help("⇧Tab: a suspeita anterior")
@@ -506,45 +435,10 @@ struct TabEditPanel: View {
                         .frame(maxWidth: .infinity)
                     }
                     .toggleStyle(.button)
-                    .help(Self.suspectHelp[kind] ?? "")
+                    .help(TabEditPanel.suspectHelp[kind] ?? "")
                 }
             }
         }
-    }
-
-    static let suspectHelp: [SuspectKind: String] = [
-        .pitch: "O som da nota está noutra altura (a medida perto da escrita: de 2 semitons abaixo a 4 acima)",
-        .bend: "O som dobra diferente do escrito (meio tom ou mais), ou não dobra",
-        .trill: "Ligados rápidos que a TAB não tem, ou o trinado escrito que o som não faz",
-        .unwritten: "Um ataque forte no espectro, numa altura que nenhuma nota escrita tem ali (Tab põe o cursor nele, com a casa)",
-        .silent: "A nota escrita quase não tem altura no som (não soa, ou soa muito fraco)",
-        .attack: "O ataque medido a mais de 60 ms do começo escrito (o ritmo da TAB, ou o mapa de tempo ali)",
-        .vibrato: "O som tem vibrato e a TAB não escreve (muita TAB omite: vem desligado)",
-    ]
-
-    /// O aviso da página (por que a nota não andou), desfazer, refazer e concluir: sempre no mesmo lugar.
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(model.tabMessage ?? " ")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2, reservesSpace: true)
-                .help(model.tabMessage ?? "")
-            HStack(spacing: 4) {
-                Button { model.tabEdit("undo") } label: { Image(systemName: "arrow.uturn.backward") }
-                    .disabled(!model.canUndoTab)
-                    .help("Desfazer a última mudança na TAB (⌘Z)")
-                    .accessibilityLabel("Desfazer")
-                Button { model.tabEdit("redo") } label: { Image(systemName: "arrow.uturn.forward") }
-                    .disabled(!model.canRedoTab)
-                    .help("Refazer (⇧⌘Z)")
-                    .accessibilityLabel("Refazer")
-                Spacer()
-                Button("Concluir") { model.editingTab = false }
-                    .help("Sai da edição (⌘E; Esc sem nota escolhida)")
-            }
-        }
-        .padding(12)
     }
 }
 
@@ -626,6 +520,14 @@ struct TabEditKeys: NSViewRepresentable {
             if event.keyCode == 48, model.editingTab || model.lensVisible {
                 model.nextSuspect(flags.contains(.shift) ? -1 : 1)
                 return true
+            }
+            // No modo Gravar: R grava e para; B compara os takes do loop.
+            if model.mode == .record, !flags.contains(.option) {
+                switch event.charactersIgnoringModifiers?.lowercased() {
+                case "r": model.toggleRecording(); return true
+                case "b": model.alternateTake(); return true
+                default: break
+                }
             }
             guard model.editingTab else { return false }
             let option = flags.contains(.option)

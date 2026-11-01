@@ -52,7 +52,7 @@ final class SongModel {
     private(set) var scoreMessage: String?
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
     private(set) var scoreHeight: Double?
-    private(set) var notice: String?
+    var notice: String?
     /// A separação em curso (o id da tarefa, o que ela faz e a última mensagem).
     private(set) var stemJob: (job: String, request: StemRequest, message: String, progress: Double?)?
     /// A TAB sintetizada ficou para trás: o mapa de tempo mudou depois dela (o motor diz ao abrir; o Ajuste, depois).
@@ -67,12 +67,74 @@ final class SongModel {
     /// O outro lado do A/B: a separação que estava tocando antes, ou a nova que acabou de chegar.
     private(set) var compareKey: String?
 
+    /// Os três modos da tela (o seletor no centro da barra): Estudar, Editar (a TAB) e Ajustar (a sincronização). Cada
+    /// um troca o lado direito da barra e o inspetor; a edição e o Ajuste continuam sendo `editingTab` e `adjusting`.
+    enum StudioMode: String, CaseIterable, Identifiable {
+        case study, edit, adjust, record
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .study: "Estudar"
+            case .edit: "Editar"
+            case .adjust: "Ajustar"
+            case .record: "Gravar"
+            }
+        }
+    }
+
+    var mode: StudioMode {
+        get { editingTab ? .edit : adjusting ? .adjust : recordMode ? .record : .study }
+        set {
+            switch newValue {
+            case .study:
+                editingTab = false
+                adjusting = false
+                recordMode = false
+            case .edit: editingTab = true
+            case .adjust: adjusting = true
+            case .record:
+                editingTab = false
+                adjusting = false
+                recordMode = true
+            }
+        }
+    }
+
+    /// O modo Gravar (⌘R): a entrada da guitarra liga, e os takes aparecem numa camada sob a TAB.
+    var recordMode = false {
+        didSet {
+            guard recordMode != oldValue else { return }
+            if recordMode {
+                Task {
+                    await InputEngine.shared.restoreChain()
+                    InputEngine.shared.start()
+                }
+            } else if studio.recording {
+                finishRecording()
+            }
+        }
+    }
+    /// Os takes da música e a gravação em curso.
+    let studio = TakeStudio()
+
+    /// O inspetor à direita (⌥⌘I): o que ele mostra segue o modo (o trecho, o mixer e as faixas; a nota; a sincronização).
+    var showInspector = UserDefaults.standard.object(forKey: "showInspector") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showInspector, forKey: "showInspector") }
+    }
+    /// A folha de teclas (⌘/).
+    var showKeys = false
+    /// O menu do botão direito à espera de a página escolher a nota: onde abrir.
+    @ObservationIgnored var pendingMenu: (point: CGPoint, view: NSView)?
+
     /// A edição da TAB (⌘E): um clique escolhe a nota; teclas e a paleta mudam casa, corda e articulações; o Guitar Pro
     /// editado é gravado no pacote (o original fica). Saindo, a TAB sintetizada é refeita se a partitura mudou.
     var editingTab = false {
         didSet {
             guard editingTab != oldValue else { return }
-            if editingTab { adjusting = false }
+            if editingTab {
+                adjusting = false
+                recordMode = false
+            }
             bridge.setEditing(editingTab)
             if !editingTab { Task { await finishScoreEdits() } }
         }
@@ -97,7 +159,10 @@ final class SongModel {
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
     var adjusting = false {
         didSet {
-            if adjusting { editingTab = false }
+            if adjusting {
+                editingTab = false
+                recordMode = false
+            }
             bridge.setAdjusting(adjusting)
             // Saindo do Ajuste com o mapa mudado, a TAB sintetizada é refeita em segundo plano.
             if oldValue, !adjusting, synthOutdated { Task { await synthesize(quiet: true) } }
@@ -286,9 +351,25 @@ final class SongModel {
         }
         bridge.onShift = { [weak self] seconds in self?.soundShift = seconds }
         bridge.onSelection = { [weak self] note, undo, redo in
-            self?.tabSelection = note
-            self?.canUndoTab = undo
-            self?.canRedoTab = redo
+            guard let self else { return }
+            self.tabSelection = note
+            self.canUndoTab = undo
+            self.canRedoTab = redo
+            // O botão direito pediu a nota: com ela escolhida, o menu abre.
+            if let pending = self.pendingMenu, let note {
+                self.pendingMenu = nil
+                self.showNoteMenu(note, at: pending.point, in: pending.view)
+            }
+        }
+        bridge.onContext = { [weak self] note, bar, section, point in
+            guard let self else { return }
+            if let note {
+                self.contextMenu(forTrack: note.track, tick: note.ownTick ?? note.tick ?? 0, string: note.string,
+                                 at: point, in: self.bridge.webView)
+            } else if let bar {
+                self.showBarMenu(index: bar.index, signature: "\(bar.numerator)/\(bar.denominator)", section: section,
+                                 at: point, in: self.bridge.webView)
+            }
         }
         bridge.onCaret = { [weak self] caret in self?.tabCaret = caret }
         bridge.onClip = { [weak self] clip, beats, cut in self?.storeClip(clip, beats: beats, cut: cut) }
@@ -321,6 +402,7 @@ final class SongModel {
     /// Fecha a música: o som para já; a edição que a página ainda não mandou é gravada antes de a página deixar de
     /// falar com o app (antes, trocar de música até 1,5 s depois de uma mudança perdia a mudança).
     func close() {
+        if studio.recording { finishRecording() }
         engine.stop()
         let previous = Self.closing
         Self.closing = Task {
@@ -357,6 +439,7 @@ final class SongModel {
                 grid = TempoGrid(points: map.points)
             }
             try loadAudio(detail, keepMix: false)
+            loadTakes(detail)
             loadScore(detail)
             // Com mais de uma separação guardada, o A/B já abre pronto: a seguinte na escada.
             if compareKey == nil, let active = detail.activeStems {
@@ -398,8 +481,9 @@ final class SongModel {
         }
         let preset = preset
         try engine.load(files)
-        // A recarga tira todas as faixas, o metrônomo junto.
+        // A recarga tira todas as faixas, o metrônomo e os takes junto.
         refreshClick(force: true)
+        applyTakes()
         // A TAB sintetizada chega com todas as faixas abertas, mas o grupo desligado (o botão TAB do mixer liga).
         for id in engine.synthIDs where engine.mix[id] == nil {
             engine.mix[id] = StemMix(volume: 0.8)
@@ -968,8 +1052,8 @@ final class SongModel {
 
     /// A: o 1 do compasso que toca vai para onde os ataques dele soam (a mediana, `barOffsets`); vira âncora e as
     /// vizinhas acompanham, como num arrasto.
-    func syncBarToSound() {
-        guard let bar = grid.bar(at: engine.currentTime), grid.barTicks.indices.contains(bar - 1) else { return }
+    func syncBarToSound(bar chosen: Int? = nil) {
+        guard let bar = chosen ?? grid.bar(at: engine.currentTime), grid.barTicks.indices.contains(bar - 1) else { return }
         guard lensVisible else {
             adjustMessage = "Abra o espectro: é ele que mede quando as notas soam."
             return
@@ -1090,8 +1174,9 @@ final class SongModel {
     }
 
     /// Trecho conferido: marca os compassos do trecho (o loop, ou o que toca); se já estavam todos, desmarca.
-    func toggleChecked() {
-        let bars = currentBars
+    func toggleChecked() { toggleChecked(bars: currentBars) }
+
+    func toggleChecked(bars: [Int]) {
         guard !bars.isEmpty else { return }
         var next = checkedBars
         if bars.allSatisfy(next.contains) { next.subtract(bars) } else { next.formUnion(bars) }
@@ -1507,14 +1592,72 @@ final class SongModel {
     }
 
     /// Pôr um compasso antes ou depois do da escolha, apagá-lo, ou mudar a fórmula dele (todas as pistas).
-    func editBar(_ action: String, numerator: Int? = nil, denominator: Int? = nil) {
+    func editBar(_ action: String, index: Int? = nil, numerator: Int? = nil, denominator: Int? = nil) {
         var value: [String: Any] = ["action": action]
+        if let index { value["index"] = index }
         if let numerator, let denominator {
             value["numerator"] = numerator
             value["denominator"] = denominator
         }
+        // Do menu do compasso, fora da edição: mexer nos compassos é editar a TAB.
+        if !editingTab { editingTab = true }
         tabEdit("bar", value)
     }
+
+    // MARK: - O que os menus do botão direito pedem
+
+    /// Os segundos de um compasso (1 é o primeiro).
+    func barRange(_ bar: Int) -> ClosedRange<Double>? {
+        let starts = grid.bars
+        guard bar >= 1, bar < starts.count else { return nil }
+        return starts[bar - 1]...starts[bar]
+    }
+
+    func loopBar(_ bar: Int) {
+        if let range = barRange(bar) { setLoop(range, seekToStart: true) }
+    }
+
+    /// Corrigir pelo som só um compasso: o loop nele e o corretor (que corrige o loop).
+    func correctBar(_ bar: Int) {
+        loopBar(bar)
+        if !editingTab { editingTab = true }
+        correctBySound()
+    }
+
+    /// As notas de um compasso escolhidas (a primeira é a principal), na edição.
+    func selectBar(_ index: Int) {
+        if !editingTab { editingTab = true }
+        bridge.edit("selectBar", index)
+    }
+
+    /// A nota escolhida sozinha: o som gravado dela, ou sintetizada.
+    func hearSelection(synth: Bool) {
+        guard let (note, track) = selectedScoreNote() else { return }
+        hearNote(note, track: track, synth: synth)
+    }
+
+    /// O loop no trecho das notas escolhidas (sem tocar).
+    func loopSelection() {
+        guard let range = tabSelection?.range, !grid.isEmpty else { return }
+        let seconds = grid.seconds(at: range.lowerBound)...grid.seconds(at: range.upperBound)
+        guard seconds.upperBound - seconds.lowerBound >= LoopRegion.minimum else { return }
+        setLoop(seconds, seekToStart: true)
+    }
+
+    /// O próximo arrasto na Lente marca o trecho a reconhecer (Editar › Reconhecer um trecho, o botão direito).
+    func armRegionSelection() {
+        if !lensVisible { lensVisible = true }
+        selectingRegion = true
+        tabMessage = "Arraste na Lente em volta das notas a reconhecer (Esc cancela)."
+    }
+
+    /// A parte da música (a seção do Guitar Pro) em que um tique cai.
+    func partName(atTick tick: Double) -> String? {
+        markers.last { $0.tick <= tick }?.name
+    }
+
+    /// A linha de estado: a última ação ou aviso (da edição, do Ajuste, da música).
+    var statusText: String? { tabMessage ?? adjustMessage ?? notice }
 
     // MARK: - Copiar e colar na TAB
 

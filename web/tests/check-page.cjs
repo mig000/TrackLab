@@ -194,4 +194,17 @@ test("o corretor manda várias notas de uma vez: um passo só do Desfazer, e as 
   assert.ok(!edit.notesOf(staffOf(p))[0].hasBend);
 });
 
+test("o menu do compasso: escolhe as notas do compasso e põe um compasso pelo índice, sem nota escolhida", () => {
+  const p = page(load());
+  p.tracklab.edit("selectBar", 1);
+  const chosen = edit.resolve(p.state.score, p.state.selected);
+  assert.equal(chosen.beat.voice.bar.index, 1);
+  assert.equal(p.state.group.length, edit.notesOf(staffOf(p)).filter((n) => n.beat.voice.bar.index === 1).length);
+  const bars = p.state.score.masterBars.length;
+  p.choose(null);
+  p.tracklab.edit("bar", { action: "insert-after", index: 1 });
+  assert.equal(p.state.score.masterBars.length, bars + 1);
+  assert.ok(p.posted.some((m) => m.type === "structure"), "os compassos mudaram: o app recebe a estrutura");
+});
+
 console.log(`${passed} verificações passaram`);

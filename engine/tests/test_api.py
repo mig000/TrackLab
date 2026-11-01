@@ -295,3 +295,36 @@ def test_two_spectrum_requests_at_once_share_one_computation(client, monkeypatch
         thread.join(10)
     assert [r.status_code for r in results] == [200, 200] and len(calls) == 1
     assert not list(Path(package.find(song_id).file("peaks")).glob("*partial*"))
+
+
+def test_takes_are_kept_in_the_manifest_and_their_files_swept(client):
+    import os
+    import time
+    from pathlib import Path
+
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    folder = Path(client.get(f"/api/songs/{song_id}").json()["folder"])
+    (folder / "takes").mkdir()
+    for name in ("t1.caf", "t2.caf", "t2.chain.plist"):
+        (folder / "takes" / name).write_bytes(b"x")
+    takes = [{"id": "t1", "lane": 1, "start": 12.5, "length": 6.1, "rate": 0.85, "cents": 0, "favorite": True},
+             {"id": "t2", "lane": 2, "start": 0, "length": 3, "active": False, "input": "Helix · USB 1/2"}]
+    saved = client.put(f"/api/songs/{song_id}/takes", json={"takes": takes}).json()["takes"]
+    assert [take["file"] for take in saved] == ["takes/t1.caf", "takes/t2.caf"]
+    assert saved[0]["rate"] == 0.85 and saved[0]["favorite"] and saved[0]["active"]
+    assert saved[1]["chain"] == "takes/t2.chain.plist" and not saved[1]["active"]
+    assert client.get(f"/api/songs/{song_id}").json()["takes"] == saved
+    # Sem o áudio, ou com a pista fora de 1–4, nada muda.
+    assert client.put(f"/api/songs/{song_id}/takes", json={"takes": [{"id": "t9", "lane": 1, "start": 0,
+                                                                       "length": 1}]}).status_code == 400
+    assert client.put(f"/api/songs/{song_id}/takes", json={"takes": [{**takes[0], "lane": 5}]}).status_code == 400
+    # O t2 sai da lista: os arquivos dele ficam um minuto (podem ser de um take que acabou de ser gravado) e depois saem.
+    assert client.put(f"/api/songs/{song_id}/takes", json={"takes": takes[:1]}).status_code == 200
+    assert (folder / "takes" / "t2.caf").is_file()
+    old = time.time() - 120
+    for name in ("t2.caf", "t2.chain.plist"):
+        os.utime(folder / "takes" / name, (old, old))
+    client.put(f"/api/songs/{song_id}/takes", json={"takes": takes[:1]})
+    assert sorted(path.name for path in (folder / "takes").iterdir()) == ["t1.caf"]

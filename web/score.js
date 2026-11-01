@@ -924,7 +924,8 @@
   // tempo acompanha (o que vem depois fica no mesmo lugar do áudio) e vai ao app com os compassos novos; o Desfazer
   // volta os dois.
   function barEdit(value) {
-    const index = chosenBar();
+    // O menu do compasso diz qual (`index`); a coluna usa o da nota ou do cursor.
+    const index = value && Number.isInteger(value.index) ? value.index : chosenBar();
     if (index === null || !value) {
       post({ type: "notice", text: "Escolha uma nota ou uma linha da TAB no compasso." });
       return;
@@ -1006,19 +1007,44 @@
       to: span ? span.end : note.beat.absolutePlaybackStart + note.beat.playbackDuration });
   }
 
-  // O botão direito numa nota: ela soa sintetizada (na edição, também a escolhe). O menu da página não abre.
+  // O botão direito: o app abre o menu da nota (que ela escolhe antes, na edição) ou o do compasso sob o ponto, com o
+  // ponto em coordenadas da página (as da WKWebView). O menu da página não abre.
   sheet.addEventListener("contextmenu", (event) => {
     event.preventDefault();
+    if (!state.score) return;
     const hit = noteAt(event);
-    const note = hit && state.score ? edit.resolve(state.score, edit.pathOf(hit)) : null;
-    if (!note) return;
-    if (state.editing) {
+    const note = hit ? edit.resolve(state.score, edit.pathOf(hit)) : null;
+    if (note && state.editing) {
       choose(edit.pathOf(note));
       drawSelection();
       postSelection();
     }
-    hear(note, true);
+    const index = note ? note.beat.voice.bar.index : barAtPoint(event);
+    const master = index === null ? null : state.score.masterBars[index];
+    post({ type: "context", x: event.clientX, y: event.clientY,
+      note: note ? Object.assign(edit.describe(alphaTab, note), { place: placeName(note.beat.absolutePlaybackStart) }) : null,
+      bar: master ? { index: master.index, numerator: master.timeSignatureNumerator, denominator: master.timeSignatureDenominator,
+        section: master.section ? master.section.text : null } : null });
   });
+
+  // O compasso sob o ponto (pela caixa real de cada um no desenho; em páginas, no sistema em que o y cai).
+  function barAtPoint(event) {
+    const api = state.api;
+    const lookup = api && api.renderer.boundsLookup;
+    if (!lookup) return null;
+    const surface = api.canvasElement.element.getBoundingClientRect();
+    const x = (event.clientX - surface.left) / zoomStretch();
+    const y = event.clientY - surface.top;
+    for (const system of lookup.staffSystems) {
+      const r = system.realBounds;
+      if (lookup.staffSystems.length > 1 && (y < r.y || y > r.y + r.h)) continue;
+      for (const master of system.bars) {
+        const b = master.realBounds;
+        if (x >= b.x && x < b.x + b.w) return master.index;
+      }
+    }
+    return null;
+  }
 
   function selectedNote() {
     return state.score ? edit.resolve(state.score, state.selected) : null;
@@ -1353,6 +1379,17 @@
     }
     if (op === "paste") {
       pasteAt(value);
+      return;
+    }
+    if (op === "selectBar") {
+      // As notas do compasso `value` (o menu do compasso): a primeira é a principal e as outras entram no grupo.
+      const staff = state.score.tracks[state.track] && state.score.tracks[state.track].staves.find((s) => s.tuning && s.tuning.length);
+      const notes = staff ? edit.notesOf(staff).filter((n) => n.beat.voice.bar.index === value) : [];
+      if (!notes.length) return;
+      choose(edit.pathOf(notes[0]));
+      if (notes.length > 1) state.group = notes.map((n) => edit.pathOf(n));
+      drawSelection();
+      postSelection();
       return;
     }
     if (op === "replaceRegion") {

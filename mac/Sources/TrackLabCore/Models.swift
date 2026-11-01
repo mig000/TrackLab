@@ -280,11 +280,13 @@ public struct SongDetail: Codable, Hashable, Sendable {
     public let sections: [StudySection]
     /// A TAB sintetizada (uma faixa por pista do Guitar Pro), se houver.
     public let synth: SynthSet?
+    /// Os takes gravados por cima da música (Fase 5).
+    public let takes: [Take]
 
     public init(id: String, title: String?, artist: String?, folder: String, score: ScoreEntry?, audio: AudioEntry?,
                 tempoMap: TempoEntry?, stems: [String: StemSet], activeStems: String?, warnings: [String],
                 checkedBars: [Int] = [], status: StudyStatus = .want, sections: [StudySection] = [],
-                synth: SynthSet? = nil) {
+                synth: SynthSet? = nil, takes: [Take] = []) {
         self.id = id
         self.title = title
         self.artist = artist
@@ -299,11 +301,12 @@ public struct SongDetail: Codable, Hashable, Sendable {
         self.status = status
         self.sections = sections
         self.synth = synth
+        self.takes = takes
     }
 
     enum CodingKeys: String, CodingKey {
         case id, title, artist, folder, score, audio, tempoMap, stems, activeStems, warnings, checkedBars, status,
-             sections, synth
+             sections, synth, takes
     }
 
     public init(from decoder: Decoder) throws {
@@ -322,6 +325,7 @@ public struct SongDetail: Codable, Hashable, Sendable {
         status = StudyStatus(text: try c.decodeIfPresent(String.self, forKey: .status))
         sections = try c.decodeIfPresent([StudySection].self, forKey: .sections) ?? []
         synth = try c.decodeIfPresent(SynthSet.self, forKey: .synth)
+        takes = try c.decodeIfPresent([Take].self, forKey: .takes) ?? []
     }
 
     /// A separação ativa, se houver.

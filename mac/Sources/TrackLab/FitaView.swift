@@ -52,6 +52,8 @@ struct FitaView: View {
         .background(paper ? Color(red: 0.98, green: 0.973, blue: 0.953) : Color(nsColor: .underPageBackgroundColor))
         .onChange(of: scheme, initial: true) { if lens { model.paper = paper } }
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        // O canto da Lente: a afinação da gravação, as corrigidas, as suspeitas (o selo abre o filtro) e o Z.
+        .overlay(alignment: .topTrailing) { if lens { LensBadges(model: model) } }
     }
 
     private func tape(size: CGSize, now: Double) -> some View {
@@ -77,10 +79,15 @@ struct FitaView: View {
         }
         .contentShape(Rectangle())
         .gesture(dragGesture(size: size, start: start))
-        // O botão direito numa faixa da Lente toca a nota sintetizada (como na TAB).
-        .background(RightClickCatcher { point in
-            guard let hit = noteAt(point, size: size, start: start) else { return false }
-            model.hearNote(hit.note, track: hit.track, synth: true)
+        // O botão direito: numa faixa da Lente, o menu da nota; fora dela (e na Onda), o menu do compasso.
+        .background(RightClickCatcher { point, view in
+            if let hit = noteAt(point, size: size, start: start) {
+                model.contextMenu(forTrack: hit.track, tick: hit.note.tick, string: hit.note.string, at: point, in: view)
+                return true
+            }
+            let t = time(at: point.x, width: width, start: start)
+            guard let bar = model.grid.bar(at: t) else { return false }
+            model.showBarMenu(index: bar - 1, signature: nil, section: nil, at: point, in: view)
             return true
         })
         .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
@@ -575,28 +582,28 @@ struct FitaView: View {
                              at: CGPoint(x: x + 4, y: 4), anchor: .topLeading)
             }
         }
-        // Quantas suspeitas a pista tem (a música toda), no canto: Tab vai de uma a outra.
-        // E a afinação da gravação, quando passa de 5 cents (descontada em tudo o que está na tela).
-        let suspects = model.suspects(track: model.scoreTrack).count
-        let cents = Int((model.tuning * 100).rounded())
-        var info: [Text] = []
-        if abs(cents) >= 5 {
-            info.append(Text("gravação \(cents > 0 ? "+" : "−")\(abs(cents)) cents").foregroundStyle(.secondary))
-        }
-        let fixed = model.correctedCount(track: model.scoreTrack)
-        if fixed > 0 {
-            info.append(Text("\(fixed) corrigida\(fixed == 1 ? "" : "s") pelo som").foregroundStyle(ReadingTile.teal))
-        }
-        if suspects > 0 {
-            info.append(Text("\(suspects) suspeita\(suspects == 1 ? "" : "s")"
-                             + "\(model.measuring ? "…" : "") · Tab")
-                .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.45)))
-        } else if model.measuring {
-            info.append(Text("Medindo o som das notas…").foregroundStyle(.secondary))
-        }
-        if let first = info.first {
-            let line = info.dropFirst().reduce(first) { $0 + Text("   ") + $1 }
-            context.draw(line.font(.caption.weight(.medium)), at: CGPoint(x: width - 8, y: 6), anchor: .topTrailing)
+
+        // A nota ao vivo (a guitarra na entrada): o rastro dos últimos segundos e um ponto na ponta.
+        let trail = model.studio.trail
+        if InputEngine.shared.running, trail.count > 1 {
+            let red = Color(red: 0.95, green: 0.25, blue: 0.2)
+            var line = Path()
+            var previous: (time: Double, pitch: Double)?
+            for point in trail where point.pitch >= lowPitch - 1 && point.pitch <= highPitch + 1 {
+                let spot = CGPoint(x: gx(point.time), y: y(point.pitch))
+                if let previous, point.time - previous.time < 0.12, abs(point.pitch - previous.pitch) < 1.5 {
+                    line.addLine(to: spot)
+                } else {
+                    line.move(to: spot)
+                }
+                previous = point
+            }
+            context.stroke(line, with: .color(red.opacity(0.85)), style: StrokeStyle(lineWidth: 2.2, lineCap: .round, lineJoin: .round))
+            if let last = trail.last, abs(model.engine.currentTime - last.time) < 0.25, last.pitch >= lowPitch, last.pitch <= highPitch {
+                let dot = CGRect(x: gx(last.time) - 5, y: y(last.pitch) - 5, width: 10, height: 10)
+                context.fill(Path(ellipseIn: dot), with: .color(red))
+                context.stroke(Path(ellipseIn: dot), with: .color(.white), lineWidth: 1.5)
+            }
         }
 
         // O teclado à esquerda (o da Lente): as teclas brancas e pretas de cada semitom, os Dós e os Mis com nome.
@@ -784,5 +791,60 @@ struct FitaView: View {
         for point in top.reversed() { path.addLine(to: CGPoint(x: point.x, y: 2 * middle - point.y)) }
         path.closeSubpath()
         return path
+    }
+}
+
+/// Os selos no canto da Lente: a afinação da gravação (de 5 cents para cima), as notas corrigidas pelo som, as
+/// suspeitas (um clique abre o filtro por tipo e a navegação) e o Z (a janela de alturas em volta da nota que toca).
+struct LensBadges: View {
+    let model: SongModel
+    @Local private var filtering = false
+
+    var body: some View {
+        let cents = Int((model.tuning * 100).rounded())
+        let fixed = model.correctedCount(track: model.scoreTrack)
+        let suspects = model.suspects(track: model.scoreTrack).count
+        HStack(spacing: 4) {
+            if model.measuring {
+                ProgressView().controlSize(.mini)
+            }
+            if abs(cents) >= 5 {
+                badge("gravação \(cents > 0 ? "+" : "−")\(abs(cents)) cents", color: .secondary)
+                    .help("A afinação da gravação, descontada em tudo o que está na tela; o Tom (Lá 440) a desconta no som")
+            }
+            if fixed > 0 {
+                badge("\(fixed) corrigida\(fixed == 1 ? "" : "s")", color: ReadingTile.teal)
+                    .help("Notas que o corretor mudou pelo som, marcadas na Lente")
+            }
+            Button { filtering.toggle() } label: {
+                badge(suspects > 0 ? "\(suspects) suspeita\(suspects == 1 ? "" : "s")" : "sem suspeitas",
+                      color: suspects > 0 ? Color(red: 0.86, green: 0.25, blue: 0.25) : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Onde o som discorda da TAB; Tab e ⇧Tab vão de uma a outra; o clique abre o filtro por tipo")
+            .popover(isPresented: $filtering, arrowEdge: .bottom) {
+                SuspectFilter(model: model).padding(12).frame(width: 260).controlSize(.small)
+            }
+            Toggle(isOn: Binding(get: { model.pitchZoom }, set: { model.pitchZoom = $0 })) {
+                Image(systemName: "arrow.up.and.down.square")
+            }
+            .toggleStyle(.button)
+            .controlSize(.mini)
+            .keyboardShortcut("z", modifiers: [])
+            .help("Z: amplia a altura em volta da nota que toca (para conferir um bend); Z de novo volta")
+            .accessibilityLabel("Ampliar a altura")
+        }
+        .padding(.top, 6)
+        .padding(.trailing, 8)
+    }
+
+    private func badge(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(.regularMaterial))
+            .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 0.5))
     }
 }

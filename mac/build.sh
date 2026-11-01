@@ -28,6 +28,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>NSHumanReadableCopyright</key><string>TrackLab — uso pessoal</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>O TrackLab ouve a guitarra (a interface, o Helix) para o afinador, a nota ao vivo e os takes gravados.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>TLRepoPath</key><string>${script:h:h}</string>
 </dict></plist>

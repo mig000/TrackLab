@@ -85,7 +85,23 @@ final class StemEngine {
     private struct Track {
         let file: AVAudioFile
         let player: AVAudioPlayerNode
+        /// Um take gravado: onde ele cai na música e em que velocidade foi tocado; o time-pitch dele o leva ao tempo
+        /// e ao tom da música (só quando foi gravado noutra velocidade ou noutro tom).
+        var take: TakeSlot? = nil
+        var pitch: AVAudioUnitTimePitch? = nil
     }
+
+    /// Um take para tocar: o arquivo, o começo na música, a velocidade e o tom da gravação.
+    struct TakeSlot {
+        let start: Double
+        let length: Double
+        let rate: Double
+        let cents: Int
+    }
+
+    static let takePrefix = "take:"
+    /// O volume de cada take (pelo id da faixa, "take:<id>"): a pista dele no mixer; 0 cala.
+    var takeGains: [String: Float] = [:] { didSet { applyMix() } }
 
     @ObservationIgnored private var tracks: [String: Track] = [:]
     @ObservationIgnored private(set) var sources: [String: URL] = [:]
@@ -129,10 +145,7 @@ final class StemEngine {
     func load(_ files: [(id: String, url: URL)]) throws {
         stop()   // tocando, guarda o ponto ouvido em `anchorTime`: o A/B recarrega no mesmo lugar
         let position = anchorTime
-        for track in tracks.values {
-            engine.disconnectNodeOutput(track.player)
-            engine.detach(track.player)
-        }
+        for track in tracks.values { detach(track) }
         tracks = [:]
         sources = [:]
         engine.disconnectNodeOutput(bus)
@@ -185,10 +198,7 @@ final class StemEngine {
         let wasPlaying = isPlaying
         let position = currentTime
         if wasPlaying { pause() }
-        if let old = tracks.removeValue(forKey: Self.clickID) {
-            engine.disconnectNodeOutput(old.player)
-            engine.detach(old.player)
-        }
+        if let old = tracks.removeValue(forKey: Self.clickID) { detach(old) }
         if let file {
             let player = AVAudioPlayerNode()
             engine.attach(player)
@@ -202,9 +212,55 @@ final class StemEngine {
         }
     }
 
-    /// As faixas da separação carregadas (sem o original e sem a TAB sintetizada).
+    private func detach(_ track: Track) {
+        engine.disconnectNodeOutput(track.player)
+        engine.detach(track.player)
+        if let pitch = track.pitch {
+            engine.disconnectNodeOutput(pitch)
+            engine.detach(pitch)
+        }
+    }
+
+    /// Troca os takes que tocam (id da faixa → arquivo e lugar), sem recarregar o resto; tocando, segue do ponto ouvido.
+    /// Um take gravado noutra velocidade ou noutro tom passa por um time-pitch dele antes do barramento: o arquivo
+    /// fica como foi tocado, e sai no tempo e no tom da música.
+    func setTakes(_ list: [(id: String, url: URL, slot: TakeSlot)]) {
+        let wasPlaying = isPlaying
+        let position = currentTime
+        if wasPlaying { pause() }
+        for id in takeIDs { if let old = tracks.removeValue(forKey: id) { detach(old) } }
+        for item in list {
+            guard let file = try? AVAudioFile(forReading: item.url) else { continue }
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            var pitch: AVAudioUnitTimePitch?
+            if abs(item.slot.rate - 1) > 1e-6 || item.slot.cents != 0 {
+                let unit = AVAudioUnitTimePitch()
+                unit.rate = Float(1 / item.slot.rate)
+                unit.pitch = Float(-item.slot.cents)
+                engine.attach(unit)
+                engine.connect(player, to: unit, format: file.processingFormat)
+                engine.connect(unit, to: bus, format: file.processingFormat)
+                pitch = unit
+            } else {
+                engine.connect(player, to: bus, format: file.processingFormat)
+            }
+            tracks[item.id] = Track(file: file, player: player, take: item.slot, pitch: pitch)
+        }
+        applyMix()
+        if wasPlaying {
+            anchorTime = min(max(0, position), duration)
+            startPlayers()
+        }
+    }
+
+    var takeIDs: [String] { tracks.keys.filter { $0.hasPrefix(Self.takePrefix) }.sorted() }
+
+    /// As faixas da separação carregadas (sem o original, a TAB sintetizada e os takes).
     var stemIDs: [String] {
-        tracks.keys.filter { $0 != Self.sourceID && $0 != Self.clickID && !$0.hasPrefix(SynthTrack.prefix) }.sorted()
+        tracks.keys.filter {
+            $0 != Self.sourceID && $0 != Self.clickID && !$0.hasPrefix(SynthTrack.prefix) && !$0.hasPrefix(Self.takePrefix)
+        }.sorted()
     }
 
     /// As faixas da TAB sintetizada carregadas ("tab:1"…).
@@ -224,6 +280,25 @@ final class StemEngine {
     func songTime(atHost host: Double) -> Double {
         guard isPlaying else { return anchorTime }
         return plan.songTime(after: elapsed(atHost: host, rate: rateValue))
+    }
+
+    /// O relógio do plano que toca, para a gravação: o plano e a música tocada nele até um instante de host (o que se
+    /// ouvia então). `version` muda a cada play, pausa, salto e mudança de velocidade: a gravação acaba ali.
+    struct Clock {
+        let plan: PlaybackPlan
+        let rate: Double
+        let version: Int
+        let elapsed: (Double) -> Double
+    }
+
+    private(set) var transportVersion = 0
+
+    var clock: Clock? {
+        guard isPlaying else { return nil }
+        let (anchorElapsed, anchorHost, latency, rate) = (anchorElapsed, anchorHost, latency, Double(rateValue))
+        return Clock(plan: plan, rate: rate, version: transportVersion) { host in
+            anchorElapsed + max(0, host - anchorHost - latency) * rate
+        }
     }
 
     /// Música tocada no plano atual até `host`.
@@ -273,6 +348,7 @@ final class StemEngine {
         anchorHost = CACurrentMediaTime() + lead
         anchorElapsed = 0
         isPlaying = true
+        transportVersion += 1
         startTimer()
         changed()
     }
@@ -283,6 +359,7 @@ final class StemEngine {
         guard isPlaying else { return }
         anchorTime = currentTime
         isPlaying = false
+        transportVersion += 1
         for track in tracks.values { track.player.stop() }
         stopTimer()
         changed()
@@ -374,6 +451,7 @@ final class StemEngine {
         }
         rateValue = clean
         timePitch.rate = clean
+        transportVersion += 1
         changed()
     }
 
@@ -400,6 +478,8 @@ final class StemEngine {
                 track.player.volume = clickOn ? 0.9 : 0
             } else if id.hasPrefix(SynthTrack.prefix) {
                 track.player.volume = tabOn ? (gains[id] ?? 0) : 0
+            } else if id.hasPrefix(Self.takePrefix) {
+                track.player.volume = takeGains[id] ?? 0
             } else {
                 track.player.volume = audioOn && useStems ? (gains[id] ?? 1) : 0
             }
@@ -453,12 +533,48 @@ final class StemEngine {
     private func schedule(_ track: Track, _ segments: [ClosedRange<Double>]) {
         track.player.stop()
         let file = track.file
+        if let take = track.take {
+            scheduleTake(track, take, segments)
+            return
+        }
         let rate = file.processingFormat.sampleRate
         for segment in segments {
             let first = AVAudioFramePosition((segment.lowerBound * rate).rounded())
             let last = min(file.length, AVAudioFramePosition((segment.upperBound * rate).rounded()))
             guard last > first else { continue }
             track.player.scheduleSegment(file, startingFrame: first, frameCount: AVAudioFrameCount(last - first), at: nil)
+        }
+    }
+
+    /// Um take: silêncio até ele em cada trecho do plano, o áudio dele, silêncio no resto (em quadros do arquivo, que
+    /// o time-pitch do take leva ao tempo da música). O atraso do time-pitch é descontado adiantando o take.
+    private func scheduleTake(_ track: Track, _ take: TakeSlot, _ segments: [ClosedRange<Double>]) {
+        let file = track.file
+        let format = file.processingFormat
+        let delay = track.pitch.map { $0.auAudioUnit.latency } ?? 0
+        let pieces = TakeSchedule.pieces(start: take.start - delay, length: take.length, rate: take.rate,
+                                         sampleRate: format.sampleRate, fileFrames: Int(file.length), segments: segments)
+        let second = AVAudioFrameCount(format.sampleRate)
+        var silence: [AVAudioFrameCount: AVAudioPCMBuffer] = [:]
+        func silent(_ count: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+            if let buffer = silence[count] { return buffer }
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: count) else { return nil }
+            buffer.frameLength = count   // os buffers novos vêm zerados
+            silence[count] = buffer
+            return buffer
+        }
+        for piece in pieces {
+            switch piece {
+            case var .silence(frames):
+                while frames > 0 {
+                    let count = min(AVAudioFrameCount(frames), second)
+                    if let buffer = silent(count) { track.player.scheduleBuffer(buffer, completionHandler: nil) }
+                    frames -= Int(count)
+                }
+            case let .audio(frame, frames):
+                track.player.scheduleSegment(file, startingFrame: AVAudioFramePosition(frame),
+                                             frameCount: AVAudioFrameCount(frames), at: nil)
+            }
         }
     }
 }

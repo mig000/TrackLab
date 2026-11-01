@@ -26,7 +26,7 @@ import zipfile
 from pathlib import Path
 from xml.parsers import expat
 
-from . import home, repertoire, tempomap
+from . import home, repertoire, takes as take_list, tempomap
 from .errors import PackageError
 from .util import atomic_json, new_id, now_iso, read_json, sha256_file, slugify
 
@@ -265,6 +265,14 @@ class SongPackage:
 
         self.update(record)
         return clean
+
+    def set_takes(self, takes) -> list[dict]:
+        """Os takes gravados (a lista inteira, como o app a tem); os arquivos dos que saíram dela são apagados."""
+        with _LOCK:
+            clean = take_list.check(takes, self.path)
+            self.update(lambda data: data.__setitem__("takes", clean))
+            take_list.sweep(self.path, clean)
+            return clean
 
     def set_status(self, status) -> str:
         """O estado de estudo da música (Quero aprender, Aprendendo, Polindo, No repertório, Arquivo)."""

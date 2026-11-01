@@ -4,7 +4,8 @@ import SwiftUI
 /// O botão direito sobre uma view do SwiftUI, sem pegar os outros cliques: um monitor local de `rightMouseDown` (como
 /// o `ScrollCatcher`), que entrega o ponto em coordenadas da view (o y de cima para baixo, como no SwiftUI).
 struct RightClickCatcher: NSViewRepresentable {
-    let onRightClick: (CGPoint) -> Bool
+    /// O ponto (em coordenadas da view) e a view, para abrir um menu nela.
+    let onRightClick: (CGPoint, NSView) -> Bool
 
     func makeNSView(context: Context) -> CatcherView {
         let view = CatcherView()
@@ -21,7 +22,7 @@ struct RightClickCatcher: NSViewRepresentable {
     }
 
     final class CatcherView: NSView {
-        var onRightClick: ((CGPoint) -> Bool)?
+        var onRightClick: ((CGPoint, NSView) -> Bool)?
         private var monitor: Any?
 
         override var isFlipped: Bool { true }
@@ -37,7 +38,7 @@ struct RightClickCatcher: NSViewRepresentable {
                 }
                 let point = self.convert(event.locationInWindow, from: nil)
                 guard self.bounds.contains(point) else { return event }
-                return MainActor.assumeIsolated { self.onRightClick?(point) ?? false } ? nil : event
+                return MainActor.assumeIsolated { self.onRightClick?(point, self) ?? false } ? nil : event
             }
         }
 

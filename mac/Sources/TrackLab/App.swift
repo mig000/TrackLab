@@ -43,8 +43,8 @@ struct TrackLabApp: App {
                     Text("Escura").tag("dark")
                 }
                 // ⌥⌘M: ⌘M é o Minimizar do macOS.
-                Button("Mostrar ou esconder o mixer") { NotificationCenter.default.post(name: .toggleMixer, object: nil) }
-                    .keyboardShortcut("m", modifiers: [.command, .option])
+                Button("Mostrar ou esconder o inspetor") { NotificationCenter.default.post(name: .toggleMixer, object: nil) }
+                    .keyboardShortcut("i", modifiers: [.command, .option])
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Desfazer") { NotificationCenter.default.post(name: .undoTempo, object: nil) }
@@ -60,6 +60,17 @@ struct TrackLabApp: App {
                     NotificationCenter.default.post(name: .selectRegion, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: [.command, .option])
+                Divider()
+                Button("Editar a TAB") { NotificationCenter.default.post(name: .toggleEdit, object: nil) }
+                    .keyboardShortcut("e")
+                Button("Ajustar a sincronização") { NotificationCenter.default.post(name: .toggleAdjust, object: nil) }
+                    .keyboardShortcut("j")
+                Button("Gravar a guitarra") { NotificationCenter.default.post(name: .toggleRecord, object: nil) }
+                    .keyboardShortcut("r")
+            }
+            CommandGroup(after: .help) {
+                Button("Teclas do TrackLab") { NotificationCenter.default.post(name: .showKeys, object: nil) }
+                    .keyboardShortcut("/")
             }
         }
         Settings { SettingsView() }
@@ -79,6 +90,10 @@ extension Notification.Name {
     static let correctBySound = Notification.Name("TrackLab.correctBySound")
     static let syncBySound = Notification.Name("TrackLab.syncBySound")
     static let selectRegion = Notification.Name("TrackLab.selectRegion")
+    static let toggleEdit = Notification.Name("TrackLab.toggleEdit")
+    static let toggleAdjust = Notification.Name("TrackLab.toggleAdjust")
+    static let toggleRecord = Notification.Name("TrackLab.toggleRecord")
+    static let showKeys = Notification.Name("TrackLab.showKeys")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -190,6 +205,12 @@ struct RootView: View {
             }
         }
         .onChange(of: library.selection) { _, id in open(id) }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { importing = true } label: { Label("Do Songsterr", systemImage: "plus") }
+                    .help("Importar do Songsterr (⌘N): a TAB, o áudio do vídeo e as faixas")
+            }
+        }
     }
 
     private func connect() async {
@@ -249,6 +270,22 @@ private struct Sidebar: View {
                         ForEach(group.songs) { song in SongRow(song: song).tag(song.id) }
                     }
                 }
+                // As coleções filtram a lista de cima (uma por vez; de novo, todas).
+                Section("Coleções") {
+                    ForEach(library.collections.filter { $0 != .all }, id: \.self) { collection in
+                        Button {
+                            library.collection = library.collection == collection ? .all : collection
+                        } label: {
+                            HStack {
+                                Label(collection.label, systemImage: collection == .needsSync ? "metronome" : "tuningfork")
+                                Spacer()
+                                if library.collection == collection { Image(systemName: "checkmark").foregroundStyle(.secondary) }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .selectionDisabled()
+                    }
+                }
                 Section("Fontes") {
                     Label("Multitracks", systemImage: "square.stack.3d.up")
                         .badge(library.multitrackStatus?.count ?? 0)
@@ -260,18 +297,6 @@ private struct Sidebar: View {
             if let error = library.loadError {
                 Text(error).font(.caption).foregroundStyle(.red).padding(8)
             }
-            Divider()
-            Picker("Coleção", selection: Binding(get: { library.collection }, set: { library.collection = $0 })) {
-                ForEach(library.collections, id: \.self) { collection in Text(collection.label).tag(collection) }
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 8)
-            Button { importing = true } label: {
-                Label("Importar do Songsterr", systemImage: "plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.borderless)
-            .padding(10)
         }
     }
 }

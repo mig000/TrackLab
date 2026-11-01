@@ -232,6 +232,13 @@ final class Backend {
         return saved.bars
     }
 
+    /// Os takes gravados (a lista inteira); o motor apaga os arquivos dos que saíram dela.
+    func putTakes(_ id: String, _ takes: [Take]) async throws -> [Take] {
+        struct Body: Codable { let takes: [Take] }
+        let saved: Body = try await send("PUT", "songs/\(id)/takes", body: Body(takes: takes))
+        return saved.takes
+    }
+
     /// O mapa como veio do Songsterr (antes do primeiro ajuste).
     func originalTempo(_ id: String) async throws -> TempoMapDocument {
         try await get("songs/\(id)/tempo-map/original")

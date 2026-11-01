@@ -192,6 +192,11 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(400, "Envie os compassos conferidos em bars.")
         return {"bars": song(song_id).set_checked_bars(body["bars"])}
 
+    @app.put("/api/songs/{song_id}/takes")
+    def put_takes(song_id: str, body: dict = Body(...)) -> dict:
+        """Os takes gravados (`{"takes": [...]}`, a lista inteira), no lugar dos que estavam."""
+        return {"takes": song(song_id).set_takes(body.get("takes"))}
+
     @app.get("/api/songs/{song_id}/multitrack")
     def song_multitrack(song_id: str) -> dict:
         """A música da biblioteca de multitracks que é esta (mesmo título e artista), ou null."""

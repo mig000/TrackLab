@@ -54,6 +54,11 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   novo". 31/10: as três entradas do Ramblin' Man (a pasta do Clone Hero e dois .mogg) são uma regravação (outra
   execução, em Lá 440, 2,6 a 4,9 % mais rápida e com a razão variando; o vídeo do Songsterr é o disco, 21 cents acima),
   o alinhamento a recusou e elas ficaram escondidas.
+- Takes (Fase 5, `takes.py`, `PUT songs/{id}/takes`): a lista inteira no manifesto (`takes`: id, pista de 1 a 4,
+  `start` e `length` em segundos da música, `rate` e `cents` do estudo na hora, nome, favorito, `active`, a entrada); o
+  app grava o áudio direto no pacote (`takes/<id>.caf`, e o timbre dos efeitos em `takes/<id>.chain.plist`) antes de
+  mandar a lista, e o motor apaga os arquivos dos takes que saíram dela, depois de um minuto (um take recém-gravado chega
+  ao disco antes de entrar na lista).
 - Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/` e só vira a ativa sem A/B se não
   houver outra (`PUT songs/{id}/stems/active`). `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
   em 24 trechos, consenso numa reta: deslocamento e velocidade até 2 %, depois uma passada fina; ganho pela energia);
@@ -200,7 +205,72 @@ da página com o app (colar, recortar, pausa, o flush) tem o teste dela: `node w
 
 ## App (`mac/`)
 SwiftPM sem Xcode (`./build.sh` → build/TrackLab.app, `./test.sh`), alvo macOS 15, Swift 6 em modo 5. Estado das
-views por `@Local` (= SwiftUI.State). `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
+views por `@Local` (= SwiftUI.State).
+
+A tela da música, redesenhada em 31/10 (a proposta, com as pranchas: https://claude.ai/artifact/71SvyMjBhJgvsTxf1X71yc):
+três modos num seletor no centro da barra, `SongModel.mode` (Estudar; Editar, ⌘E, = `editingTab`; Ajustar, ⌘J, =
+`adjusting`), cada um com o lado direito da barra e o inspetor dele. À esquerda da barra o título com o estado (um menu).
+Um inspetor só à direita (`InspectorPanel`, 300 pt, ⌥⌘I, `showInspector`), com o conteúdo pelo modo: em Estudar, o
+Trecho (o ativo: recorde, meta, a sequência, Limpo!), o Mixer (Original/Faixas, os atalhos, cada faixa com M/S e volume,
+a TAB sintetizada com o X e as pistas) e as Faixas (a separação, o A/B, Melhorar, a cota do MVSEP); em Editar, a nota
+(`TabEditPanel`); em Ajustar, a Sincronização (`SyncInspector`: os conferidos, os compassos fora pelo som com "Ir", as
+versões, Recomeçar). O mixer de baixo da tela saiu: a Lente ganhou a altura. Os grupos do inspetor abrem e fecham
+(`InspectorGroup`, a escolha guardada em `group.<chave>`). Sob a barra, o mapa da música (`SongMapView`): a música inteira
+numa linha, as partes (as seções do Guitar Pro, `songParts`) nas cores delas, os trechos de estudo como chaves em cima
+(recorde → meta; a ativa cheia; o botão direito tem o menu do trecho), os compassos conferidos em verde embaixo, as
+suspeitas em vermelho, o loop e a agulha; um clique leva a música até ali (numa chave, liga o trecho), arrastar marca o
+loop; na ponta, "+ Trecho do loop" (com "um trecho por parte da música" quando não há trechos). Os chips dos trechos
+saíram. O transporte só tem o que é de tocar: play, relógio, Loop (com o tempo dele no botão), metrônomo, velocidade,
+Tom, Ouvir (Original e os atalhos; o X quando o mixer do inspetor não está à vista), o zoom − + e, com um trecho ativo,
+o Limpo!. A Onda, a Lente e a TAB em páginas ficam no menu Visão da barra (⌥⌘1, ⌥⌘2 continuam) e no canto da TAB
+(Faixa · Página, "Com:" as outras pistas; na edição, a grade e as barras de duração). A Lente tem selos no canto
+(`LensBadges`): a afinação da gravação, as corrigidas, as suspeitas (o clique abre o filtro por tipo, `SuspectFilter`)
+e o Z. Uma linha de estado entre as camadas e o transporte (`StatusLine`): a última ação ou aviso com "⌘Z desfaz", a
+parte que toca, os conferidos e as suspeitas. ⌘/ abre a folha de teclas (`KeysSheet`); a coluna perdeu as teclas em
+cada botão. O botão direito (`NoteMenu.swift`), em qualquer modo: numa nota (na TAB, pela mensagem `context` da
+página com a nota descrita e o ponto, ou numa faixa da Lente) a edição liga, a nota é escolhida e o menu abre
+(`contextMenu(forTrack:tick:string:)`, à espera da escolha em `pendingMenu`): a cabeça com a nota e o que soou, uma
+linha com as oito articulações mais usadas e outra com a casa (− +) e as cordas como controles (NSHostingView dentro
+do NSMenu), Ouvir, Encaixar, as Leituras, Bend, Mais articulações, Duração, Dividir, Mover no tempo, meio tom, Loop,
+Reconhecer, recortar/copiar/colar/apagar; no número do compasso (ou fora de uma nota, na Onda e na Lente), o
+compasso: loop, guardar como trecho, Conferido, sincronizar e corrigir pelo som, pôr antes e depois, fórmula, apagar
+(`editBar(index:)`; a página aceita o índice em `bar` e tem o op `selectBar`), escolher as notas, reconhecer. A barra
+lateral tem Coleções (uma por vez, de novo todas) e o "+ Do Songsterr" fica na barra da janela.
+
+Gravar (31/10, Fase 5; as pranchas "Estúdio · Gravar" e "O botão direito no take" na proposta do redesenho): o quarto
+modo (⌘R, `recordMode`). A entrada da guitarra (`AudioInput.swift`, `InputEngine.shared`, do app inteiro) é um
+AVAudioEngine só dela, no dispositivo escolhido (no Mac a entrada e a saída do motor são um AUHAL só: um dispositivo com
+saída, como o Helix, fica com as duas, um relógio só; um sem saída, como o microfone do iMac, deixava a saída sem canais e
+o motor não ligava, −10875, então vira um agregado privado com a saída padrão; o que ligou, as mudanças de configuração
+e o pico do sinal nos 3 primeiros segundos vão para `~/Library/Logs/TrackLab-entrada.log`; o aviso de configuração que
+o próprio dispositivo escolhido dispara só religa o motor, sem remontar: remontando, o Helix religava sem parar; e o
+monitor entra no mixer principal com o formato explícito: com `format: nil` a entrada inteira dava zero, já no tap do
+dispositivo, em qualquer dispositivo), com os
+canais pelo mapa do AUHAL só quando não são os primeiros (no Helix, 1/2 é o som processado e 7 o DI), os efeitos AU no caminho (a janela de cada um,
+ligar e desligar, a ordem; a cadeia guardada entre as aberturas e com cada take), ouvir pelo Mac (desligado: o Helix já
+devolve o som sem atraso), o nível e o afinador (`Tuner`, YIN, a cada 4.096 amostras); o microfone pede a permissão do
+macOS (`NSMicrophoneUsageDescription` no build). A gravação escreve tudo o que entra num arquivo e marca o instante de
+host do primeiro quadro menos a latência da entrada; R para (ou uma pausa, um salto, outra velocidade:
+`StemEngine.transportVersion`) e `TakeCut.passes` corta pelo relógio do plano (`StemEngine.Clock`: a música ouvida em
+cada instante de host): com loop, cada volta vira um take recortado no loop (o pré-rolo de um compasso fica de fora; uma
+volta de menos de 1 s ou de meio loop, também), sem loop, um take; mais o ajuste à mão em ms do inspetor. Os takes
+(`TakeStudio`, `Recording.swift`) ficam em pistas Guitarra 1 a 4: numa pista, entre os que se sobrepõem, só um soa
+(`TakeLanes.choose`; o último gravado), B passa ao anterior (`alternate`), um clique no take o faz soar. Cada take toca
+num player do `StemEngine` ("take:<id>") agendado por `TakeSchedule.pieces` (silêncio até ele, o áudio, silêncio no
+resto de cada volta, contado em quadros do arquivo sem acumular arredondamento); gravado noutra velocidade ou noutro tom,
+passa por um time-pitch dele (rate 1/r, o tom ao contrário) antes do barramento e sai no tempo e no tom da música. No
+mixer, Takes liga e cala todos, cada pista com volume e mudo; a pista armada cala enquanto grava. A camada dos takes
+(`TakesLane`, sob a TAB no Gravar) desenha cada pista: o take que soa com a onda, os outros em linhas finas, o que está
+sendo gravado crescendo em vermelho; o botão direito num take: ouvir sozinho, escolher, comparar, favorito, renomear,
+levar para outra pista, usar o timbre dele, loop nele, exportar (WAV 24 bits), mostrar no Finder, apagar. Na Lente, a
+nota ao vivo: o rastro vermelho da altura que entra (o tom do estudo descontado) e um ponto na agulha. No Estudar, o
+grupo Guitarra do inspetor liga a entrada para tocar junto sem gravar. Provado no iMac (1/11, Sultans): um loop de 2,9 s
+gravado por 20 s dá 10 takes de uma volta e o último pela metade, todos no começo do loop; com o Helix 1/2 o som chega
+(−21 dB tocando; parado, −57 dB de zumbido da rede, que o afinador lia como "Si 1, 60 Hz": abaixo de −48 dBFS ele não
+lê). O atraso: os atrasos da saída (no relógio) e da entrada (no primeiro quadro) já saem da conta; tocando junto, o
+primeiro ataque de cada volta caiu de 4 a 6 ms depois do 1 do loop, mas o resto foi tocado solto do metrônomo, então
+uma calibração firme ainda falta. Cada build ad hoc pede o microfone de novo (o aviso do macOS); um teste pelo
+terminal (ffmpeg, um AVAudioEngine) usa a permissão do `claude`. `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
 lê a porta do stdout (`PortReader`, em TrackLabCore: só uma linha inteira vale; `TRACKLAB_URL` aponta para outro
 motor). Fechar a música grava antes o que estava a caminho (`saveEverything`: a edição da página, a TAB, os trechos) e
 a música seguinte espera (`SongModel.closing`); ao sair, o app espera essas gravações até 5 s
@@ -443,10 +513,9 @@ ou subia vários semitons conforme a janela de alturas) e o Canvas por cima, tra
 caminhos. `TempoGrid` guarda tiques, batidas e compassos (o `seconds(at:)` por nota montava a lista do mapa a cada
 pergunta). O relógio do transporte é uma NSView (`ClockLabel`): um Text que muda a cada segundo fazia a janela refazer as
 restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); o botão
-Mixer na ponta do transporte (ou ⌥⌘M, Visualizar) esconde o mixer e a Fita ganha a altura; a escolha fica guardada
-(`showMixer`). Com ele fechado, o transporte mostra o que ouvir (Original ou um atalho de mixagem, `CompactMix`) e o X. Editar TAB (⌘E,
-`TabEditPanel`): uma coluna de 252 pontos à direita da TAB, da Onda e da Lente (elas perdem largura juntas, não altura,
-e a agulha segue no mesmo x), com tudo à vista e a tecla de cada comando: a nota (onde está e a figura, pelo `describe`
+Inspetor (⌥⌘I, Visualizar) esconde o inspetor e as camadas ganham a largura. O transporte mostra o que ouvir (Original
+ou um atalho de mixagem, `CompactMix`). Editar TAB (⌘E, `TabEditPanel`, o inspetor no modo Editar; antes de 31/10 era
+uma coluna com tudo à vista e a tecla de cada comando): a nota (onde está e a figura, pelo `describe`
 da página com o `placeName`; casa e meio tom com − e +; a corda, um botão por corda com a casa em que a mesma altura cai
 nela, pelos `strings` do `describe`; anterior, seguinte, apagar), a duração (a figura de 1 a 1/32, pontuada, tercina,
 pela `base` do `describe`, e a pausa: `length` refaz o compasso do mesmo começo, `edit.setLength`, mais curta sobra
