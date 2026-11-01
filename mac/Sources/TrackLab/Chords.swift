@@ -22,10 +22,14 @@ extension SongModel {
         chordsTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
-            let base = await Task.detached(priority: .userInitiated) {
-                ChordReader.read(tracks: tracks, barTicks: bars, written: written, sound: sound)
+            let (base, shift, shifts) = await Task.detached(priority: .userInitiated) {
+                (ChordReader.read(tracks: tracks, barTicks: bars, written: written, sound: sound),
+                 ChordReader.tabShift(tracks: tracks, barTicks: bars, sound: sound),
+                 ChordReader.trackShifts(tracks: tracks, barTicks: bars, sound: sound))
             }.value
             guard !Task.isCancelled, let self else { return }
+            chordTabShift = shift
+            chordTrackShifts = shifts
             chordBase = base
             chordSpans = ChordReader.apply(chordEdits, to: base)
         }
@@ -75,6 +79,127 @@ extension SongModel {
     func useHeardChord(_ span: ChordSpan) {
         guard let heard = span.heard else { return }
         renameChord(span, to: heard)
+    }
+
+    // MARK: - As digitações (ChordDiagram.swift)
+
+    /// O chords-db do app (`Resources/chords-db`, copiado pelo build.sh).
+    static let chordLibrary: ChordLibrary? = {
+        guard let url = Bundle.main.url(forResource: "guitar", withExtension: "json", subdirectory: "chords-db"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? ChordLibrary(json: data)
+    }()
+
+    /// As pistas de guitarra de seis cordas, a base primeiro: de onde sai a digitação que a TAB toca.
+    private var guitarTracks: [Int] {
+        let roles = scoreTracks.map { ($0.index, HarmonyRole.of(name: $0.name)) }
+        let order: [HarmonyRole] = [.rhythm, .guitar, .lead]
+        return order.flatMap { role in roles.filter { $0.1 == role }.map(\.0) }
+            .filter { scoreNotes.indices.contains($0) && (scoreNotes[$0].map(\.string).max() ?? 0) == 6 }
+    }
+
+    /// O nome da forma no braço: o do acorde, ou deslocado quando a TAB inteira está fora do disco (as formas do capo
+    /// no Here Comes the Sun: soa Lá, a mão faz Ré).
+    func shapeName(for chord: ChordSpan) -> String? {
+        guard !chord.name.isEmpty else { return nil }
+        let shift = capoFret
+        guard shift != 0 else { return chord.name }
+        return ChordReader.transpose(chord.name, by: (12 - shift % 12) % 12, ChordReader.names)
+    }
+
+    /// A barra e os cartões mostram as formas do capo (a escolha `chordsByShape`, numa música com capo).
+    var showingShapes: Bool { chordsByShape && capoFret > 0 }
+
+    /// O nome como a barra mostra: como soa, ou pela forma do capo.
+    func shown(_ name: String) -> String {
+        guard showingShapes, !name.isEmpty else { return name }
+        return ChordReader.transpose(name, by: (12 - capoFret % 12) % 12, ChordReader.names)
+    }
+
+    /// Um nome escrito na barra (pela forma, se ela mostra as formas) de volta a como soa, que é como fica guardado.
+    func sounding(fromShown name: String) -> String {
+        guard showingShapes, !name.isEmpty, ChordReader.rootOf(name) != nil else { return name }
+        return ChordReader.transpose(name, by: capoFret % 12, ChordReader.names)
+    }
+
+    /// O capo da guitarra de base: o que o GP diz mais o que o som mostra que falta (0 sem capo, e numa gravação mais
+    /// grave que a afinação da TAB, que não é capo).
+    var capoFret: Int {
+        let main = guitarTracks.first
+        let written = main.flatMap { scoreCapos.indices.contains($0) ? scoreCapos[$0] : nil } ?? 0
+        let missing = (1...9).contains(chordTabShift) ? chordTabShift : 0
+        return written + missing
+    }
+
+    /// O que o grupo Acordes propõe quando a guitarra de base não soa onde a TAB diz: pôr o capo (a guitarra soa
+    /// acima: as formas de um capo que o GP não traz) ou afinar a TAB abaixo (a gravação é mais grave), nas pistas com o
+    /// mesmo deslocamento.
+    func pitchFixProposal() -> (message: String, action: String, items: [[String: Int]])? {
+        guard let main = guitarTracks.first, chordTrackShifts.indices.contains(main) else { return nil }
+        let shift = chordTrackShifts[main]
+        guard shift != 0 else { return nil }
+        let same = chordTrackShifts.indices.filter { chordTrackShifts[$0] == shift }
+        if shift <= 9 {
+            let capo = (scoreCapos.indices.contains(main) ? scoreCapos[main] : 0) + shift
+            let guitars = same.filter { guitarTracks.contains($0) }
+            return ("A guitarra soa \(shift) semitons acima do que a TAB diz: é o capo na \(capo)ª, que o Guitar Pro não traz.",
+                    "Pôr capo \(capo) na partitura",
+                    guitars.map { ["track": $0, "capo": (scoreCapos.indices.contains($0) ? scoreCapos[$0] : 0) + shift] })
+        }
+        let down = shift - 12
+        let amount = down == -1 ? "meio tom" : down == -2 ? "um tom" : "\(-down) semitons"
+        return ("A gravação está \(amount) abaixo da afinação da TAB.", "Afinar a TAB \(amount) abaixo",
+                same.map { ["track": $0, "tune": down] })
+    }
+
+    /// Põe o capo ou a afinação propostos (um passo do Desfazer da TAB: ⌘E e ⌘Z); a TAB sintetizada é refeita.
+    func applyPitchFix() {
+        guard let proposal = pitchFixProposal(), !proposal.items.isEmpty else { return }
+        bridge.edit("pitchFix", proposal.items)
+        resynthAfterSave = true
+        tabMessage = proposal.action.replacingOccurrences(of: "Pôr", with: "Posto o").replacingOccurrences(of: "Afinar", with: "Afinada")
+            + " · ⌘Z na edição desfaz"
+    }
+
+    /// As digitações de um acorde da barra: a que a TAB toca ali primeiro, e as do chords-db pela posição da mão.
+    func chordShapes(for chord: ChordSpan) -> [ChordShape] {
+        guard let name = shapeName(for: chord), let library = Self.chordLibrary else { return [] }
+        var played: ChordShape?
+        var hand: Double?
+        for track in guitarTracks {
+            if played == nil { played = ChordShape.played(scoreNotes[track], from: chord.from, to: chord.to) }
+            if hand == nil { hand = ChordShape.hand(scoreNotes[track], from: chord.from, to: chord.to) }
+        }
+        return library.shapes(for: name, played: played, hand: hand)
+    }
+
+    /// Toca a digitação (afinação padrão, como o diagrama), no tom do estudo.
+    func playShape(_ shape: ChordShape) {
+        let open = [40, 45, 50, 55, 59, 64]
+        let pitches = shape.frets.enumerated().compactMap { string, fret in
+            fret >= 0 && string < open.count ? open[string] + fret : nil
+        }
+        do {
+            try NoteSynth.shared.play(pitches: pitches, seconds: 1.8, program: 25, percussion: false,
+                                      transpose: Double(engine.semitones) + Double(engine.cents) / 100, shape: nil)
+        } catch {
+            tabMessage = error.localizedDescription
+        }
+    }
+
+    /// O acorde para o inspetor (o escolhido na barra, com a música parada; senão o que toca) e o seguinte.
+    func chordPair() -> (now: ChordSpan?, next: ChordSpan?) {
+        let tick: Double
+        if !engine.isPlaying, let chosen = chosenChord {
+            tick = chosen
+        } else {
+            tick = grid.tick(at: engine.currentTime)
+        }
+        let spans = chordSpans
+        guard let index = spans.firstIndex(where: { $0.from <= tick + 0.5 && tick < $0.to }) ?? spans.firstIndex(where: { $0.from > tick })
+        else { return (nil, nil) }
+        let next = spans[(index + 1)...].first { !$0.name.isEmpty }
+        return (spans[index], next)
     }
 
     /// O acorde que cobre o tique.
@@ -199,15 +324,17 @@ extension SongModel {
         case .written: origin = "escrito na TAB"
         case .edited: origin = "corrigido"
         }
-        let heard = span.heard.map { "o som ouve \($0)" }
-        menu.addTitle(span.name.isEmpty ? "Sem acorde" : span.name,
-                      detail: [where_, origin, heard].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+        let heard = span.heard.map { "o som ouve \(shown($0))" }
+        let other = capoFret > 0 && !span.name.isEmpty
+            ? (showingShapes ? "soa \(span.name)" : shapeName(for: span).map { "forma de \($0)" }) : nil
+        menu.addTitle(span.name.isEmpty ? "Sem acorde" : shown(span.name),
+                      detail: [where_, origin, heard, other].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
         menu.addSeparator()
         if let heardName = span.heard, heardName != span.name {
-            menu.add("Usar o do som: \(heardName)") { [weak self] in self?.useHeardChord(span) }
+            menu.add("Usar o do som: \(shown(heardName))") { [weak self] in self?.useHeardChord(span) }
         }
         for name in span.alternatives.prefix(4) where name != span.heard {
-            menu.add(name) { [weak self] in self?.renameChord(span, to: name) }
+            menu.add(shown(name)) { [weak self] in self?.renameChord(span, to: name) }
         }
         if !span.alternatives.isEmpty { menu.addSeparator() }
         menu.add("Renomear…") { rename(span) }
@@ -225,6 +352,11 @@ extension SongModel {
         menu.addSeparator()
         menu.add("Ouvir o acorde", enabled: ChordReader.pitches(of: span.name) != nil) { [weak self] in self?.playChord(span) }
         menu.add("Loop neste acorde") { [weak self] in self?.loopChord(span) }
+        if capoFret > 0 {
+            menu.addSeparator()
+            menu.add("Nomes como soam", checked: !chordsByShape) { [weak self] in self?.chordsByShape = false }
+            menu.add("Nomes pela forma (capo \(capoFret)ª)", checked: chordsByShape) { [weak self] in self?.chordsByShape = true }
+        }
         if !chordEdits.isEmpty {
             menu.addSeparator()
             menu.add("Desfazer todas as correções dos acordes") { [weak self] in self?.revertAllChords() }

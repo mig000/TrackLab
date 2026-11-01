@@ -343,10 +343,16 @@
     return chords.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   }
 
+  // O capo de cada pista (o da primeira pauta; 0 sem capo), para os diagramas de acorde do app.
+  function capos(score) {
+    return score.tracks.map((track) => (track.staves[0] && track.staves[0].capo) || 0);
+  }
+
   return {
     CURSOR_AT,
     trackNotes,
     writtenChords,
+    capos,
     showPreferences,
     cleanPoints,
     secondsToTick,

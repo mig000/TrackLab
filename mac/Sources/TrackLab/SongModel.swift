@@ -245,6 +245,18 @@ final class SongModel {
         didSet { if chordEdits != oldValue { chordSpans = ChordReader.apply(chordEdits, to: chordBase) } }
     }
     var chordSpans: [ChordSpan] = []
+    /// Quantos semitons a guitarra de base está abaixo do disco (o capo que o GP não guarda), para o nome das formas,
+    /// e o mesmo de cada pista, para propor o capo ou a afinação; o capo de cada pista como o GP diz.
+    var chordTabShift = 0
+    var chordTrackShifts: [Int] = []
+    var scoreCapos: [Int] = []
+    /// Os nomes dos acordes pela forma do capo (o que a mão faz: D sob o Lá que soa com capo 7) em vez de como soam;
+    /// só vale numa música com capo.
+    var chordsByShape = UserDefaults.standard.bool(forKey: "chordsByShape") {
+        didSet { UserDefaults.standard.set(chordsByShape, forKey: "chordsByShape") }
+    }
+    /// O capo ou a afinação postos pelo grupo Acordes: a TAB sintetizada é refeita depois de a partitura ser gravada.
+    @ObservationIgnored var resynthAfterSave = false
     /// Os acordes pelo som (o motor), em segundos, e se o motor ainda está ouvindo.
     var soundChords: [(start: Double, end: Double, name: String)] = [] {
         didSet { refreshChords() }
@@ -419,6 +431,7 @@ final class SongModel {
         bridge.onSave = { [weak self] data in self?.saveScore(data) }
         bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
         bridge.onChords = { [weak self] chords in self?.writtenChords = chords }
+        bridge.onCapos = { [weak self] capos in self?.scoreCapos = capos }
         bridge.onFitted = { [weak self] count, asked in self?.fitted(count: count, asked: asked) }
         bridge.onShiftEnd = { [weak self] seconds in
             self?.soundShift = 0
@@ -1899,6 +1912,10 @@ final class SongModel {
                 tabMessage = "Guardado"
                 synthChanged = true
                 if let fresh = try? await Backend.shared.song(id) { detail = fresh }
+                if resynthAfterSave, !editingTab, !adjusting {
+                    resynthAfterSave = false
+                    await synthesize(quiet: true)
+                }
             } catch {
                 tabMessage = "Não consegui guardar a TAB: \(error.localizedDescription)"
             }

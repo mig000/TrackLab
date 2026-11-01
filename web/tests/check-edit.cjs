@@ -975,4 +975,24 @@ test("o trecho reconhecido no espectro troca as notas da faixa de alturas e junt
     [[11520, 1440], [13440, 960], [14400, 960]]);
 });
 
+test("o capo e a afinação de uma pista inteira: as mesmas casas, as notas soam no disco, e o Guitar Pro guarda", () => {
+  const score = load();
+  const note = score.tracks[0].staves[0].bars.flatMap((b) => b.voices[0].beats).flatMap((b) => b.notes)[0];
+  const before = note.realValue;
+  const fret = note.fret;
+  assert.equal(edit.pitchFix(score, [{ track: 0, capo: 7 }]), true);
+  assert.equal(note.realValue, before + 7);
+  assert.equal(note.fret, fret);
+  assert.equal(edit.pitchFix(score, [{ track: 0, capo: 7 }]), false);
+  let back = reread(score);
+  assert.equal(back.tracks[0].staves[0].capo, 7);
+  const again = back.tracks[0].staves[0].bars.flatMap((b) => b.voices[0].beats).flatMap((b) => b.notes)[0];
+  assert.equal(again.realValue, before + 7);
+  assert.equal(edit.pitchFix(back, [{ track: 0, capo: 0 }, { track: 0, tune: -1 }]), true);
+  back = reread(back);
+  const lower = back.tracks[0].staves[0].bars.flatMap((b) => b.voices[0].beats).flatMap((b) => b.notes)[0];
+  assert.equal(lower.realValue, before - 1);
+  assert.equal(lower.fret, fret);
+});
+
 console.log(`${passed} verificações passaram`);

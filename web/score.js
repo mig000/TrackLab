@@ -1448,7 +1448,7 @@
       state.saveTimer = null;
       try {
         post({ type: "save", gp: exportBase64() });
-        post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score) });
+        post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score) });
       } catch (error) {
         report(error);
       }
@@ -1478,7 +1478,7 @@
     if (!state.saveTimer) return null;
     window.clearTimeout(state.saveTimer);
     state.saveTimer = null;
-    post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score) });
+    post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score) });
     return exportBase64();
   }
 
@@ -1566,6 +1566,11 @@
     }
     if (op === "bar") {
       barEdit(value);
+      return;
+    }
+    if (op === "pitchFix") {
+      // O capo ou a afinação de pistas inteiras (o app detecta pelo som), num passo do Desfazer.
+      change(() => edit.pitchFix(state.score, value));
       return;
     }
     if (op === "caretPitch") {
@@ -2333,6 +2338,7 @@
         // As notas de cada pista, para as barras sobre o espectro da Fita.
         notes: core.trackNotes(state.score),
         chords: core.writtenChords(state.score),
+        capos: core.capos(state.score),
       });
       render();
     },

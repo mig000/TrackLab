@@ -1725,10 +1725,35 @@
       triplet: rhythm ? rhythm.triplet : false, strings };
   }
 
+  // O capo e a afinação de pistas inteiras (`items`: `{track, capo}` põe o capo nessa casa, `{track, tune}` muda a
+  // afinação de todas as cordas em semitons): a TAB fica nas mesmas casas e as notas passam a soar no lugar do disco
+  // (o Songsterr escreve as formas de um capo com o capo 0, ou a afinação padrão de uma gravação mais grave). O alphaTab
+  // soma o capo na altura de cada nota. Devolve se mudou alguma pista.
+  function pitchFix(score, items) {
+    let changed = false;
+    for (const item of items || []) {
+      const track = score.tracks[item.track];
+      if (!track) continue;
+      for (const staff of track.staves) {
+        if (!staff.tuning || !staff.tuning.length) continue;
+        if (Number.isInteger(item.capo) && item.capo >= 0 && item.capo <= 12 && staff.capo !== item.capo) {
+          staff.capo = item.capo;
+          changed = true;
+        }
+        if (Number.isInteger(item.tune) && item.tune !== 0 && Math.abs(item.tune) <= 12) {
+          staff.stringTuning.tunings = staff.tuning.map((pitch) => pitch + item.tune);
+          changed = true;
+        }
+      }
+    }
+    return changed;
+  }
+
   return {
     BENDS,
     GROUPS,
     MAX_FRET,
+    pitchFix,
     MIN_TICKS,
     describe,
     exportGp,

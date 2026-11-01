@@ -13,6 +13,8 @@ mkdir -p "$app/Contents/Resources/web/vendor/alphatab"
 cp ../web/score.html ../web/score.css ../web/score.js ../web/score-core.js ../web/score-edit.js "$app/Contents/Resources/web/"
 cp ../web/vendor/alphatab/alphaTab.js ../web/vendor/alphatab/Bravura.woff2 ../web/vendor/alphatab/Bravura-OFL.txt \
   "$app/Contents/Resources/web/vendor/alphatab/"
+# As digitações dos diagramas de acorde (chords-db, MIT).
+cp -R Resources/chords-db "$app/Contents/Resources/"
 build=$(git rev-list --count HEAD 2>/dev/null || echo 1)
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

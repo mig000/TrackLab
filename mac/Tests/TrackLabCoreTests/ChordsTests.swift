@@ -123,6 +123,30 @@ private let bars: [Double] = [0, 4, 8, 12, 16].map { $0 * q }
     #expect(spans[0].alternatives.first == "G")
 }
 
+/// O Here Comes the Sun: a guitarra escrita pelas formas do capo 7 (Ré, Sol, Lá na TAB) e o baixo na altura do disco
+/// (Lá, Ré, Mi); o som ouve Lá, Ré, Mi. A guitarra desloca 7 e o baixo não: os nomes do disco, sem barra.
+@Test func cadaPistaDeslocaPorSi() {
+    let shapes: [([Int], Int)] = [([50, 54, 57], 45), ([43, 47, 50], 38), ([45, 49, 52], 40), ([50, 54, 57], 45)]
+    var guitar: [ScoreNote] = []
+    var low: [ScoreNote] = []
+    for bar in 0..<8 {
+        let (pitches, root) = shapes[bar % 4]
+        guitar += strum(pitches, from: Double(bar) * 4, to: Double(bar + 1) * 4)
+        low += bass(root, from: Double(bar) * 4, to: Double(bar + 1) * 4)
+    }
+    let tracks = [ChordReader.Track(name: "Rhythm Guitar", notes: guitar), ChordReader.Track(name: "Bass", notes: low)]
+    let eight = (0...8).map { Double($0) * 4 * q }
+    let names = ["A:maj", "D:maj", "E:maj", "A:maj"]
+    var heard: [(from: Double, to: Double, name: String)] = []
+    for bar in 0..<8 {
+        let from = Double(bar) * 4 * q
+        heard.append((from: from, to: from + 4 * q, name: names[bar % 4]))
+    }
+    let spans = ChordReader.read(tracks: tracks, barTicks: eight, sound: heard)
+    #expect(spans.map(\.name) == ["A", "D", "E", "A", "D", "E", "A"])
+    #expect(ChordReader.tabShift(tracks: tracks, barTicks: eight, sound: heard) == 7)
+}
+
 @Test func corrigirCortaAsCorrecoesDeAntes() {
     var edits = ChordReader.editing([], with: ChordEdit(from: 0, to: 100, name: "G"))
     edits = ChordReader.editing(edits, with: ChordEdit(from: 40, to: 60, name: "D"))

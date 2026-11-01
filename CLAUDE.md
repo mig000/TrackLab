@@ -762,21 +762,46 @@ trocada) em 60 % de ao menos dois tempos. O menu do acorde diz "o som ouve X" e 
 achados sem os escritos, as trocas por compasso), só as notas → com o som: Ramblin' Man 85 → 88 de 93 e 0,65 → 0,62
 (o fim, Fm7, passa a Gb Db, o que soa); Sunshine 46 → 46 e 1,02 → 0,75; Highway Star 113 → 112 e 0,55 → 0,52; Sultans
 20 → 19 e 0,80 → 0,76; White Room 1,44 → 1,45, o verso de sus2 e dim do riff passa a D C | G/B C, o disco. Dois
-deslocamentos que o Guitar Pro não diz: a TAB inteira fora do disco por um intervalo fixo (`tabShift`/`soundShift`: o
-intervalo mais comum entre a fundamental das notas e a do som; no Here Comes the Sun a TAB está pelas formas do capo 7
-com o capo 0 no arquivo, +7; no Michelle a gravação está meio tom abaixo da afinação da TAB, −1), e as notas entram já
-no que soa; e os escritos pelas formas do violão numa guitarra afinada abaixo (`shapeShift`: o Yesterday, um tom abaixo,
+deslocamentos que o Guitar Pro não diz: uma pista fora do disco por um intervalo fixo (`trackShifts`, pista por pista: o
+deslocamento que põe mais tempo de nota dela dentro do acorde que o som ouve, com metade dentro e 15 % a mais que sem
+deslocar; a voz e a bateria não mudam; no Here Comes the Sun as guitarras estão pelas formas do capo 7 com o capo 0 no
+arquivo, +7, e o baixo na altura certa: deslocando tudo junto, como na primeira versão, o baixo virava a barra errada,
+"A/E", "D/A", "E7/B"; no Michelle a gravação está meio tom abaixo da afinação da TAB), e as notas entram já no que soa
+(`tabShift` é o da guitarra de base, para o nome da forma nos diagramas); e os escritos pelas formas do violão numa guitarra afinada abaixo (`shapeShift`: o Yesterday, um tom abaixo,
 escrito G F#m B7 e soando F Em A7), mostrados no que soa, com a forma entre os outros nomes. A Lente desses dois ainda
 mostra as notas da TAB fora do espectro (o capo e a afinação do GP não mudaram). Medido nos Beatles (1/11) contra as
 anotações da Isophonics (Harte, os acordes dos discos; o deslocamento até o áudio do vídeo pelo melhor acordo com o
 som, em ±12 s), a fração do tempo com a fundamental e a terça certas, só a TAB / só o som / os dois / a barra com os
-escritos: Let It Be 89/90/88/85, Help! 91/87/94/94, Yesterday 81/85/87/81, Here Comes the Sun 31/89/78/78, Michelle
-0/72/78/76 (o Chord-CNN-LSTM foi treinado com a Isophonics: a coluna do som sai otimista). Dos 10 Beatles importados
+escritos: Let It Be 89/90/88/85, Help! 91/87/94/94, Yesterday 81/85/87/81, Here Comes the Sun 31/89/87/86 (78/78 com o
+deslocamento da TAB inteira), Michelle 0/72/75/77 (o Chord-CNN-LSTM foi treinado com a Isophonics: a coluna do som sai otimista). Dos 10 Beatles importados
 (Let It Be, Help!, Yesterday, Something, Here Comes the Sun, Day Tripper, Norwegian Wood, Penny Lane, A Hard Day's
 Night, Michelle; sem o Demucs), Something, Norwegian Wood, Penny Lane e A Hard Day's Night vieram sem áudio (o Songsterr
 não tinha sincronia) e o Day Tripper não está na Isophonics. A leitura de fora do app: `node web/tools/chord-notes.cjs
 <gp> <json>` e `TRACKLAB_CHORDS_NOTES=<json> [TRACKLAB_CHORDS_SOUND=<json em tiques>] [TRACKLAB_CHORDS_FINAL=<json>]
 mac/test.sh --filter acordesDeUmaMusica` (compasso a compasso, com "?" e o que o som ouve onde discorda).
+
+Diagramas de acorde (1/11; `ChordDiagram.swift`, `TrackLabCore/ChordShapes.swift`): as digitações vêm do chords-db
+(tombatossals, MIT, o `guitar.json` do commit df06fa7b em `mac/Resources/chords-db`, que o `build.sh` copia para o app;
+os Guitar Pro do Songsterr trazem a coleção de diagramas vazia, e o alphaTab só desenha as que vêm no arquivo).
+`ChordLibrary` lê as casas (relativas à casa inicial na base, absolutas aqui) e acha pelo nome da barra (C, Am7, C/G e
+Am/G pelas inversões da base, "C(add9)" sem os parênteses, um nome que a base não tem pelo mais perto: Cmadd11 → Cm).
+A primeira digitação é a que a TAB toca no trecho (`ChordShape.played`: a batida com mais cordas de uma vez, ao menos
+três, numa pista de guitarra de seis cordas, a base primeiro; desenhada em laranja, "como na TAB"); as da base vêm em
+ordem de distância até onde a mão está na TAB. Com a TAB inteira deslocada do disco (`chordTabShift`, o capo do Here
+Comes the Sun), a forma procurada é a do braço ("forma de D" sob o Lá que soa). O desenho é nativo (Canvas: seis cordas,
+quatro casas, a pestana, os dedos da base, X e O, a casa inicial ao lado). No inspetor do Estudar, o grupo Acordes mostra
+o acorde que toca (ou o escolhido na barra, com a música parada) e o seguinte, cada um com ‹ › entre as digitações e o
+alto-falante (a forma tocada no `NoteSynth`, afinação padrão). O capo: a página manda o de cada pista (`capos`, com as
+notas), e o da guitarra de base é o do GP mais o que o som mostra que falta (`capoFret`; "forma de D · capo 7ª" sob o
+diagrama, "Capo 7ª" no grupo). Quando a guitarra de base não soa onde a TAB diz, o grupo propõe a correção
+(`pitchFixProposal`): acima, "Pôr capo 7 na partitura" nas guitarras com o mesmo deslocamento; abaixo, "Afinar a TAB meio
+tom abaixo" nas pistas com ele (o Michelle). A página aplica (`edit("pitchFix", [{track, capo}|{track, tune}])`,
+`edit.pitchFix`: o capo da pauta, que o alphaTab soma na altura de cada nota, ou a afinação de todas as cordas; as casas
+ficam), num passo do Desfazer da TAB, grava o Guitar Pro e a TAB sintetizada é refeita (`resynthAfterSave`); a Lente, a
+TAB sintetizada e a leitura dos acordes passam a soar como o disco. Numa música com capo, os nomes da barra, dos cartões e
+do menu podem ser como soam ou pela forma do capo (`chordsByShape`, guardado, no grupo Acordes "Como soam | Pela forma" e
+no menu do acorde; `shown` e `sounding(fromShown:)`: o que se escreve ao renomear pela forma é guardado como soa); o
+cartão diz o outro ("soa A · capo 7ª" ou "forma de D · capo 7ª").
 
 Repertório (Fase 3): o app abre no Para hoje (`TodayView`: trechos perto da meta, esquecidos há 3 dias, sem recorde;
 revisão do repertório a cada 7; músicas novas já conferidas). A barra lateral agrupa por estado, com busca e coleções

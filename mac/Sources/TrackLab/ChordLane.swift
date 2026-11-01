@@ -32,7 +32,7 @@ struct ChordLane: View {
                 let tick = model.grid.tick(at: seconds)
                 guard let chord = model.chord(atTick: tick) else { return false }
                 model.showChordMenu(chord, clickTick: model.chordTick(at: seconds), at: point, in: view) { chord in
-                    newName = chord.name
+                    newName = model.shown(chord.name)
                     renaming = chord
                 }
                 return true
@@ -42,11 +42,12 @@ struct ChordLane: View {
         .clipShape(RoundedRectangle(cornerRadius: 5))
         .alert("Acorde", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
             TextField("Am7, C/G, F#m…", text: $newName)
-            Button("Guardar") { if let renaming { model.renameChord(renaming, to: newName) } }
+            Button("Guardar") { if let renaming { model.renameChord(renaming, to: model.sounding(fromShown: newName)) } }
             Button("Cancelar", role: .cancel) {}
         } message: {
             if let renaming, !renaming.alternatives.isEmpty {
-                Text("As notas também aceitam: \(renaming.alternatives.joined(separator: ", ")). Vazio é sem acorde.")
+                Text("As notas também aceitam: \(renaming.alternatives.map(model.shown).joined(separator: ", ")). Vazio é sem acorde."
+                     + (model.showingShapes ? " Os nomes são pela forma do capo \(model.capoFret)ª." : ""))
             } else {
                 Text("Vazio é sem acorde.")
             }
@@ -102,7 +103,7 @@ struct ChordLane: View {
                 // Duplo clique no mesmo acorde: renomear.
                 if let last = lastClick, last.from == chord.from, Date().timeIntervalSince(last.at) < 0.4 {
                     lastClick = nil
-                    newName = chord.name
+                    newName = model.shown(chord.name)
                     renaming = chord
                     return
                 }
@@ -155,7 +156,7 @@ struct ChordLane: View {
             }
             // O nome no começo do bloco (o de um acorde que já começou fica preso na borda esquerda, se cabe).
             guard rect.width > 14 else { continue }
-            let label = chord.name.isEmpty ? "N.C." : chord.name
+            let label = chord.name.isEmpty ? "N.C." : model.shown(chord.name)
             let image = CanvasLabel.image(label, size: 11, weight: playing ? .bold : .semibold,
                                           color: chord.name.isEmpty ? .tertiaryLabelColor : .labelColor, dark: dark)
             var clipped = context

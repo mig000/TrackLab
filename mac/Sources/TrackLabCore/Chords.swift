@@ -95,12 +95,21 @@ public enum ChordReader {
             self.name = name
             self.notes = notes
         }
+
+        /// A mesma pista com as notas `shift` semitons acima.
+        func shifted(by shift: Int) -> Track {
+            Track(name: name, notes: notes.map { note in
+                ScoreNote(tick: note.tick, duration: note.duration, pitch: note.pitch + shift, string: note.string,
+                          fret: note.fret, vibrato: note.vibrato, bend: note.bend, trill: note.trill.map { $0 + shift },
+                          approached: note.approached, slidesOut: note.slidesOut, slideIn: note.slideIn, slideOut: note.slideOut)
+            })
+        }
     }
 
     /// Os passos da leitura: uma colcheia.
     static let step = TempoGrid.ticksPerQuarter / 2
 
-    static let names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+    public static let names = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
 
     /// As qualidades, os intervalos (a fundamental primeiro, e o que passa do acorde de três notas, a sétima, a sexta,
     /// a nona, por último) e quanto o nome mais raro custa.
@@ -152,12 +161,12 @@ public enum ChordReader {
         guard let start = barTicks.first, let end = barTicks.last, end > start else { return [] }
         let count = Int(((end - start) / step).rounded(.up))
         guard count > 0 else { return [] }
-        var windows = listen(tracks: tracks, start: start, count: count)
         let heard = hear(sound, start: start, count: count)
-        // A TAB inteira deslocada do disco (um capo que o Guitar Pro não guarda, uma afinação abaixo que ele não diz):
-        // as notas entram já no que soa.
-        let shift = soundShift(windows, heard: heard)
-        if shift != 0 { windows = windows.map { rotate($0, by: shift) } }
+        // Uma pista deslocada do disco (as formas de um capo que o Guitar Pro não guarda, uma afinação abaixo que ele
+        // não diz): as notas dela entram já no que soa. Pista por pista: no Here Comes the Sun as guitarras estão 7
+        // semitons abaixo e o baixo na altura certa (deslocando tudo, o baixo virava a barra errada: "A/E", "D/A").
+        let shifts = trackShifts(tracks, heard: heard, start: start, count: count)
+        let windows = listen(tracks: zip(tracks, shifts).map { $1 == 0 ? $0 : $0.shifted(by: $1) }, start: start, count: count)
         let spelling = spelling(for: windows)
         var spans = decide(windows, start: start, end: end, barTicks: barTicks, spelling: spelling, heard: heard)
         spans = applyWritten(spans, written: written, tracks: tracks, end: end, spelling: spelling)
@@ -167,39 +176,60 @@ public enum ChordReader {
 
     // MARK: - O som
 
-    /// Quantos semitons somar às notas da TAB para elas caírem no que o som ouve: o intervalo mais comum entre a
-    /// fundamental do melhor acorde das notas e a do som, quando ele é ao menos uma vez e meia o "nenhum" e cobre um
-    /// quarto dos passos comparados (ao menos 32). No Here Comes the Sun, a TAB pelas formas do capo 7 (+7); no Michelle,
-    /// a gravação meio tom abaixo da afinação que a TAB diz (−1).
+    /// O deslocamento da guitarra de base (a primeira pista de base, de guitarra ou lead com notas): o nome da forma no
+    /// braço para os diagramas.
     public static func tabShift(tracks: [Track], barTicks: [Double], sound: [(from: Double, to: Double, name: String)]) -> Int {
         guard let start = barTicks.first, let end = barTicks.last, end > start, !sound.isEmpty else { return 0 }
         let count = Int(((end - start) / step).rounded(.up))
-        return soundShift(listen(tracks: tracks, start: start, count: count), heard: hear(sound, start: start, count: count))
+        let heard = hear(sound, start: start, count: count)
+        for role in [HarmonyRole.rhythm, .guitar, .lead] {
+            if let track = tracks.first(where: { HarmonyRole.of(name: $0.name) == role && !$0.notes.isEmpty }) {
+                return shift(of: track, heard: heard, start: start, count: count)
+            }
+        }
+        return 0
     }
 
-    static func soundShift(_ windows: [Window], heard: [Chord?]) -> Int {
-        guard !heard.isEmpty else { return 0 }
-        let smooth = context(windows)
-        var counts = [Int](repeating: 0, count: 12)
-        var compared = 0
-        for index in smooth.indices where index < heard.count {
-            guard let sound = heard[index], let top = candidates(smooth[index], limit: 1).first else { continue }
-            counts[(sound.root - top.root + 12) % 12] += 1
-            compared += 1
+    /// O deslocamento de cada pista até o disco (0 na que já soa no lugar), para o app propor o capo ou a afinação.
+    public static func trackShifts(tracks: [Track], barTicks: [Double], sound: [(from: Double, to: Double, name: String)]) -> [Int] {
+        guard let start = barTicks.first, let end = barTicks.last, end > start, !sound.isEmpty else {
+            return Array(repeating: 0, count: tracks.count)
         }
-        guard compared >= 32, let best = counts.indices.max(by: { counts[$0] < counts[$1] }), best != 0,
-              Double(counts[best]) >= 1.5 * Double(counts[0]), Double(counts[best]) >= 0.25 * Double(compared) else { return 0 }
+        let count = Int(((end - start) / step).rounded(.up))
+        return trackShifts(tracks, heard: hear(sound, start: start, count: count), start: start, count: count)
+    }
+
+    static func trackShifts(_ tracks: [Track], heard: [Chord?], start: Double, count: Int) -> [Int] {
+        tracks.map { shift(of: $0, heard: heard, start: start, count: count) }
+    }
+
+    /// Quantos semitons somar às notas de uma pista para elas caírem nas notas do acorde que o som ouve: o deslocamento
+    /// com mais tempo de nota dentro do acorde, quando ele põe a metade dentro e ao menos 15 % mais que sem deslocar
+    /// (com ao menos 16 tempos de nota comparados). A voz e a bateria não mudam.
+    static func shift(of track: Track, heard: [Chord?], start: Double, count: Int) -> Int {
+        let role = HarmonyRole.of(name: track.name)
+        guard !heard.isEmpty, role != .drums, role != .vocal else { return 0 }
+        var scores = [Double](repeating: 0, count: 12)
+        var total = 0.0
+        for note in track.notes where note.duration > 0 {
+            let first = max(0, Int(((note.tick - start) / step).rounded(.down)))
+            let last = min(count - 1, Int(((note.tick + note.duration - start) / step).rounded(.up)) - 1)
+            guard first <= last else { continue }
+            let pc = ((note.pitch % 12) + 12) % 12
+            for index in first...last where index < heard.count {
+                guard let chord = heard[index] else { continue }
+                let a = start + Double(index) * step
+                let weight = (min(a + step, note.tick + note.duration) - max(a, note.tick)) / step
+                guard weight > 0 else { continue }
+                total += weight
+                for interval in qualities[chord.quality].tones {
+                    scores[((chord.root + interval - pc) % 12 + 12) % 12] += weight
+                }
+            }
+        }
+        guard total >= 32, let best = scores.indices.max(by: { scores[$0] < scores[$1] }), best != 0,
+              scores[best] >= 0.5 * total, scores[best] >= scores[0] + 0.15 * total else { return 0 }
         return best
-    }
-
-    static func rotate(_ window: Window, by shift: Int) -> Window {
-        var out = Window()
-        for pc in 0..<12 {
-            out.weights[(pc + shift) % 12] = window.weights[pc]
-            out.bass[(pc + shift) % 12] = window.bass[pc]
-        }
-        out.onset = window.onset.map { ($0 + shift) % 12 }
-        return out
     }
 
     /// O peso do som no caminho: pouco onde a TAB tem um acorde claro (a TAB está no tempo da partitura e vê as
@@ -309,8 +339,8 @@ public enum ChordReader {
 
     // MARK: - A grafia pelo tom
 
-    static let sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-    static let flats = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+    public static let sharps = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+    public static let flats = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
     /// O tom da música pelas notas de tudo (os perfis de Krumhansl, maior e menor): a fundamental e se é menor.
     static func key(of windows: [Window]) -> (tonic: Int, minor: Bool)? {
@@ -789,7 +819,7 @@ public enum ChordReader {
     }
 
     /// Um nome deslocado `by` semitons (a fundamental e o baixo), na grafia da música.
-    static func transpose(_ name: String, by shift: Int, _ spelling: [String]) -> String {
+    public static func transpose(_ name: String, by shift: Int, _ spelling: [String]) -> String {
         let parts = name.split(separator: "/", maxSplits: 1).map(String.init)
         guard let head = parts.first, let (root, rest) = rootOf(head) else { return name }
         var result = spelling[(root + shift) % 12] + rest
@@ -898,7 +928,7 @@ public enum ChordReader {
         return notes
     }
 
-    static func rootOf(_ text: String) -> (Int, String)? {
+    public static func rootOf(_ text: String) -> (Int, String)? {
         let letters: [Character: Int] = ["C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11]
         guard let first = text.first, let base = letters[first] else { return nil }
         var rest = text.dropFirst()

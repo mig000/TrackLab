@@ -95,6 +95,7 @@ struct StudyInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 TrechoGroup(model: model)
+                ChordsGroup(model: model)
                 GuitarGroup(model: model)
                 MixerGroup(model: model)
                 FaixasGroup(model: model)
