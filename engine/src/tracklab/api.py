@@ -192,6 +192,14 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             raise HTTPException(400, "Envie os compassos conferidos em bars.")
         return {"bars": song(song_id).set_checked_bars(body["bars"])}
 
+    @app.put("/api/songs/{song_id}/chords")
+    def chords(song_id: str, body: dict = Body(...)) -> dict:
+        """As correções da barra de acordes (`{"edits": [{"from", "to", "name"}, …]}`), no lugar das que estavam."""
+        try:
+            return {"edits": song(song_id).set_chord_edits(body.get("edits"))}
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
     @app.put("/api/songs/{song_id}/takes")
     def put_takes(song_id: str, body: dict = Body(...)) -> dict:
         """Os takes gravados (`{"takes": [...]}`, a lista inteira), no lugar dos que estavam."""
@@ -300,6 +308,43 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         headers = {"X-Frames": str(meta["frames"]), "X-Rows": str(meta["rows"]), "X-Hop": repr(meta["hop"]),
                    "X-Low": str(meta["low"]), "X-Per-Semitone": str(meta["perSemitone"])}
         return Response(content=data, media_type="application/octet-stream", headers=headers)
+
+    chords_guard, chords_locks = threading.Lock(), {}
+
+    @app.post("/api/songs/{song_id}/chords/sound")
+    def song_chord_sound(song_id: str, body: dict = Body(default={})) -> dict:
+        """Os acordes pelo som (media/chordsound.py) do áudio original: `{chords: [[início, fim, nome], …]}` em
+        segundos, com o nome como o Chord-CNN-LSTM escreve ("A:min7", "C:maj/5", "N"). `beats` (`[[segundo, tipo], …]`,
+        tipo 2 no 1 do compasso, 3 no meio dele, 4 nos outros tempos) prende as trocas às batidas do mapa. As
+        probabilidades (o caro: ~50 s para 5 minutos) são calculadas uma vez e guardadas em `peaks/`; o nome sai na
+        hora, com as batidas de agora."""
+        import numpy as np
+
+        from . import models
+        from .media import chordsound
+
+        found = song(song_id)
+        audio = found.manifest.get("audio")
+        if not audio:
+            raise HTTPException(404, "Esta música não tem áudio.")
+        beats = []
+        for item in body.get("beats") or []:
+            if isinstance(item, list) and len(item) == 2 and all(isinstance(v, (int, float)) for v in item):
+                beats.append((float(item[0]), int(item[1])))
+        cache = found.file(f"peaks/chordprobs-source-v{chordsound.VERSION}.npy")
+        with chords_guard:
+            lock = chords_locks.setdefault(str(cache), threading.Lock())
+        with lock:
+            if cache.is_file():
+                probs = np.load(cache)
+            else:
+                weights = [models.ensure(name) for name in models.CHORDNET]
+                probs = chordsound.probabilities(found.file(audio["file"]), weights)
+                cache.parent.mkdir(exist_ok=True)
+                temp = cache.with_name(f".{cache.name}.{threading.get_ident()}.partial.npy")
+                np.save(temp, probs.astype(np.float16))
+                temp.replace(cache)
+        return {"chords": chordsound.decode(probs.astype(np.float32), beats), "version": chordsound.VERSION}
 
     @app.get("/api/songs/{song_id}/sounds")
     def song_sounds(song_id: str, stem: str | None = None) -> dict:

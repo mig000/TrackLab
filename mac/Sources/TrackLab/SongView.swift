@@ -57,6 +57,7 @@ struct SongView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleChords)) { _ in model.chordsVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleEdit)) { _ in model.mode = model.mode == .edit ? .study : .edit }
         .onReceive(NotificationCenter.default.publisher(for: .toggleAdjust)) { _ in model.mode = model.mode == .adjust ? .study : .adjust }
         .onReceive(NotificationCenter.default.publisher(for: .toggleRecord)) { _ in model.mode = model.mode == .record ? .study : .record }
@@ -105,6 +106,13 @@ struct SongView: View {
                 ResizeHandle(help: "Arraste para mudar a altura da TAB; duplo clique volta à altura da pauta") { delta, start in
                     tabHeight = min(max(80, (start ?? tabMeasured) + delta), 900)
                 } begin: { tabMeasured } reset: { tabHeight = 0 }
+            }
+            // Os acordes da música, na escala da Fita (fora das páginas, que não têm a escala).
+            if model.chordsVisible, !model.scorePage, !model.chordSpans.isEmpty {
+                ChordLane(model: model, span: span)
+                    .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
+                    .padding(.horizontal, 12)
+                    .padding(.top, 2)
             }
             // No modo Gravar, os takes de cada pista de guitarra, na escala da Fita.
             if model.mode == .record {
@@ -344,6 +352,8 @@ struct SongView: View {
                 .keyboardShortcut("1", modifiers: [.option, .command])
             Toggle("Lente (o espectro)", isOn: Binding(get: { model.lensVisible }, set: { model.lensVisible = $0 }))
                 .keyboardShortcut("2", modifiers: [.option, .command])
+            Toggle("Acordes", isOn: Binding(get: { model.chordsVisible }, set: { model.chordsVisible = $0 }))
+                .keyboardShortcut("3", modifiers: [.option, .command])
             Divider()
             Toggle("TAB em páginas", isOn: Binding(get: { model.scorePage }, set: { model.scorePage = $0 }))
             Toggle("Inspetor", isOn: Binding(get: { model.showInspector }, set: { model.showInspector = $0 }))
@@ -353,7 +363,7 @@ struct SongView: View {
             Image(systemName: "rectangle.3.group")
         }
         .fixedSize()
-        .help("O que está à vista: a Onda, a Lente, a TAB em páginas, o inspetor; e as teclas (⌘/)")
+        .help("O que está à vista: a Onda, a Lente, os acordes, a TAB em páginas, o inspetor; e as teclas (⌘/)")
         .accessibilityLabel("Visão")
     }
 }

@@ -21,7 +21,10 @@ final class SongModel {
 
     private(set) var phase: Phase = .loading
     private(set) var detail: SongDetail?
-    private(set) var grid = TempoGrid(points: [])
+    private(set) var grid = TempoGrid(points: []) {
+        // As batidas mudaram: os acordes pelo som são presos a elas de novo (Chords.swift).
+        didSet { if grid != oldValue { hearChords() } }
+    }
     private(set) var sourcePeaks: Peaks?
     private(set) var guitarPeaks: Peaks?
     /// A maior amplitude do original (ou da guitarra, sem ele): a borda da faixa da Onda.
@@ -228,6 +231,34 @@ final class SongModel {
     var waveVisible = UserDefaults.standard.object(forKey: "waveVisible") as? Bool ?? true {
         didSet { UserDefaults.standard.set(waveVisible, forKey: "waveVisible") }
     }
+    /// A barra de acordes sob a TAB (⌥⌘3).
+    var chordsVisible = UserDefaults.standard.object(forKey: "chordsVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(chordsVisible, forKey: "chordsVisible") }
+    }
+
+    // A barra de acordes (Chords.swift): os escritos no Guitar Pro, as correções guardadas no pacote e o que sai das
+    // duas com as notas das pistas.
+    var writtenChords: [(tick: Double, track: Int, name: String)] = [] {
+        didSet { refreshChords() }
+    }
+    var chordEdits: [ChordEdit] = [] {
+        didSet { if chordEdits != oldValue { chordSpans = ChordReader.apply(chordEdits, to: chordBase) } }
+    }
+    var chordSpans: [ChordSpan] = []
+    /// Os acordes pelo som (o motor), em segundos, e se o motor ainda está ouvindo.
+    var soundChords: [(start: Double, end: Double, name: String)] = [] {
+        didSet { refreshChords() }
+    }
+    var hearingChords = false
+    @ObservationIgnored var soundChordsTask: Task<Void, Never>?
+    @ObservationIgnored var soundChordsBeats: [[Double]] = []
+    /// O lido nas notas com os escritos, sem as correções (uma correção só refaz a camada de cima).
+    @ObservationIgnored var chordBase: [ChordSpan] = []
+    /// O acorde escolhido na barra (pelo começo, em tiques).
+    var chosenChord: Double?
+    @ObservationIgnored var chordsTask: Task<Void, Never>?
+    @ObservationIgnored var chordsSave: Task<Void, Never>?
+    @ObservationIgnored var chordsRevision = 0
     var lensVisible = UserDefaults.standard.bool(forKey: "lensVisible") {
         didSet {
             UserDefaults.standard.set(lensVisible, forKey: "lensVisible")
@@ -258,6 +289,7 @@ final class SongModel {
             notesVersion += 1
             pruneCorrections()
             measureLater()
+            refreshChords()
         }
     }
     /// As notas que o corretor mudou (`correctionKey`: pista, tique e corda) e como estavam e ficaram, para a marca na
@@ -386,6 +418,7 @@ final class SongModel {
         }
         bridge.onSave = { [weak self] data in self?.saveScore(data) }
         bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
+        bridge.onChords = { [weak self] chords in self?.writtenChords = chords }
         bridge.onFitted = { [weak self] count, asked in self?.fitted(count: count, asked: asked) }
         bridge.onShiftEnd = { [weak self] seconds in
             self?.soundShift = 0
@@ -417,6 +450,7 @@ final class SongModel {
         if let data = await bridge.flush() { saveScore(data) }
         await scoreSave?.value
         await sectionsSave?.value
+        await chordsSave?.value
     }
 
     /// Antes de o app sair: a música aberta e as que fecharam gravam o que tinham.
@@ -432,6 +466,7 @@ final class SongModel {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
             checkedBars = Set(detail.checkedBars)
+            chordEdits = detail.chordEdits
             status = detail.status
             sections = detail.sections
             if let map = try await Backend.shared.tempoMap(id) {
@@ -1584,6 +1619,11 @@ final class SongModel {
             return copy.to - copy.from > 1 ? copy : nil
         }
         if moved != sections { save(moved) }
+        let edits = chordEdits.compactMap { edit -> ChordEdit? in
+            let moved = ChordEdit(from: change.moved(edit.from), to: change.moved(edit.to, end: true), name: edit.name)
+            return moved.to - moved.from > 1 ? moved : nil
+        }
+        if edits != chordEdits { saveChordEdits(edits) }
         let checked = change.moved(checked: checkedBars)
         if checked != checkedBars {
             checkedBars = checked

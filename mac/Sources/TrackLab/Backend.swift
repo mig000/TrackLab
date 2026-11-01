@@ -232,6 +232,32 @@ final class Backend {
         return saved.bars
     }
 
+    /// Os acordes pelo som (o Chord-CNN-LSTM do motor), presos às batidas dadas (`[segundo, tipo]`: 2 no 1 do compasso,
+    /// 3 no meio dele, 4 nos outros tempos): `(início, fim, nome)` em segundos, o nome como o modelo escreve. Na primeira
+    /// vez o motor baixa os pesos e ouve a música inteira (~1 min).
+    func chordsBySound(_ id: String, beats: [[Double]]) async throws -> [(start: Double, end: Double, name: String)] {
+        struct Body: Encodable { let beats: [[Double]] }
+        struct Row: Decodable {
+            let start: Double, end: Double, name: String
+            init(from decoder: Decoder) throws {
+                var c = try decoder.unkeyedContainer()
+                start = try c.decode(Double.self)
+                end = try c.decode(Double.self)
+                name = try c.decode(String.self)
+            }
+        }
+        struct Answer: Decodable { let chords: [Row] }
+        let answer: Answer = try await send("POST", "songs/\(id)/chords/sound", body: Body(beats: beats), timeout: 900)
+        return answer.chords.map { ($0.start, $0.end, $0.name) }
+    }
+
+    /// As correções da barra de acordes (a lista inteira); devolve as gravadas.
+    func putChordEdits(_ id: String, _ edits: [ChordEdit]) async throws -> [ChordEdit] {
+        struct Body: Codable { let edits: [ChordEdit] }
+        let saved: Body = try await send("PUT", "songs/\(id)/chords", body: Body(edits: edits))
+        return saved.edits
+    }
+
     /// Os takes gravados (a lista inteira); o motor apaga os arquivos dos que saíram dela.
     func putTakes(_ id: String, _ takes: [Take]) async throws -> [Take] {
         struct Body: Codable { let takes: [Take] }
@@ -394,11 +420,11 @@ final class Backend {
     }
 
     private func send<T: Decodable, B: Encodable>(_ method: String, _ path: String, body: B?,
-                                                  headers: [String: String] = [:]) async throws -> T {
+                                                  headers: [String: String] = [:], timeout: TimeInterval = 60) async throws -> T {
         guard let base else { throw BackendError.notReady }
         var request = URLRequest(url: base.appending(path: path))
         request.httpMethod = method
-        request.timeoutInterval = 60
+        request.timeoutInterval = timeout
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

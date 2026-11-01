@@ -324,9 +324,29 @@
     });
   }
 
+  // Os acordes escritos no Guitar Pro (o nome no alto da batida): [tique, pista, nome], em ordem de tempo, para a barra de
+  // acordes do app, que os põe acima dos que ela lê nas notas.
+  function writtenChords(score) {
+    const chords = [];
+    score.tracks.forEach((track, index) => {
+      for (const staff of track.staves) {
+        for (const bar of staff.bars) {
+          for (const voice of bar.voices) {
+            for (const beat of voice.beats) {
+              const chord = beat.chordId ? beat.chord : null;
+              if (chord && chord.name && chord.name.trim()) chords.push([beat.absolutePlaybackStart, index, chord.name.trim()]);
+            }
+          }
+        }
+      }
+    });
+    return chords.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  }
+
   return {
     CURSOR_AT,
     trackNotes,
+    writtenChords,
     showPreferences,
     cleanPoints,
     secondsToTick,

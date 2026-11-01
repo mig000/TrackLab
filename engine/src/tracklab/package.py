@@ -266,6 +266,30 @@ class SongPackage:
         self.update(record)
         return clean
 
+    def set_chord_edits(self, edits) -> list[dict]:
+        """As correções da barra de acordes (`{"from", "to", "name"}`: o trecho em tiques e o nome; nome vazio é "sem
+        acorde"), em ordem e sem trechos vazios, guardadas no manifesto."""
+        if not isinstance(edits, list):
+            raise ValueError("Envie as correções dos acordes numa lista.")
+        clean = []
+        for item in edits:
+            if not isinstance(item, dict):
+                continue
+            start, end, name = item.get("from"), item.get("to"), item.get("name", "")
+            if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, (int, float)) \
+                    or not isinstance(end, (int, float)) or not isinstance(name, str):
+                continue
+            if start < 0 or end <= start:
+                continue
+            clean.append({"from": float(start), "to": float(end), "name": name.strip()[:32]})
+        clean.sort(key=lambda edit: (edit["from"], edit["to"]))
+
+        def record(data: dict) -> None:
+            data["chordEdits"] = clean
+
+        self.update(record)
+        return clean
+
     def set_takes(self, takes) -> list[dict]:
         """Os takes gravados (a lista inteira, como o app a tem); os arquivos dos que saíram dela são apagados."""
         with _LOCK:

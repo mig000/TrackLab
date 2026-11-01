@@ -19,7 +19,7 @@ final class NoteSynth {
     private let engine = AVAudioEngine()
     private let sampler = AVAudioUnitSampler()
     private var loaded: (url: URL, program: Int, percussion: Bool)?
-    private var sounding: UInt8?
+    private var sounding: [UInt8] = []
     private var task: Task<Void, Never>?
 
     private init() {
@@ -58,7 +58,15 @@ final class NoteSynth {
     /// vibrato escritos). Uma nota nova corta a anterior.
     func play(pitch: Int, seconds: Double, program: Int, percussion: Bool, transpose: Double,
               shape: ((Double, Double) -> Double)?) throws {
+        try play(pitches: [pitch], seconds: seconds, program: program, percussion: percussion, transpose: transpose,
+                 shape: shape)
+    }
+
+    /// Várias notas juntas (um acorde da barra de acordes), dedilhadas de leve, do grave para o agudo.
+    func play(pitches: [Int], seconds: Double, program: Int, percussion: Bool, transpose: Double,
+              shape: ((Double, Double) -> Double)?) throws {
         guard let url = Self.soundFont() else { throw Failure.noSoundFont }
+        guard !pitches.isEmpty else { return }
         if !engine.isRunning { try engine.start() }
         if loaded?.url != url || loaded?.program != program || loaded?.percussion != percussion {
             let bank = percussion ? kAUSampler_DefaultPercussionBankMSB : kAUSampler_DefaultMelodicBankMSB
@@ -72,17 +80,23 @@ final class NoteSynth {
             sampler.sendController(38, withValue: 0, onChannel: 0)
         }
         task?.cancel()
-        if let sounding { sampler.stopNote(sounding, onChannel: 0) }
+        for note in sounding { sampler.stopNote(note, onChannel: 0) }
         // Os semitons inteiros do tom vão na própria nota; os cents, o bend e o vibrato, no pitch bend.
         let whole = Int(transpose.rounded())
         let fine = transpose - Double(whole)
-        let note = UInt8(clamping: pitch + (percussion ? 0 : whole))
+        let notes = pitches.sorted().map { UInt8(clamping: $0 + (percussion ? 0 : whole)) }
         bend(percussion ? 0 : fine)
-        sampler.startNote(note, withVelocity: 100, onChannel: 0)
-        sounding = note
+        sampler.startNote(notes[0], withVelocity: 100, onChannel: 0)
+        sounding = notes
         let start = CACurrentMediaTime()
         let length = max(0.08, seconds)
         task = Task { @MainActor [weak self] in
+            // As outras notas do acorde, 18 ms uma da outra.
+            for note in notes.dropFirst() {
+                try? await Task.sleep(for: .milliseconds(18))
+                guard !Task.isCancelled else { return }
+                self?.sampler.startNote(note, withVelocity: 92, onChannel: 0)
+            }
             while !Task.isCancelled {
                 let elapsed = CACurrentMediaTime() - start
                 if elapsed >= length { break }
@@ -90,8 +104,8 @@ final class NoteSynth {
                 try? await Task.sleep(for: .milliseconds(10))
             }
             guard let self, !Task.isCancelled else { return }
-            self.sampler.stopNote(note, onChannel: 0)
-            self.sounding = nil
+            for note in notes { self.sampler.stopNote(note, onChannel: 0) }
+            self.sounding = []
         }
     }
 

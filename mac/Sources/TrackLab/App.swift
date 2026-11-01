@@ -37,6 +37,8 @@ struct TrackLabApp: App {
                     .keyboardShortcut("1", modifiers: [.command, .option])
                 Button("Mostrar ou esconder a lente") { NotificationCenter.default.post(name: .toggleLens, object: nil) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
+                Button("Mostrar ou esconder os acordes") { NotificationCenter.default.post(name: .toggleChords, object: nil) }
+                    .keyboardShortcut("3", modifiers: [.command, .option])
                 Picker("Aparência", selection: $appearance) {
                     Text("Do sistema").tag("system")
                     Text("Clara (papel)").tag("light")
@@ -86,6 +88,7 @@ extension Notification.Name {
     static let toggleWave = Notification.Name("TrackLab.toggleWave")
     static let togglePage = Notification.Name("TrackLab.togglePage")
     static let toggleLens = Notification.Name("TrackLab.toggleLens")
+    static let toggleChords = Notification.Name("TrackLab.toggleChords")
     static let redoTempo = Notification.Name("TrackLab.redoTempo")
     static let correctBySound = Notification.Name("TrackLab.correctBySound")
     static let syncBySound = Notification.Name("TrackLab.syncBySound")

@@ -59,6 +59,20 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   app grava o áudio direto no pacote (`takes/<id>.caf`, e o timbre dos efeitos em `takes/<id>.chain.plist`) antes de
   mandar a lista, e o motor apaga os arquivos dos takes que saíram dela, depois de um minuto (um take recém-gravado chega
   ao disco antes de entrar na lista).
+- Acordes pelo som (`media/chordsound.py`, `POST songs/{id}/chords/sound` com `beats`): o Chord-CNN-LSTM (Jiang, Chen e
+  Xia, ISMIR 2019; Music X Lab, MIT), a rede e o decodificador do original em `media/chordnet/` (com a licença; mudados
+  só o import, o `with` e o `np.int`), os cinco pesos do commit 481f4ce7 do repositório original no `models.py`
+  (`CHORDNET`, ~28 MB, conferidos por SHA-256; são os mesmos que o ChordMiniApp usa). O CQT do original (`hybrid_cqt` do
+  librosa, 22 050 Hz, hop 512, 288 linhas) sobre o áudio original inteiro e a média das cinco redes dão as
+  probabilidades de cada quadro (~50 s para 5 min na CPU do iMac), guardadas em `peaks/chordprobs-source-v1.npy`; o nome
+  sai a cada pedido, pelo HMM do original preso às batidas que o app manda (`[segundo, tipo]`: 2 no 1 do compasso, 3 no
+  meio, 4 nos outros tempos; trocar custa 10, 20 e 40, porque os 15, 45 e 100 do original engoliam os acordes curtos dos
+  riffs). O librosa entra no extra `separate`, com o numba < 0.61 e o llvmlite < 0.44 no Intel (os mais novos não têm
+  roda para macOS x86_64). A prova de 1/11 (BTC, BTC-PL e 2E1D do ChordMini e o Chord-CNN-LSTM, na música inteira e
+  sem bateria e voz): o Chord-CNN-LSTM na música inteira foi o melhor, 88 dos 93 escritos do Ramblin' Man e 18 dos 20 do
+  Sultans; sem bateria e voz não ajudou.
+- Acordes (`PUT songs/{id}/chords`, `set_chord_edits`): as correções da barra de acordes do app no manifesto
+  (`chordEdits`: `from` e `to` em tiques e o nome; vazio é "sem acorde"), em ordem; a leitura dos acordes é do app.
 - Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/` e só vira a ativa sem A/B se não
   houver outra (`PUT songs/{id}/stems/active`). `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
   em 24 trechos, consenso numa reta: deslocamento e velocidade até 2 %, depois uma passada fina; ganho pela energia);
@@ -195,7 +209,8 @@ transform da `#sheet`) e a TAB acompanha a Fita até o desenho novo chegar. A p�
 (`trackNotes`: tique, duração, altura, corda, casa, vibrato, trinado, como a nota chega e sai e o bend; a chegada é 1
 quando ela vem de outra casa pela corda, num ligado, num slide da anterior ou num slide de fora, e a saída 2 quando sai
 por slide, `ScoreNote.approached`/`slidesOut`; mais 4 ou 8 quando esse slide é para fora, para cima ou para baixo, e 16
-ou 32 quando ela entra por um slide de baixo ou de cima) para as barras sobre o espectro da Fita.
+ou 32 quando ela entra por um slide de baixo ou de cima) para as barras sobre o espectro da Fita, e com elas os acordes
+escritos no Guitar Pro (`writtenChords`: tique, pista e nome de cada batida com acorde) para a barra de acordes.
 
 Edição da TAB (`score-edit.js`, testado em `web/tests/check-edit.cjs`): como a do TabLab, mas sobre o próprio Guitar
 Pro (o TabLab refazia a partitura de uma lista de notas em segundos e perdia detalhe na volta ao .gp). Com
@@ -700,6 +715,68 @@ TAB e o X não soavam com uma separação ativa). A WKWebView da partitura (`Sco
 do teclado: com ele, engolia espaço, setas e letras depois de um clique na TAB e os atalhos do transporte paravam; um
 clique na TAB ou na Fita também tira o foco de um campo de texto (a busca). Com mais de uma separação guardada, o A/B
 abre pronto para a seguinte na escada.
+
+Barra de acordes (1/11; `ChordLane`, `Chords.swift` no app e em TrackLabCore): uma faixa fina entre a TAB e a Onda, na
+escala da Fita, ligada e desligada no menu Visão (⌥⌘3, `chordsVisible`), fora das páginas. Os acordes saem das notas de
+todas as pistas (`ChordReader`): cada pista pesa pelo papel, que vem do nome dela (`HarmonyRole`: a base 1, guitarra e
+teclado 0,8, uma nota sozinha mais curta que um tempo nelas 0,4 disso (a frase de notas soltas da introdução do Ramblin'
+Man, numa pista "Rhythm Guitar", virava um acorde por nota), a lead, o slide, as harmonias e as melodias 0,9 onde tocam
+acorde, duas notas ou mais juntas, e 0,12 nas frases, o baixo 0,35 mais a nota grave, a voz 0,08, a bateria nada); a
+cada colcheia, o peso de cada uma das 12 notas (a segurada perde peso com o tempo), visto um tempo para cada lado (pesos
+1, 2, 3, 2, 1), contra 13 qualidades (maior, menor, 5, 7, m7, maj7, sus4, sus2, add9, 9, dim, m7b5, aug; a quinta pode
+faltar, a terça não; a sétima e a nona só contam com 14 % do peso; o mais raro custa mais; o baixo na fundamental soma
+pela parte do tempo em que está nela; o 6 e o m6 saíram: no rock a sexta é enfeite, o pedaço C+G+E♭ dentro do Mi♭) e o
+caminho mais provável (Viterbi: trocar custa 0,4 no 1 do compasso, 0,7 no meio dele, 1,1 num tempo e 1,6 fora do tempo,
+e um passo quase vazio segue o acorde de antes). Depois, um trecho mais curto que meio compasso que o vizinho explica
+quase tão bem (até 0,3 a menos) vira parte dele, a não ser que o baixo fique na fundamental dele 60 % do trecho (uma
+troca de verdade); dois vizinhos com a mesma fundamental, um variação do outro (sus, add9, 7, maj7), viram um; e entre
+leituras com as mesmas notas (Cm7 e Eb, Fm7 e Ab, Bbm7 e Db) vale a do baixo que abre o trecho (o baixo andando pela
+sexta fazia o Mi♭ do Ramblin' virar Cm7). O baixo noutra nota do acorde 70 % do trecho vira barra ("C/G"). A grafia
+segue o tom (os perfis de Krumhansl sobre as notas de tudo): bemóis em Fá, Si♭, Mi♭, Lá♭, Ré♭ e Sol♭ maior e nas
+relativas, sustenidos nas notas da escala dos tons de sustenidos, e a de costume no resto (Bb, Eb, Ab, C#, F#); os
+escritos passam para ela ("A♭" vira "Ab", "C5 \G" vira "C5/G"; antes o Ramblin' mostrava C# lido ao lado do D♭ escrito).
+Por cima, os escritos no Guitar Pro (do tique deles até a troca lida seguinte, ou desde o começo do lido com a mesma
+fundamental: o Songsterr pôs os do Ramblin' no 2; no mesmo tique, o da pista de base) e, por cima de tudo, as correções.
+Medido sem os escritos, quantos deles a leitura acha (a fundamental e a terça no meio do escrito; 5 e sus valem com
+qualquer terça) e as trocas por compasso, antes → depois dos ajustes de 1/11: Ramblin' Man 78/93 e 1,70 → 85/93 e 0,65;
+Sunshine 31/49 e 2,92 → 46/49 e 1,02; Highway Star 165 escritos (muitos power chords no contratempo, que agora ficam no
+acorde do compasso) e 1,12 → 0,55; Sultans 18/20 e 0,92 → 20/20 e 0,80; White Room (sem escritos) 2,15 → 1,44. No Sultans,
+a progressão do disco (Dm C Bb A no verso, F C Bb no refrão, Dm C Bb C no fim); no Ramblin', um acorde por compasso na
+introdução e no verso. Fica difícil: o solo final do Ramblin' (a base em duas notas sobre o baixo andando, sem escritos)
+e os riffs de notas soltas (a White Room ainda dá sus2 e dim de passagem). A leitura roda
+fora da linha principal (310 ms em debug no Sultans), 150 ms depois da última mudança de notas, pistas ou escritos; uma
+correção só refaz a camada de cima. Na barra: o bloco de cada acorde com o nome (o que toca em âmbar, o escolhido
+contornado, o corrigido com um ponto, o escrito com um traço embaixo); um clique leva a música ao acorde sem a tela
+saltar; duplo clique renomeia (com os nomes que as notas também aceitam; vazio é N.C.); arrastar a divisa entre dois leva
+a troca, na grade de colcheias; arrastar no meio marca o loop; o botão direito tem os outros nomes, renomear, dividir no
+clique, juntar com o vizinho, sem acorde, voltar ao lido, ouvir (`NoteSynth` toca acordes, violão de aço) e loop. As
+correções vão ao motor uma gravação por vez e andam com os compassos postos ou apagados. O som (1/11): o app pede ao
+motor os acordes pelo som presos às batidas do mapa (`hearChords`, um segundo depois de o mapa mudar; "ouvindo os
+acordes…" na barra na primeira vez) e eles entram na leitura como outra prova (`ChordReader.read(sound:)`): o acorde
+que o som ouve em cada passo vira candidato e soma no caminho com peso pela clareza da TAB ali (`soundWeight`: 0,1 com
+um acorde claro nas notas, até 1 num riff ou numa frase; com peso fixo, o som puxava o G curto do refrão do Sunshine
+para o A que ele ouvia), também na hora de absorver os trechos curtos; o nome sem terça das notas (D5, Csus2) vira o do
+som quando ele ouve a mesma fundamental com terça; e cada trecho guarda o que o som ouviu (`heard`) e é marcado para
+conferir (`disputed`, uma linha laranja embaixo do bloco) quando o som discorda dele (outra fundamental ou a terça
+trocada) em 60 % de ao menos dois tempos. O menu do acorde diz "o som ouve X" e tem "Usar o do som". Medido (os escritos
+achados sem os escritos, as trocas por compasso), só as notas → com o som: Ramblin' Man 85 → 88 de 93 e 0,65 → 0,62
+(o fim, Fm7, passa a Gb Db, o que soa); Sunshine 46 → 46 e 1,02 → 0,75; Highway Star 113 → 112 e 0,55 → 0,52; Sultans
+20 → 19 e 0,80 → 0,76; White Room 1,44 → 1,45, o verso de sus2 e dim do riff passa a D C | G/B C, o disco. Dois
+deslocamentos que o Guitar Pro não diz: a TAB inteira fora do disco por um intervalo fixo (`tabShift`/`soundShift`: o
+intervalo mais comum entre a fundamental das notas e a do som; no Here Comes the Sun a TAB está pelas formas do capo 7
+com o capo 0 no arquivo, +7; no Michelle a gravação está meio tom abaixo da afinação da TAB, −1), e as notas entram já
+no que soa; e os escritos pelas formas do violão numa guitarra afinada abaixo (`shapeShift`: o Yesterday, um tom abaixo,
+escrito G F#m B7 e soando F Em A7), mostrados no que soa, com a forma entre os outros nomes. A Lente desses dois ainda
+mostra as notas da TAB fora do espectro (o capo e a afinação do GP não mudaram). Medido nos Beatles (1/11) contra as
+anotações da Isophonics (Harte, os acordes dos discos; o deslocamento até o áudio do vídeo pelo melhor acordo com o
+som, em ±12 s), a fração do tempo com a fundamental e a terça certas, só a TAB / só o som / os dois / a barra com os
+escritos: Let It Be 89/90/88/85, Help! 91/87/94/94, Yesterday 81/85/87/81, Here Comes the Sun 31/89/78/78, Michelle
+0/72/78/76 (o Chord-CNN-LSTM foi treinado com a Isophonics: a coluna do som sai otimista). Dos 10 Beatles importados
+(Let It Be, Help!, Yesterday, Something, Here Comes the Sun, Day Tripper, Norwegian Wood, Penny Lane, A Hard Day's
+Night, Michelle; sem o Demucs), Something, Norwegian Wood, Penny Lane e A Hard Day's Night vieram sem áudio (o Songsterr
+não tinha sincronia) e o Day Tripper não está na Isophonics. A leitura de fora do app: `node web/tools/chord-notes.cjs
+<gp> <json>` e `TRACKLAB_CHORDS_NOTES=<json> [TRACKLAB_CHORDS_SOUND=<json em tiques>] [TRACKLAB_CHORDS_FINAL=<json>]
+mac/test.sh --filter acordesDeUmaMusica` (compasso a compasso, com "?" e o que o som ouve onde discorda).
 
 Repertório (Fase 3): o app abre no Para hoje (`TodayView`: trechos perto da meta, esquecidos há 3 dias, sem recorde;
 revisão do repertório a cada 7; músicas novas já conferidas). A barra lateral agrupa por estado, com busca e coleções

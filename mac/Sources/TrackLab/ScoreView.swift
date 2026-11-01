@@ -48,6 +48,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                        _ change: BarChange?) -> Void)?
     var onSave: ((Data) -> Void)?
     var onNotes: (([[ScoreNote]]) -> Void)?
+    /// Os acordes escritos no Guitar Pro (tique, pista, nome), com as notas.
+    var onChords: (([(tick: Double, track: Int, name: String)]) -> Void)?
     /// O corretor aplicou um lote (`fitMany`): quantas notas mudaram de quantas pedidas.
     var onFitted: ((_ count: Int, _ asked: Int) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -293,6 +295,14 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         }
     }
 
+    private static func chords(_ body: [String: Any]) -> [(tick: Double, track: Int, name: String)] {
+        (body["chords"] as? [[Any]] ?? []).compactMap { item -> (tick: Double, track: Int, name: String)? in
+            guard item.count == 3, let tick = (item[0] as? NSNumber)?.doubleValue,
+                  let track = (item[1] as? NSNumber)?.intValue, let name = item[2] as? String else { return nil }
+            return (tick, track, name)
+        }
+    }
+
     nonisolated func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
             let body = message.body as? [String: Any] ?? [:]
@@ -310,6 +320,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 let notes = (body["notes"] as? [[[NSNumber]]] ?? []).map { track in
                     ScoreNote.list(track.map { $0.map(\.doubleValue) })
                 }
+                onChords?(Self.chords(body))
                 onLoaded?(list, ticks, markers, notes)
             case "rendered":
                 onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
@@ -341,6 +352,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             case "save":
                 if let text = body["gp"] as? String, let data = Data(base64Encoded: text) { onSave?(data) }
             case "notes":
+                onChords?(Self.chords(body))
                 onNotes?((body["notes"] as? [[[NSNumber]]] ?? []).map { ScoreNote.list($0.map { $0.map(\.doubleValue) }) })
             case "shift":
                 onShift?((body["seconds"] as? NSNumber)?.doubleValue ?? 0)

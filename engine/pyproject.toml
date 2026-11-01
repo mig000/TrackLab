@@ -20,6 +20,11 @@ dependencies = [
 [project.optional-dependencies]
 separate = [
     "demucs==4.1.0",
+    # Os acordes pelo som (media/chordsound.py): o CQT do Chord-CNN-LSTM é o do librosa. No Intel, o numba e o llvmlite
+    # mais novos não têm roda para macOS x86_64 (o pip tentava compilar o llvmlite e falhava).
+    "librosa>=0.10.2",
+    "numba<0.61; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "llvmlite<0.44; sys_platform == 'darwin' and platform_machine == 'x86_64'",
 ]
 
 [project.scripts]

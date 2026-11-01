@@ -142,6 +142,18 @@ def test_checked_bars_are_kept_in_the_manifest(client):
     assert client.put(f"/api/songs/{song_id}/checked", json={}).status_code == 400
 
 
+def test_chord_edits_are_kept_in_the_manifest(client):
+    started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
+                                                     "separate": False})
+    song_id = wait(client, started.json()["id"])["result"]["song"]["id"]
+    edits = [{"from": 3840, "to": 7680, "name": " A7 "}, {"from": 0, "to": 3840, "name": ""},
+             {"from": 10, "to": 5, "name": "x"}, {"from": True, "to": 9, "name": "y"}, "z"]
+    saved = client.put(f"/api/songs/{song_id}/chords", json={"edits": edits}).json()["edits"]
+    assert saved == [{"from": 0.0, "to": 3840.0, "name": ""}, {"from": 3840.0, "to": 7680.0, "name": "A7"}]
+    assert client.get(f"/api/songs/{song_id}").json()["chordEdits"] == saved
+    assert client.put(f"/api/songs/{song_id}/chords", json={}).status_code == 400
+
+
 def test_status_sections_and_practice_through_the_api(client):
     started = client.post("/api/songs/import", json={"url": "https://www.songsterr.com/a/wsa/cream-x-tab-s27",
                                                      "separate": False})
@@ -328,3 +340,24 @@ def test_takes_are_kept_in_the_manifest_and_their_files_swept(client):
         os.utime(folder / "takes" / name, (old, old))
     client.put(f"/api/songs/{song_id}/takes", json={"takes": takes[:1]})
     assert sorted(path.name for path in (folder / "takes").iterdir()) == ["t1.caf"]
+
+
+def test_chords_by_sound_are_computed_once_and_named_with_the_beats(client, monkeypatch):
+    """Os acordes pelo som: as probabilidades (as redes, aqui trocadas) uma vez só, guardadas no pacote; o nome sai a
+    cada pedido, com as batidas que vêm."""
+    from tracklab import models
+    from tracklab.media import chordsound
+    from test_chordsound import named, probs
+
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    calls = []
+    monkeypatch.setattr(models, "ensure", lambda name, download=None: Path(name))
+    monkeypatch.setattr(chordsound, "probabilities", lambda path, weights: calls.append(weights) or probs((100, 0), (100, 7)))
+    first = client.post(f"/api/songs/{song_id}/chords/sound", json={}).json()
+    assert [row[2] for row in named(first["chords"])] == ["C:maj", "G:maj"] and len(calls[0]) == 5
+    frame = chordsound.HOP / chordsound.RATE
+    again = client.post(f"/api/songs/{song_id}/chords/sound",
+                        json={"beats": [[0, 2], [80 * frame, 4], [120 * frame, 2], "x"]}).json()
+    assert len(calls) == 1 and [row[2] for row in named(again["chords"])] == ["C:maj", "G:maj"]
+    assert package.find(song_id).file(f"peaks/chordprobs-source-v{chordsound.VERSION}.npy").is_file()

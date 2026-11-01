@@ -154,6 +154,15 @@ if (files.length) {
       renderer.renderScore(score, [0]);
       // As notas para o espectro: em ordem de tique, com altura e casa de verdade (a pista 0 é de cordas).
       const notes = core.trackNotes(score)[0];
+      // Um acorde escrito na segunda batida da pista 0 vai para a barra de acordes com o tique dela.
+      const staff = score.tracks[0].staves[0];
+      const beat = staff.bars[0].voices[0].beats[Math.min(1, staff.bars[0].voices[0].beats.length - 1)];
+      const chord = new alphaTab.model.Chord();
+      chord.name = " Am7 ";
+      staff.addChord("tracklab-test", chord);
+      beat.chordId = "tracklab-test";
+      assert.deepEqual(core.writtenChords(score).filter((c) => c[2] === "Am7"), [[beat.absolutePlaybackStart, 0, "Am7"]]);
+      beat.chordId = null;
       assert.ok(notes.length > 0 && notes.every((n) => Number.isFinite(n[0]) && n[1] > 0 && n[2] >= 28 && n[2] <= 100));
       assert.ok(notes.every((n, i) => i === 0 || n[0] >= notes[i - 1][0]));
       let tick = 0;
