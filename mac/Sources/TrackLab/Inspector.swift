@@ -271,6 +271,18 @@ private struct FaixasGroup: View {
         InspectorGroup("Faixas", summary: detail?.active?.label ?? "nenhuma", key: "faixas") {
             if model.stemJob != nil, model.stemJob?.request != .synth {
                 StemJobView(model: model)
+            } else if detail != nil, detail?.audio == nil {
+                Text("Esta música entrou sem áudio: o vídeo do Songsterr não sincroniza todos os compassos.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let message = model.audioJob {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(message).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                } else {
+                    Button("Buscar o áudio de novo") { Task { await model.fetchAudio() } }
+                        .help("Os poucos compassos do fim que o Songsterr não sincroniza seguem o andamento do anterior")
+                }
             } else if (detail?.stems.isEmpty ?? true) {
                 Text("Só o áudio original.").font(.caption).foregroundStyle(.secondary)
                 if detail?.audio != nil {

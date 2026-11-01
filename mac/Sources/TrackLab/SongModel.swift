@@ -249,7 +249,15 @@ final class SongModel {
     /// e o mesmo de cada pista, para propor o capo ou a afinação; o capo de cada pista como o GP diz.
     var chordTabShift = 0
     var chordTrackShifts: [Int] = []
-    var scoreCapos: [Int] = []
+    var scoreCapos: [Int] = [] {
+        didSet { if scoreCapos != oldValue { updateCapo() } }
+    }
+    /// As pistas de guitarra de seis cordas (a base primeiro) e o capo da de base, guardados: a barra de acordes pergunta
+    /// o capo a cada nome de cada quadro, e calcular percorria todas as notas (um terço da linha principal tocando).
+    @ObservationIgnored var chordGuitarTracks: [Int] = []
+    /// As digitações de cada acorde mostrado no inspetor (pelo trecho, o nome, as notas e o capo).
+    @ObservationIgnored var shapeCache: [String: [ChordShape]] = [:]
+    var chordCapo = 0
     /// Os nomes dos acordes pela forma do capo (o que a mão faz: D sob o Lá que soa com capo 7) em vez de como soam;
     /// só vale numa música com capo.
     var chordsByShape = UserDefaults.standard.bool(forKey: "chordsByShape") {
@@ -318,7 +326,7 @@ final class SongModel {
     /// Sincronizar o mapa pelo som assim que as curvas chegarem.
     @ObservationIgnored var syncWhenMeasured = false
     /// Muda com as notas e com o mapa (as chaves das curvas levam o tempo da nota): a lista de suspeitas se refaz.
-    @ObservationIgnored private var notesVersion = 0
+    @ObservationIgnored private(set) var notesVersion = 0
     @ObservationIgnored private var suspectCache: (key: [Int], list: [Suspect])?
     /// Os sons da faixa da pista (`GET songs/{id}/sounds`), para o som sem nota escrita.
     private(set) var heardSounds: [HeardSound] = []
@@ -2040,6 +2048,35 @@ final class SongModel {
 
     /// Pede faixas (o Demucs, a multitrack ou o MVSEP) e acompanha a fila; a nova separação vira o outro lado do A/B
     /// (ou a ativa, se não havia nenhuma).
+    /// A busca do áudio de uma música que entrou sem ele: a mensagem do trabalho enquanto ele roda.
+    var audioJob: String?
+
+    /// Busca de novo no Songsterr o áudio e o mapa (a importação deixou de fora porque faltavam pontos de sincronia;
+    /// o motor agora estende os poucos compassos do fim que faltam) e abre a música de novo com eles.
+    func fetchAudio() async {
+        guard audioJob == nil else { return }
+        do {
+            let ticket = try await Backend.shared.fetchAudio(id)
+            audioJob = "Na fila…"
+            while true {
+                try await Task.sleep(for: .milliseconds(500))
+                let job = try await Backend.shared.job(ticket.id)
+                audioJob = job.last?.message ?? "Trabalhando…"
+                guard job.finished else { continue }
+                audioJob = nil
+                guard job.status == "done" else {
+                    notice = job.error ?? "O áudio não veio."
+                    return
+                }
+                await load()
+                return
+            }
+        } catch {
+            audioJob = nil
+            notice = error.localizedDescription
+        }
+    }
+
     func improve(_ request: StemRequest) async {
         guard stemJob == nil else { return }
         do {

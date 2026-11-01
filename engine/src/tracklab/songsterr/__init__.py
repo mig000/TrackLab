@@ -32,6 +32,10 @@ Progress = Callable[[str, str, float | None], None]
 STAGE = "songsterr"
 SEARCH_LIMIT = 50
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}")
+# O vídeo vinculado pode ter menos pontos de sincronia que compassos (o Songsterr para antes do fim: no Something, 50
+# para 51; no A Hard Day's Night, 85 para 89). Até 4 e até 10 % dos compassos, os que faltam seguem o andamento do
+# último compasso com ponto, com um aviso para conferir no Ajuste; mais que isso, o áudio fica de fora.
+MISSING_MAX = 4
 
 
 def song_id(value: str) -> int:
@@ -166,6 +170,50 @@ def import_song(url: str, *, source: Source | None = None, root: Path | None = N
         raise
 
 
+def _extend(points: list[float], bars: list[tuple[int, int]]) -> list[float]:
+    """Os começos dos compassos que faltam no fim, no andamento do último compasso com ponto."""
+    lengths = [tempomap.bar_ticks(numerator, denominator) for numerator, denominator in bars]
+    rate = (points[-1] - points[-2]) / lengths[len(points) - 2]
+    while len(points) < len(bars):
+        points.append(points[-1] + rate * lengths[len(points) - 1])
+    return points
+
+
+def add_audio(song: SongPackage, *, source: Source | None = None, progress: Progress | None = None,
+              cancel=None) -> SongPackage:
+    """O áudio e o mapa de uma música do repertório que entrou sem eles (o Songsterr tinha poucos pontos de
+    sincronia): a partitura fica como está."""
+    source = source or Source()
+    origin = song.manifest.get("origin") or {}
+    ident = origin.get("songId")
+    if origin.get("kind") != "songsterr" or not isinstance(ident, int):
+        raise SongsterrError("Esta música não veio do Songsterr.")
+    say = _say(progress, cancel)
+    say("Buscando a partitura no Songsterr…", 0.02)
+    try:
+        meta, tracks = source.fetch(ident)
+    except requests.RequestException as error:
+        raise SongsterrError(f"O Songsterr não respondeu ({error.__class__.__name__}).") from None
+    bars = signatures(tracks)
+    if len(bars) != (song.manifest.get("score") or {}).get("measures"):
+        raise SongsterrError("A partitura do Songsterr mudou desde a importação: importe a música de novo.")
+
+    class Target:
+        manifest = {"warnings": [], "origin": dict(origin)}
+        file = staticmethod(song.file)
+
+    _add_audio(Target, source, ident, meta, bars, say)
+
+    def record(data: dict) -> None:
+        for key in ("audio", "tempoMap", "origin"):
+            data[key] = Target.manifest[key]
+        kept = [w for w in data.get("warnings") or [] if not w.startswith("Áudio não incluído")]
+        data["warnings"] = kept + Target.manifest["warnings"]
+
+    song.update(record)
+    return song
+
+
 def _add_audio(draft: Draft, source: Source, ident: int, meta: dict, bars: list[tuple[int, int]], say) -> None:
     say("Procurando o vídeo vinculado…", 0.15)
     try:
@@ -180,10 +228,18 @@ def _add_audio(draft: Draft, source: Source, ident: int, meta: dict, bars: list[
     points = entry.get("points") or []
     if not VIDEO_ID.fullmatch(video):
         raise SongsterrError("a identificação do vídeo vinculado é inválida.")
-    if len(points) < len(bars):
-        raise SongsterrError("os pontos de sincronização são insuficientes para a partitura.")
     if any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) or x < 0 for x in points):
         raise SongsterrError("os pontos de sincronização são inválidos.")
+    missing = len(bars) - len(points)
+    if missing > 0:
+        if missing > MISSING_MAX or missing > 0.1 * len(bars) or len(points) < 2:
+            raise SongsterrError("os pontos de sincronização são insuficientes para a partitura.")
+        points = _extend(list(points), bars)
+        draft.manifest["warnings"].append(
+            f"O Songsterr não sincroniza o último compasso: ele segue o andamento do anterior. Confira no Ajuste."
+            if missing == 1 else
+            f"O Songsterr não sincroniza os {missing} últimos compassos: eles seguem o andamento do anterior. "
+            "Confira no Ajuste.")
     try:
         tempo = tempomap.from_bar_starts(points, bars)
     except tempomap.RhythmError as error:

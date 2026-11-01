@@ -8,6 +8,7 @@ extension SongModel {
     /// da última mudança.
     func refreshChords() {
         chordsTask?.cancel()
+        updateCapo()
         let bars = grid.barTicks
         guard bars.count >= 2, !scoreNotes.isEmpty else {
             chordBase = []
@@ -30,6 +31,7 @@ extension SongModel {
             guard !Task.isCancelled, let self else { return }
             chordTabShift = shift
             chordTrackShifts = shifts
+            updateCapo()
             chordBase = base
             chordSpans = ChordReader.apply(chordEdits, to: base)
         }
@@ -90,12 +92,19 @@ extension SongModel {
         return try? ChordLibrary(json: data)
     }()
 
-    /// As pistas de guitarra de seis cordas, a base primeiro: de onde sai a digitação que a TAB toca.
-    private var guitarTracks: [Int] {
+    /// As pistas de guitarra de seis cordas, a base primeiro: de onde sai a digitação que a TAB toca (guardadas).
+    private var guitarTracks: [Int] { chordGuitarTracks }
+
+    /// Refaz as pistas de guitarra e o capo (as notas, as pistas, o capo do GP ou o deslocamento mudaram).
+    func updateCapo() {
         let roles = scoreTracks.map { ($0.index, HarmonyRole.of(name: $0.name)) }
         let order: [HarmonyRole] = [.rhythm, .guitar, .lead]
-        return order.flatMap { role in roles.filter { $0.1 == role }.map(\.0) }
+        chordGuitarTracks = order.flatMap { role in roles.filter { $0.1 == role }.map(\.0) }
             .filter { scoreNotes.indices.contains($0) && (scoreNotes[$0].map(\.string).max() ?? 0) == 6 }
+        let main = chordGuitarTracks.first
+        let written = main.flatMap { scoreCapos.indices.contains($0) ? scoreCapos[$0] : nil } ?? 0
+        let missing = (1...9).contains(chordTabShift) ? chordTabShift : 0
+        if chordCapo != written + missing { chordCapo = written + missing }
     }
 
     /// O nome da forma no braço: o do acorde, ou deslocado quando a TAB inteira está fora do disco (as formas do capo
@@ -124,12 +133,7 @@ extension SongModel {
 
     /// O capo da guitarra de base: o que o GP diz mais o que o som mostra que falta (0 sem capo, e numa gravação mais
     /// grave que a afinação da TAB, que não é capo).
-    var capoFret: Int {
-        let main = guitarTracks.first
-        let written = main.flatMap { scoreCapos.indices.contains($0) ? scoreCapos[$0] : nil } ?? 0
-        let missing = (1...9).contains(chordTabShift) ? chordTabShift : 0
-        return written + missing
-    }
+    var capoFret: Int { chordCapo }
 
     /// O que o grupo Acordes propõe quando a guitarra de base não soa onde a TAB diz: pôr o capo (a guitarra soa
     /// acima: as formas de um capo que o GP não traz) ou afinar a TAB abaixo (a gravação é mais grave), nas pistas com o
@@ -164,13 +168,18 @@ extension SongModel {
     /// As digitações de um acorde da barra: a que a TAB toca ali primeiro, e as do chords-db pela posição da mão.
     func chordShapes(for chord: ChordSpan) -> [ChordShape] {
         guard let name = shapeName(for: chord), let library = Self.chordLibrary else { return [] }
+        let key = "\(chord.from)|\(chord.to)|\(name)|\(notesVersion)|\(guitarTracks)"
+        if let cached = shapeCache[key] { return cached }
+        if shapeCache.count > 200 { shapeCache.removeAll() }
         var played: ChordShape?
         var hand: Double?
         for track in guitarTracks {
             if played == nil { played = ChordShape.played(scoreNotes[track], from: chord.from, to: chord.to) }
             if hand == nil { hand = ChordShape.hand(scoreNotes[track], from: chord.from, to: chord.to) }
         }
-        return library.shapes(for: name, played: played, hand: hand)
+        let shapes = library.shapes(for: name, played: played, hand: hand)
+        shapeCache[key] = shapes
+        return shapes
     }
 
     /// Toca a digitação (afinação padrão, como o diagrama), no tom do estudo.

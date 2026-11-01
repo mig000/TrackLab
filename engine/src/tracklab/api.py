@@ -112,6 +112,18 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
 
         return _job(jobs.submit("import", work))
 
+    @app.post("/api/songs/{song_id}/audio", status_code=202)
+    def song_audio(song_id: str) -> dict:
+        """O áudio e o mapa do Songsterr de novo, numa música que entrou só com a partitura, na fila."""
+        found = song(song_id)
+        if found.manifest.get("audio"):
+            raise HTTPException(409, "Esta música já tem áudio.")
+
+        def work(progress, cancel):
+            return {"song": songsterr.add_audio(found, source=source, progress=progress, cancel=cancel).summary()}
+
+        return _job(jobs.submit("audio", work, project=song_id))
+
     @app.get("/api/songs")
     def songs() -> dict:
         return {"songs": [item.summary() for item in package.packages()]}

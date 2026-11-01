@@ -349,6 +349,11 @@ final class Backend {
         try await send("POST", "songs/import", body: ImportBody(url: url, separate: separate))
     }
 
+    /// O áudio e o mapa do Songsterr de novo, numa música que entrou só com a partitura.
+    func fetchAudio(_ id: String) async throws -> JobTicket {
+        try await send("POST", "songs/\(id)/audio", body: Optional<String>.none)
+    }
+
     func separate(_ id: String) async throws -> JobTicket {
         try await send("POST", "songs/\(id)/separate", body: Optional<String>.none)
     }

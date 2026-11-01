@@ -84,6 +84,28 @@ def test_too_few_points_are_refused_for_audio():
     assert "insuficientes" in song.manifest["warnings"][0]
 
 
+def test_a_few_missing_points_at_the_end_follow_the_last_bar():
+    """O Songsterr sincroniza 11 de 12 compassos: o último segue o andamento do anterior, com aviso (até 10 %)."""
+    starts = [round(0.5 + 0.4 * i, 1) for i in range(11)]
+    song = songsterr.import_song("27", source=FakeSource([guitar_track(12)], points=starts))
+    assert song.manifest["audio"] and any("último compasso" in w for w in song.manifest["warnings"])
+    points = json.loads(song.file("score/tempo-map.json").read_text())["points"]
+    bars = [p["seconds"] for p in points if p["kind"] == "detected"]
+    assert bars[:11] == starts and abs(bars[11] - 4.9) < 1e-6
+
+
+def test_audio_can_be_fetched_again_for_a_song_without_it():
+    """Uma música que entrou sem áudio (poucos pontos) ganha o áudio e o mapa depois, sem mexer na partitura."""
+    without = songsterr.import_song("27", source=FakeSource([guitar_track(4)], points=[0.0, 1.0]))
+    assert not without.manifest["audio"] and "insuficientes" in without.manifest["warnings"][0]
+    score = without.file("score/original.gp").read_bytes()
+    songsterr.add_audio(without, source=FakeSource([guitar_track(4)], points=[0.5, 1.5, 2.5, 3.5, 4.5]))
+    manifest = package.find(without.manifest["id"]).manifest
+    assert manifest["audio"] and manifest["tempoMap"]["source"] == "songsterr"
+    assert not any(w.startswith("Áudio não incluído") for w in manifest["warnings"])
+    assert without.file("score/original.gp").read_bytes() == score
+
+
 def test_a_failure_in_the_score_leaves_no_package():
     class Broken(FakeSource):
         def generate(self, tracks, path, meta):

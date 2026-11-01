@@ -151,7 +151,12 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   `Content/score.gpif` e o XML lido em fluxo, com ao menos um `MasterBar`), e a contagem de compassos do manifesto vem
   dele (pôr ou apagar um compasso mudava a música e não a conta; o Para hoje compara os conferidos com ela). A
   gravação roda numa thread (o XML do Highway Star tem 8,7 MB: 0,2 s). Os 114 GP dos pacotes do Miguel passam (30/10).
-- `songsterr/`: busca e importação; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
+- `songsterr/`: busca e importação; o vídeo vinculado às vezes tem menos pontos de sincronia que compassos (o Songsterr
+  para antes do fim: Something 50 de 51, Norwegian Wood 60 de 62, Penny Lane 85 de 86, A Hard Day's Night 85 de 89):
+  até 4 e até 10 % dos compassos, os que faltam no fim seguem o andamento do último com ponto (`MISSING_MAX`, `_extend`,
+  com aviso para conferir no Ajuste); antes o áudio ficava de fora. Uma música que entrou só com a partitura busca o áudio
+  de novo (`add_audio`, `POST songs/{id}/audio`, na fila; no app, Faixas › "Buscar o áudio de novo"): a partitura fica,
+  o áudio e o mapa entram. Nos quatro Beatles (1/11), contra a Isophonics, TAB e som juntos: 84, 91, 95 e 83 %; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
 - `media/`: probe / convert / peaks / separate copiados do TabLab. `separate` (Demucs 6s) cai para a CPU se o MPS
@@ -801,7 +806,10 @@ ficam), num passo do Desfazer da TAB, grava o Guitar Pro e a TAB sintetizada é 
 TAB sintetizada e a leitura dos acordes passam a soar como o disco. Numa música com capo, os nomes da barra, dos cartões e
 do menu podem ser como soam ou pela forma do capo (`chordsByShape`, guardado, no grupo Acordes "Como soam | Pela forma" e
 no menu do acorde; `shown` e `sounding(fromShown:)`: o que se escreve ao renomear pela forma é guardado como soa); o
-cartão diz o outro ("soa A · capo 7ª" ou "forma de D · capo 7ª").
+cartão diz o outro ("soa A · capo 7ª" ou "forma de D · capo 7ª"). O capo e as pistas de guitarra ficam guardados
+(`chordCapo`, `chordGuitarTracks`, refeitos por `updateCapo` quando as notas, o capo do GP ou o deslocamento mudam) e as
+digitações dos cartões também (`shapeCache`): a barra perguntava o capo a cada nome de cada quadro, e calculá-lo percorria
+todas as notas (no Something tocando, a barra tomava 35 % da linha principal e a rolagem engasgava; agora 1,5 %).
 
 Repertório (Fase 3): o app abre no Para hoje (`TodayView`: trechos perto da meta, esquecidos há 3 dias, sem recorde;
 revisão do repertório a cada 7; músicas novas já conferidas). A barra lateral agrupa por estado, com busca e coleções
