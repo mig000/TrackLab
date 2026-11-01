@@ -55802,6 +55802,17 @@
 	* @internal
 	*/
 	var TextEffectInfo = class extends EffectInfo {
+		// TrackLab: os textos ficam em até três linhas; a página escolhe a de cada um (`beat.tracklabTextLine`) para um
+		// texto longo num compasso curto não passar por cima do seguinte (no começo do Sultans, "Mark plays
+		// exclusively…" cobria o "w/ Slight reverb" do compasso 2).
+		_tracklabLine;
+		constructor(line = 0) {
+			super();
+			this._tracklabLine = line;
+		}
+		get effectId() {
+			return this._tracklabLine ? `${super.effectId}-${this._tracklabLine}` : super.effectId;
+		}
 		get notationElement() {
 			return NotationElement.EffectText;
 		}
@@ -55815,7 +55826,7 @@
 			return EffectBarGlyphSizing.SingleOnBeat;
 		}
 		shouldCreateGlyph(_settings, beat) {
-			return !!beat.text;
+			return !!beat.text && (beat.tracklabTextLine ?? 0) === this._tracklabLine;
 		}
 		createNewGlyph(renderer, beat) {
 			return new TextGlyph(0, 0, beat.text, renderer.resources.elementFonts.get(NotationElement.EffectText), TextAlign.Left);
@@ -65062,6 +65073,14 @@
 				},
 				{
 					effect: new TextEffectInfo(),
+					mode: EffectBandMode.SharedTop
+				},
+				{
+					effect: new TextEffectInfo(1),
+					mode: EffectBandMode.SharedTop
+				},
+				{
+					effect: new TextEffectInfo(2),
 					mode: EffectBandMode.SharedTop
 				},
 				{

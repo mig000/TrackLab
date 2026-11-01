@@ -155,7 +155,17 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
 segunda embaixo nos mesmos compassos; perfil Default com TAB nas pistas de cordas e partitura na bateria, porque o
 perfil "só TAB" quebrava na bateria, que não tem TAB) e não têm áudio: o app empurra o relógio e o mapa de tempo. A TAB tem a escala da Fita (`span` segundos na largura): cada
 compasso ganha `displayWidth` = duração × px/s (descontada a clave e a fórmula, medidas num primeiro desenho de cada
-pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. O
+pista), as barras caem sobre as da Fita e a pauta corre sob o cursor parado a 40 %, na velocidade da Fita. Tocando,
+quem anda (a pauta, ou o cursor sobre a pauta parada no pino do loop) desliza numa animação do WebKit com os próximos
+30 s calculados a cada 50 ms da música (`glide`), refeita quando o relógio, a escala, a janela ou o loop mudam e meio
+segundo antes de acabar (a anterior sai 300 ms depois de a nova entrar por cima, `retire`: cancelada na hora, a pauta
+tremia um ou dois pixels a cada troca, 1/11): a animação de transform corre no Core Animation, e o transform escrito a cada quadro passava
+pela linha principal do app, ocupada com a Fita e a Lente, e a TAB perdia quadros (1/11). Mesmo assim a página
+ainda engasgava quando a linha principal do app demorava (a página só desenha depois de o app aceitar o quadro
+anterior): ver os rótulos e a agulha do mapa abaixo (`CanvasLabel`). Os textos das batidas ficam
+em até três linhas, cada um na primeira em que cabe sem tocar o anterior na escala da Fita (`placeTexts`, a linha em
+`beat.tracklabTextLine`, `TextEffectInfo(line)` no alphaTab): no começo do Sultans, "Mark plays exclusively…", no
+compasso 1, que é curto, cobria o "w/ Slight reverb" do 2. O
 alphaTab de `vendor/` tem ajustes marcados `TrackLab:` (notas espaçadas pela duração; o número do compasso não
 ocupa largura; sem a linha "rendered by alphaTab"; a velocidade do trinado no Guitar Pro 7; e três para desenhar como o
 Guitar Pro 8 a ligada depois de um bend: a seta para na ligada que tem vibrato também na última batida do compasso, o
@@ -314,8 +324,10 @@ tela e pausam (`ScrollCatcher`: um monitor local de rolagem, sem pegar cliques).
 `TodayPlan`, `LoopView`) tem os testes. O zoom (o controle deslizante do transporte, em escala logarítmica, e a pinça no
 trackpad sobre a TAB ou a Fita, pelo `ScrollCatcher`) muda a Fita e a TAB juntas; os avisos de escala para a página
 são um por vez, como os do relógio. A Fita mostra a onda ou o espectro da guitarra separada, como a Lente do TabLab
-(`SpectrumPalette`: as cores dela, gama 1,35, o topo da escala pelo trecho, ±2 s, e a base 150 passos abaixo; 2 pixels
-por linha, interpolados), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
+(`SpectrumPalette`: gama 1,35, o topo da escala pelo trecho, ±2 s, e a base 150 passos abaixo; 2 pixels por linha,
+interpolados; desde 1/11 a Lente é sempre escura, também na aparência clara, e a paleta tem um piso: o terço de baixo
+é o fundo, sem a névoa do ruído e do vazamento, e daí um azul frio que para num azul claro, sem branco, para as faixas
+âmbar e os pontos da altura ficarem sempre mais vivos; as faixas cheias com um contorno fino), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
 18 semitons, deslizando tocando: `PitchWindow`), as linhas de compasso e batida por cima e as notas da pista em âmbar e
 da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o vibrato ondula; `ScoreNote.shape`; o
 slide desliza no fim da nota até a altura da seguinte da corda, ou 3 semitons para fora, e o de fora entra 3 semitons
@@ -323,7 +335,7 @@ abaixo ou acima, em até 0,15 s, `ScoreNote.slideOffset`: antes a faixa ficava r
 12–14 do c. 105 do Sultans),
 como na Lente (`SoundNote`, em TrackLabCore/SoundCurve.swift, porta o `fitCurve` e o `shapeAt` do `lens-core.js`): a
 faixa segue o som (o vibrato e o bend copiados da curva quando ela os tem; senão, a escrita), com o traço do ataque e os
-pontos laranja da altura que soa (as curvas chegam do motor aos poucos, pelas notas que aparecem; a chave leva a altura,
+pontos claros da altura que soa (laranja até 1/11, quando sumiam dentro da faixa âmbar; as curvas chegam do motor aos poucos, pelas notas que aparecem; a chave leva a altura,
 então uma nota editada é medida de novo). Nota de acorde (outra nota da pista na mesma batida): o app manda as outras (`others`) e o
 motor mede só pelos harmônicos, entre as vizinhas (até meio semitom delas), sem os harmônicos que caem perto dos delas
 (a correlação acha o período comum das cordas, uma altura entre elas). No Sunshine, a de cima e a de baixo passam a ter
@@ -512,7 +524,11 @@ transformação, com o y para cima como o AppKit desenha: um `isGeometryFlipped`
 ou subia vários semitons conforme a janela de alturas) e o Canvas por cima, transparente e com `drawingGroup`, junta faixas, pontos, grade e teclado em poucos
 caminhos. `TempoGrid` guarda tiques, batidas e compassos (o `seconds(at:)` por nota montava a lista do mapa a cada
 pergunta). O relógio do transporte é uma NSView (`ClockLabel`): um Text que muda a cada segundo fazia a janela refazer as
-restrições (~40 ms, dois quadros perdidos por segundo). Z amplia a altura em volta da nota que toca (8 semitons); o botão
+restrições (~40 ms, dois quadros perdidos por segundo). Os textos que os Canvas desenham a cada quadro (os números dos
+compassos, as teclas da Lente, os nomes das partes, os ms do Ajuste) são imagens feitas uma vez (`CanvasLabel`), e o
+mapa da música só se redesenha quando muda, com a agulha numa camada própria a 10 quadros por segundo: medido no iMac
+tocando o Sultans (1/11), a linha principal do app ocupada caiu de 75 % para 40 % do tempo (o `Text` no Canvas era
+quase metade) e a página da TAB, de uns 15 quadros atrasados e paradas de até 170 ms a cada 5 s, para 0 ou 1. Z amplia a altura em volta da nota que toca (8 semitons); o botão
 Inspetor (⌥⌘I, Visualizar) esconde o inspetor e as camadas ganham a largura. O transporte mostra o que ouvir (Original
 ou um atalho de mixagem, `CompactMix`). Editar TAB (⌘E, `TabEditPanel`, o inspetor no modo Editar; antes de 31/10 era
 uma coluna com tudo à vista e a tecla de cada comando): a nota (onde está e a figura, pelo `describe`
@@ -674,8 +690,7 @@ Fita, um cursor próprio que anda contínuo de nota a nota no tempo, como o da f
 atrasado), a página rola até o sistema novo assim que o cursor entra nele e o clique leva a música até a batida; o ⇧-arrasto fica na faixa. O loop aparece sombreado em
 cada sistema por onde passa (as batidas da pista principal dentro dele, `drawPageLoop`), e arrastar de uma batida a
 outra na página marca o loop (`loop` para o app, que prende nas batidas como na Fita). Visualizar ›
-Aparência: do sistema, clara (papel: a Lente com a paleta de tinta `paperStops`, as marcas escuras, o âmbar mais
-escuro e o fundo da Fita creme) ou escura. Fontes › Multitracks › "Procurar a TAB" abre a busca do Songsterr com o
+Aparência: do sistema, clara (papel: a Onda com o fundo creme e as marcas escuras; a Lente fica escura) ou escura. Fontes › Multitracks › "Procurar a TAB" abre a busca do Songsterr com o
 nome da multitrack; a música importada vem sem o Demucs e com as faixas dela (`importMultitrack(path:)`), a não ser
 num .mogg. No mixer, a linha
 TAB tem uma faixa por pista sintetizada (ids `tab:<pista>`, a 80 % ao chegar, com o grupo TAB desligado), que soa por cima do original ou das

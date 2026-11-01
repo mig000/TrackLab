@@ -19,10 +19,20 @@ struct SongMapView: View {
     var body: some View {
         HStack(spacing: 8) {
             GeometryReader { geometry in
-                TimelineView(.animation(paused: !model.engine.isPlaying)) { context in
-                    let host = CACurrentMediaTime() + context.date.timeIntervalSinceNow
-                    Canvas { canvas, size in draw(&canvas, size: size, now: model.engine.songTime(atHost: host)) }
-                }
+                // O mapa só se redesenha quando muda; a agulha, que anda um pixel a cada segundo ou dois, fica numa camada
+                // própria e a 10 quadros por segundo (o mapa inteiro a cada quadro tirava tempo da Fita e da TAB).
+                let _ = (model.activeSectionID, model.checkedBars, model.engine.loop, model.grid, model.scoreTrack,
+                         model.sections, model.suspects, model.markers, drag.map { [$0.from, $0.to] })
+                Canvas { canvas, size in draw(&canvas, size: size) }
+                    .overlay {
+                        TimelineView(.animation(minimumInterval: 0.1, paused: !model.engine.isPlaying)) { context in
+                            let host = CACurrentMediaTime() + context.date.timeIntervalSinceNow
+                            Canvas { canvas, size in
+                                let x = model.engine.songTime(atHost: host) / duration * size.width
+                                canvas.fill(Path(CGRect(x: x - 1, y: 0, width: 2, height: size.height)), with: .color(.orange))
+                            }
+                        }
+                    }
                 .contentShape(Rectangle())
                 .gesture(gesture(width: geometry.size.width))
                 .background(RightClickCatcher { point, view in
@@ -106,7 +116,7 @@ struct SongMapView: View {
             }
     }
 
-    private func draw(_ context: inout GraphicsContext, size: CGSize, now: Double) {
+    private func draw(_ context: inout GraphicsContext, size: CGSize) {
         let width = size.width
         func x(_ t: Double) -> Double { t / duration * width }
         // As partes, nas cores delas; o nome quando cabe.
@@ -119,7 +129,7 @@ struct SongMapView: View {
             if rect.width > 34 {
                 var clipped = context
                 clipped.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))
-                clipped.draw(Text(part.name).font(.system(size: 9, weight: .semibold)).foregroundStyle(.white),
+                clipped.draw(CanvasLabel.image(part.name, size: 9, weight: .semibold, color: .white, dark: true),
                              at: CGPoint(x: rect.minX + 5, y: rect.midY), anchor: .leading)
             }
         }
@@ -158,14 +168,13 @@ struct SongMapView: View {
                              at: CGPoint(x: x0 + 4, y: 5), anchor: .leading)
             }
         }
-        // O loop (e o que está sendo arrastado) e a agulha.
+        // O loop (e o que está sendo arrastado).
         let loops = [model.engine.loop, drag.map { min($0.from, $0.to)...max($0.from, $0.to) }].compactMap { $0 }
         for range in loops {
             let rect = CGRect(x: x(range.lowerBound), y: 2, width: max(2, x(range.upperBound) - x(range.lowerBound)), height: size.height - 4)
             context.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(.orange.opacity(0.18)))
             context.stroke(Path(roundedRect: rect, cornerRadius: 3), with: .color(.orange.opacity(0.9)), lineWidth: 1.2)
         }
-        context.fill(Path(CGRect(x: x(now) - 1, y: 0, width: 2, height: size.height)), with: .color(.orange))
     }
 
     /// O menu do trecho (o botão direito na chave): renomear, meta, tipo, etiquetas, favorito, apagar.

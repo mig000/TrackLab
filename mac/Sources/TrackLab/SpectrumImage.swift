@@ -8,9 +8,12 @@ import TrackLabCore
 /// alto dos arredores (±2 s), não o da música inteira, que deixava os trechos baixos apagados; a base fica 150 passos
 /// (~53 dB) abaixo dele.
 enum SpectrumPalette {
+    /// Com um piso: o terço de baixo da escala é o fundo (o ruído e o vazamento dos outros instrumentos, que antes
+    /// enevoavam a Lente inteira), e daí um azul frio até um azul claro, sem chegar ao branco: as faixas âmbar das notas
+    /// e os pontos claros da altura que soa ficam sempre mais vivos que o espectro.
     static let stops: [(at: Double, rgb: (Double, Double, Double))] = [
-        (0.0, (11, 13, 18)), (0.3, (26, 30, 42)), (0.55, (56, 61, 84)), (0.75, (118, 124, 150)),
-        (0.9, (192, 196, 210)), (1.0, (246, 247, 250)),
+        (0.0, (11, 13, 18)), (0.28, (11, 13, 18)), (0.5, (24, 32, 56)), (0.7, (54, 76, 118)),
+        (0.85, (118, 142, 186)), (0.95, (176, 196, 228)), (1.0, (214, 226, 246)),
     ]
     /// No papel (a aparência clara): do quase branco ao quase preto, a mesma escala de tinta.
     static let paperStops: [(at: Double, rgb: (Double, Double, Double))] = [

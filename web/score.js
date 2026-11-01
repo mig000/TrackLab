@@ -58,6 +58,15 @@
   const RELAYOUT_MS = 200;
   // Um compasso nunca fica mais estreito que isto (px), por mais curto que seja.
   const MIN_BAR_WIDTH = 24;
+  // O espaço mínimo entre dois textos na mesma linha (px).
+  const TEXT_GAP = 12;
+  // A animação da pauta tocando: quantos segundos de relógio já calculados, de quanto em quanto e quanto antes do fim
+  // ela é refeita.
+  const GLIDE_SECONDS = 30;
+  // A animação de antes fica por baixo da nova esse tempo, até a nova estar na tela.
+  const GLIDE_OVERLAP_MS = 300;
+  const GLIDE_STEP = 0.05;
+  const GLIDE_REFILL_MS = 500;
   // Por que uma nota não mudou de tempo (edit.retime).
   const RETIME_REASONS = {
     overlap: "Passaria por cima da nota anterior.",
@@ -137,6 +146,9 @@
     renderStarted: 0,
     scroll: 0,
     cursorLeft: 0,
+    // O deslize tocando (`glide`) e as animações que estão saindo por baixo da nova (`retire`).
+    glide: null,
+    retiring: [],
     adjusting: false,
     // O arrasto com ⇧ em curso: de onde saiu e quanto o mouse andou (px).
     shiftDrag: null,
@@ -261,6 +273,7 @@
       // Em páginas o alphaTab quebra os sistemas na largura da janela: sem as larguras da escala da Fita.
       state.measuring = false;
       next.element.style.marginLeft = "0px";
+      placeTexts(tracks, null);
       if (!again) {
         state.renderStarted = performance.now();
       }
@@ -269,6 +282,7 @@
     }
     state.measuring = !state.before;
     tracks.forEach(sizeBars);
+    placeTexts(tracks, state.barWidths);
     next.element.style.marginLeft = lead() + "px";
     if (!again) {
       state.renderStarted = performance.now();
@@ -322,6 +336,53 @@
       master.displayWidth = widths[i] / state.scale;
     });
     state.layoutWidth = width;
+    state.barWidths = widths;
+  }
+
+  // Os textos das batidas (as instruções do Songsterr) ficam em até três linhas: cada um na primeira em que cabe sem
+  // tocar o texto anterior, pela posição dele na escala da Fita e pela largura escrita. Um texto longo num compasso
+  // curto passava por cima do seguinte (no começo do Sultans, "Mark plays exclusively…" e "w/ Slight reverb"). Em
+  // páginas, numa linha só, como o alphaTab desenha.
+  function placeTexts(tracks, widths) {
+    const masters = state.score.masterBars;
+    const before = state.before && state.before.length === masters.length ? state.before : null;
+    const starts = [];
+    let x = 0;
+    for (let i = 0; i < masters.length; i++) {
+      starts.push(x);
+      x += widths ? widths[i] : 0;
+    }
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext ? canvas.getContext("2d") : null;
+    if (context) context.font = "italic 12px Georgia, serif";
+    for (const track of tracks) {
+      for (const staff of state.score.tracks[track].staves) {
+        const texts = [];
+        staff.bars.forEach((bar, i) => {
+          const master = masters[i];
+          const pre = before ? before[i] : 0;
+          for (const voice of bar.voices) {
+            for (const beat of voice.beats) {
+              if (!beat.text) continue;
+              beat.tracklabTextLine = 0;
+              if (!widths) continue;
+              const fraction = beat.playbackStart / Math.max(1, master.calculateDuration());
+              const at = starts[i] + pre + fraction * Math.max(0, widths[i] - pre);
+              const measured = context ? context.measureText(beat.text).width : beat.text.length * 6;
+              texts.push({ beat, at, width: measured * state.scale });
+            }
+          }
+        });
+        texts.sort((a, b) => a.at - b.at);
+        const ends = [-Infinity, -Infinity, -Infinity];
+        for (const text of texts) {
+          let line = ends.findIndex((end) => end + TEXT_GAP <= text.at);
+          if (line < 0) line = ends.indexOf(Math.min(...ends));
+          text.beat.tracklabTextLine = line;
+          ends[line] = text.at + text.width;
+        }
+      }
+    }
   }
 
   // Quanto cada compasso tem antes das batidas: a clave e a fórmula; zero nos outros (a barra não ocupa largura).
@@ -622,6 +683,11 @@
     const width = viewport.clientWidth;
     const outside = x < state.scroll || x > state.scroll + width;
     const fixed = state.hold !== null ? state.hold : core.windowStart(seconds, state.loop, state.pin);
+    if (playing && state.hold === null && typeof sheet.animate === "function") {
+      glide(now, force, fixed, x, width);
+      return;
+    }
+    stopGlide();
     if (playing || force || outside || fixed !== null) {
       const target = fixed === null ? core.scrollFor(x, width, state.cursorAt) : xAtSeconds(fixed);
       if (force || Math.abs(target - state.scroll) >= 0.01) {
@@ -636,6 +702,91 @@
       state.cursorLeft = left;
     }
     cursor.hidden = false;
+  }
+
+  // Tocando, quem anda (a pauta sob o cursor parado, ou o cursor sobre a pauta parada no pino do loop) desliza numa
+  // animação do WebKit com os próximos segundos já calculados, a cada 50 ms da música pelo mapa (`GLIDE_SECONDS`), e
+  // não por um transform escrito a cada quadro: a animação de transform corre no Core Animation, fora da linha
+  // principal da página e da do app, que desenha a Fita e a Lente no mesmo ritmo (a pauta perdia quadros quando o app se
+  // ocupava). Refeita quando o relógio, a escala, a janela ou o loop mudam e meio segundo antes de acabar; na volta do
+  // loop, acaba no fim dele e a seguinte começa do começo.
+  function glide(now, force, fixed, x, width) {
+    const stretch = zoomStretch();
+    const pinned = fixed !== null;
+    const scroll = pinned ? xAtSeconds(fixed) : core.scrollFor(x, width, state.cursorAt);
+    const key = [state.clock, stretch, pinned ? fixed : null, width, state.cursorAt, state.anchors, state.points,
+      state.loop && state.loop.join()];
+    const current = state.glide;
+    const same = current && current.key.every((value, i) => value === key[i]);
+    const due = current && (current.wraps ? now >= current.end : now > current.end - GLIDE_REFILL_MS);
+    if (force || !same || due) {
+      const moving = pinned ? cursor : sheet;
+      const still = pinned ? sheet : cursor;
+      const place = pinned
+        ? (at) => `translate3d(${at - scroll}px, 0, 0)`
+        : (at) => `translate3d(${-core.scrollFor(at, width, state.cursorAt)}px, 0, 0)` +
+          (stretch !== 1 ? ` scaleX(${stretch})` : "");
+      const frames = [];
+      let last = null;
+      let wraps = false;
+      for (let i = 0; i <= GLIDE_SECONDS / GLIDE_STEP; i++) {
+        const time = now + i * GLIDE_STEP * 1000;
+        let seconds = core.estimate(state.clock, time, state.loop);
+        let wall = i * GLIDE_STEP * 1000;
+        // A volta do loop: o último quadro é o fim dele, no instante em que a música chega lá.
+        if (last && seconds < last.seconds) {
+          wraps = true;
+          seconds = state.loop ? state.loop[1] : last.seconds;
+          wall = last.wall + Math.max(0, (seconds - last.seconds) / Math.max(0.01, state.clock.rate)) * 1000;
+        }
+        const at = xAtSeconds(seconds);
+        if (at === null) break;
+        frames.push({ wall, transform: place(at) });
+        if (wraps) break;
+        last = { seconds, wall };
+      }
+      // A anterior só sai depois de a nova entrar: cancelada na hora, o Core Animation podia mostrar um quadro no estilo
+      // parado (no começo da nova, um quadro atrás) e a pauta tremia um ou dois pixels a cada troca.
+      if (current) retire(current.animation);
+      state.glide = null;
+      if (frames.length < 2 || frames[frames.length - 1].wall <= 0) {
+        moving.style.transform = frames.length ? frames[0].transform : moving.style.transform;
+      } else {
+        const duration = frames[frames.length - 1].wall;
+        const keyframes = frames.map((frame) => ({ transform: frame.transform, offset: frame.wall / duration }));
+        // O quadro de agora fica escrito também no estilo: se a animação acabar antes da seguinte, nada salta.
+        moving.style.transform = keyframes[0].transform;
+        // A nova vem depois na ordem das animações, então fica por cima da que sai.
+        const animation = moving.animate(keyframes, { duration, easing: "linear", fill: "both" });
+        animation.startTime = now;
+        state.glide = { key, animation, end: now + duration, wraps };
+      }
+      still.style.transform = pinned
+        ? `translate3d(${-scroll}px, 0, 0)` + (stretch !== 1 ? ` scaleX(${stretch})` : "")
+        : `translate3d(${x - scroll}px, 0, 0)`;
+    }
+    state.scroll = scroll;
+    state.cursorLeft = x - scroll;
+    cursor.hidden = false;
+  }
+
+  function retire(animation) {
+    state.retiring.push(animation);
+    setTimeout(() => {
+      animation.cancel();
+      state.retiring = state.retiring.filter((other) => other !== animation);
+    }, GLIDE_OVERLAP_MS);
+  }
+
+  function stopGlide() {
+    for (const animation of state.retiring) animation.cancel();
+    state.retiring = [];
+    if (!state.glide) return;
+    state.glide.animation.cancel();
+    state.glide = null;
+    // O estilo guarda o começo da última animação: o próximo desenho escreve tudo de novo.
+    state.scroll = Infinity;
+    state.cursorLeft = Infinity;
   }
 
   function drawLoop() {

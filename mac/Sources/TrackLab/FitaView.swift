@@ -25,8 +25,11 @@ struct FitaView: View {
     @Local private var marquee: (from: (seconds: Double, pitch: Double), to: (seconds: Double, pitch: Double))?
     @Environment(\.colorScheme) private var scheme
 
-    /// A aparência clara (papel): a Lente em tinta, as marcas por cima escuras.
-    private var paper: Bool { scheme == .light }
+    /// A aparência clara (papel) vale para a Onda; a Lente é sempre escura (1/11: o espectro em tinta sobre o claro
+    /// tinha pouco contraste com as faixas âmbar).
+    private var paper: Bool { scheme == .light && !lens }
+    /// O fundo da Lente: o mesmo da base da paleta do espectro, para a imagem e a borda se emendarem.
+    static let lensBackground = Color(red: 11 / 255, green: 13 / 255, blue: 18 / 255)
     /// A cor das linhas e marcas por cima do espectro: branca no escuro, preta no papel.
     private var ink: Color { paper ? .black : .white }
 
@@ -48,12 +51,13 @@ struct FitaView: View {
                 tape(size: geometry.size, now: model.engine.songTime(atHost: host))
             }
         }
-        // No papel, o fundo é o da página (branco); no escuro, o de baixo da página, como antes.
-        .background(paper ? Color(red: 0.98, green: 0.973, blue: 0.953) : Color(nsColor: .underPageBackgroundColor))
+        // A Onda no papel tem o fundo da página (branco), no escuro o de baixo da página; a Lente, o dela.
+        .background(lens ? Self.lensBackground
+                    : paper ? Color(red: 0.98, green: 0.973, blue: 0.953) : Color(nsColor: .underPageBackgroundColor))
         .onChange(of: scheme, initial: true) { if lens { model.paper = paper } }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         // O canto da Lente: a afinação da gravação, as corrigidas, as suspeitas (o selo abre o filtro) e o Z.
-        .overlay(alignment: .topTrailing) { if lens { LensBadges(model: model) } }
+        .overlay(alignment: .topTrailing) { if lens { LensBadges(model: model).environment(\.colorScheme, .dark) } }
     }
 
     private func tape(size: CGSize, now: Double) -> some View {
@@ -254,7 +258,8 @@ struct FitaView: View {
         for (index, bar) in bars.enumerated() where bar >= start && bar <= end {
             barLines.addRect(CGRect(x: x(bar), y: 0, width: 1, height: gridBottom))
             if index < bars.count - 1 {
-                context.draw(Text("\(index + 1)").font(.caption2.monospacedDigit()).foregroundStyle(.secondary),
+                context.draw(CanvasLabel.image("\(index + 1)", size: 10, monospaced: true, color: .secondaryLabelColor,
+                                               dark: !paper),
                              at: CGPoint(x: x(bar) + 4, y: 2), anchor: .topLeading)
             }
         }
@@ -265,8 +270,9 @@ struct FitaView: View {
             for part in model.songParts() where part.to > start && part.from < end {
                 let x0 = max(x(part.from), 0) + 4
                 guard x(part.to) - x0 > 44 else { continue }
-                context.draw(Text(part.name).font(.caption2.weight(.semibold))
-                                .foregroundStyle(Color(red: part.color.0, green: part.color.1, blue: part.color.2)),
+                context.draw(CanvasLabel.image(part.name, size: 10, weight: .semibold,
+                                               color: NSColor(srgbRed: part.color.0, green: part.color.1,
+                                                              blue: part.color.2, alpha: 1), dark: !paper),
                              at: CGPoint(x: x0, y: height - 3), anchor: .bottomLeading)
             }
         }
@@ -314,7 +320,8 @@ struct FitaView: View {
             context.stroke(from, with: .color(.orange.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             anchorMark(in: &context, x: x(held.to), height: height, color: .orange)
             let delta = Int(((held.to - held.point.seconds) * 1000).rounded())
-            context.draw(Text("\(delta > 0 ? "+" : "")\(delta) ms").font(.caption.monospacedDigit()).foregroundStyle(.orange),
+            context.draw(CanvasLabel.image("\(delta > 0 ? "+" : "")\(delta) ms", size: 10, monospaced: true,
+                                           color: .systemOrange, dark: !paper),
                          at: CGPoint(x: x(held.to) + 6, y: 12), anchor: .leading)
         }
 
@@ -371,12 +378,12 @@ struct FitaView: View {
         for beat in model.grid.beats where beat >= gridStart && beat <= gridStart + span {
             beatLines.addRect(CGRect(x: gx(beat), y: 0, width: 1, height: height))
         }
-        context.fill(beatLines, with: .color(ink.opacity(paper ? 0.1 : 0.07)))
+        context.fill(beatLines, with: .color(ink.opacity(paper ? 0.1 : 0.06)))
         var barLines = Path()
         for bar in model.grid.bars where bar >= gridStart && bar <= gridStart + span {
             barLines.addRect(CGRect(x: gx(bar), y: 0, width: 1, height: height))
         }
-        context.fill(barLines, with: .color(ink.opacity(paper ? 0.35 : 0.3)))
+        context.fill(barLines, with: .color(ink.opacity(paper ? 0.35 : 0.22)))
 
         // As notas como na Lente: faixas que seguem o som (o vibrato e o bend copiados da curva quando ela os tem; senão
         // a escrita), com o traço do ataque na ponta e, por cima, os pontos laranja da altura que soa. Cada pista num
@@ -475,7 +482,7 @@ struct FitaView: View {
                         }
                         line = path
                     } else {
-                        let r = isChosen ? 1.6 : 1.3
+                        let r = isChosen ? 1.6 : 1.1
                         var lastX = -Double.infinity
                         for (k, value) in curve.values.enumerated() {
                             guard let value else { continue }
@@ -489,8 +496,9 @@ struct FitaView: View {
                 }
                 if isChosen || lift != 0 { chosen = (band, line) } else { shapes.addPath(band) }
             }
-            context.fill(shapes, with: .color(color.opacity(0.14)))
-            context.stroke(shapes, with: .color(color.opacity(0.85)), style: StrokeStyle(lineWidth: 1.3, lineJoin: .round))
+            // Faixas cheias e um contorno fino: sobre o espectro escuro a nota se lê pela cor, sem a moldura grossa.
+            context.fill(shapes, with: .color(color.opacity(paper ? 0.2 : 0.3)))
+            context.stroke(shapes, with: .color(color.opacity(paper ? 0.85 : 0.7)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
             if let chosen {
                 var glow = context
                 glow.addFilter(.shadow(color: color.opacity(0.55), radius: 5))
@@ -503,8 +511,10 @@ struct FitaView: View {
                            style: StrokeStyle(lineWidth: 1.6, lineJoin: .round, dash: [4, 2]))
             let red = Color(red: 1, green: 0.36, blue: 0.36)
             context.stroke(suspect, with: .color(red), style: StrokeStyle(lineWidth: 1.6, lineJoin: .round))
-            let orange = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 138 / 255, blue: 61 / 255)
-            context.fill(dots, with: .color(orange.opacity(0.55)))
+            // A altura que soa: no escuro, um branco quente, que se lê sobre o âmbar da faixa e sobre o espectro (o
+            // laranja de antes sumia dentro da faixa).
+            let orange = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 0.95, blue: 0.86)
+            context.fill(dots, with: .color(orange.opacity(paper ? 0.55 : 0.8)))
             if let line = chosen?.line {
                 if semitone >= 20 {
                     context.stroke(line, with: .color(orange.opacity(0.95)), lineWidth: 1.8)
@@ -577,8 +587,9 @@ struct FitaView: View {
                 let x = gx(model.grid.bars[index])
                 guard x > -40, x < width else { continue }
                 let ms = Int((offset * 1000).rounded())
-                context.draw(Text("\(ms > 0 ? "+" : "−")\(abs(ms)) ms").font(.caption2.weight(.semibold).monospacedDigit())
-                                .foregroundStyle(Color(red: 0.45, green: 0.85, blue: 1)),
+                context.draw(CanvasLabel.image("\(ms > 0 ? "+" : "−")\(abs(ms)) ms", size: 10, weight: .semibold,
+                                               monospaced: true, color: NSColor(srgbRed: 0.45, green: 0.85, blue: 1, alpha: 1),
+                                               dark: !paper),
                              at: CGPoint(x: x + 4, y: 4), anchor: .topLeading)
             }
         }
@@ -630,8 +641,9 @@ struct FitaView: View {
         context.fill(blackKeys, with: .color(paper ? Color(white: 0.25) : Color(red: 0.04, green: 0.05, blue: 0.07)))
         context.fill(rules, with: .color(ink.opacity(0.04)))
         for (name, isC, at) in keyNames {
-            context.draw(Text(name).font(.system(size: 9).monospacedDigit())
-                .foregroundStyle(paper ? Color(white: isC ? 0.25 : 0.45) : Color(white: isC ? 0.65 : 0.45)), at: at, anchor: .leading)
+            context.draw(CanvasLabel.image(name, size: 9, monospaced: true,
+                                           color: NSColor(white: paper ? (isC ? 0.25 : 0.45) : (isC ? 0.65 : 0.45), alpha: 1),
+                                           dark: !paper), at: at, anchor: .leading)
         }
     }
 
