@@ -52,6 +52,8 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     var onChords: (([(tick: Double, track: Int, name: String)]) -> Void)?
     /// O capo de cada pista, com as notas.
     var onCapos: (([Int]) -> Void)?
+    /// A afinação de cada pista (da corda mais aguda à mais grave), com as notas.
+    var onTunings: (([[Int]]) -> Void)?
     /// O corretor aplicou um lote (`fitMany`): quantas notas mudaram de quantas pedidas.
     var onFitted: ((_ count: Int, _ asked: Int) -> Void)?
     /// ⇧ + arrastar, no Ajuste: quanto a onda anda (segundos na escala da Fita), durante e ao soltar.
@@ -324,6 +326,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
                 }
                 onChords?(Self.chords(body))
                 onCapos?((body["capos"] as? [NSNumber] ?? []).map(\.intValue))
+                onTunings?((body["tunings"] as? [[NSNumber]] ?? []).map { $0.map(\.intValue) })
                 onLoaded?(list, ticks, markers, notes)
             case "rendered":
                 onRendered?((body["ms"] as? NSNumber)?.intValue ?? 0, (body["height"] as? NSNumber)?.doubleValue)
@@ -357,6 +360,7 @@ final class ScoreBridge: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
             case "notes":
                 onChords?(Self.chords(body))
                 onCapos?((body["capos"] as? [NSNumber] ?? []).map(\.intValue))
+                onTunings?((body["tunings"] as? [[NSNumber]] ?? []).map { $0.map(\.intValue) })
                 onNotes?((body["notes"] as? [[[NSNumber]]] ?? []).map { ScoreNote.list($0.map { $0.map(\.doubleValue) }) })
             case "shift":
                 onShift?((body["seconds"] as? NSNumber)?.doubleValue ?? 0)

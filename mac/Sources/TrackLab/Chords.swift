@@ -103,37 +103,52 @@ extension SongModel {
             .filter { scoreNotes.indices.contains($0) && (scoreNotes[$0].map(\.string).max() ?? 0) == 6 }
         let main = chordGuitarTracks.first
         let written = main.flatMap { scoreCapos.indices.contains($0) ? scoreCapos[$0] : nil } ?? 0
-        let missing = (1...9).contains(chordTabShift) ? chordTabShift : 0
-        if chordCapo != written + missing { chordCapo = written + missing }
+        // A afinação do GP contra a padrão, pelas cinco cordas de cima (o drop D só baixa a de baixo).
+        var tune = 0
+        if let main, scoreTunings.indices.contains(main), scoreTunings[main].count == 6 {
+            let standard = [64, 59, 55, 50, 45]
+            tune = zip(scoreTunings[main].prefix(5), standard).map { $0 - $1 }.sorted()[2]
+        }
+        let missing = chordTabShift == 0 ? 0 : chordTabShift <= 9 ? chordTabShift : chordTabShift - 12
+        let offset = written + tune + missing
+        if shapeOffset != offset { shapeOffset = offset }
     }
 
     /// O nome da forma no braço: o do acorde, ou deslocado quando a TAB inteira está fora do disco (as formas do capo
     /// no Here Comes the Sun: soa Lá, a mão faz Ré).
     func shapeName(for chord: ChordSpan) -> String? {
         guard !chord.name.isEmpty else { return nil }
-        let shift = capoFret
-        guard shift != 0 else { return chord.name }
-        return ChordReader.transpose(chord.name, by: (12 - shift % 12) % 12, ChordReader.names)
+        guard shapeOffset != 0 else { return chord.name }
+        return ChordReader.transpose(chord.name, by: Self.semitones(-shapeOffset), ChordReader.names)
     }
 
     /// A barra e os cartões mostram as formas do capo (a escolha `chordsByShape`, numa música com capo).
-    var showingShapes: Bool { chordsByShape && capoFret > 0 }
+    var showingShapes: Bool { chordsByShape && shapeOffset != 0 }
+
+    static func semitones(_ value: Int) -> Int { ((value % 12) + 12) % 12 }
+
+    /// O que separa a forma do som, em palavras: "capo 7ª", "um tom abaixo".
+    var offsetLabel: String {
+        if shapeOffset > 0 { return "capo \(shapeOffset)ª" }
+        let down = -shapeOffset
+        return (down == 1 ? "½ tom" : down == 2 ? "1 tom" : "\(down) semitons") + " abaixo"
+    }
 
     /// O nome como a barra mostra: como soa, ou pela forma do capo.
     func shown(_ name: String) -> String {
         guard showingShapes, !name.isEmpty else { return name }
-        return ChordReader.transpose(name, by: (12 - capoFret % 12) % 12, ChordReader.names)
+        return ChordReader.transpose(name, by: Self.semitones(-shapeOffset), ChordReader.names)
     }
 
     /// Um nome escrito na barra (pela forma, se ela mostra as formas) de volta a como soa, que é como fica guardado.
     func sounding(fromShown name: String) -> String {
         guard showingShapes, !name.isEmpty, ChordReader.rootOf(name) != nil else { return name }
-        return ChordReader.transpose(name, by: capoFret % 12, ChordReader.names)
+        return ChordReader.transpose(name, by: Self.semitones(shapeOffset), ChordReader.names)
     }
 
     /// O capo da guitarra de base: o que o GP diz mais o que o som mostra que falta (0 sem capo, e numa gravação mais
     /// grave que a afinação da TAB, que não é capo).
-    var capoFret: Int { chordCapo }
+    var capoFret: Int { max(0, shapeOffset) }
 
     /// O que o grupo Acordes propõe quando a guitarra de base não soa onde a TAB diz: pôr o capo (a guitarra soa
     /// acima: as formas de um capo que o GP não traz) ou afinar a TAB abaixo (a gravação é mais grave), nas pistas com o
@@ -334,7 +349,7 @@ extension SongModel {
         case .edited: origin = "corrigido"
         }
         let heard = span.heard.map { "o som ouve \(shown($0))" }
-        let other = capoFret > 0 && !span.name.isEmpty
+        let other = shapeOffset != 0 && !span.name.isEmpty
             ? (showingShapes ? "soa \(span.name)" : shapeName(for: span).map { "forma de \($0)" }) : nil
         menu.addTitle(span.name.isEmpty ? "Sem acorde" : shown(span.name),
                       detail: [where_, origin, heard, other].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
@@ -361,10 +376,10 @@ extension SongModel {
         menu.addSeparator()
         menu.add("Ouvir o acorde", enabled: ChordReader.pitches(of: span.name) != nil) { [weak self] in self?.playChord(span) }
         menu.add("Loop neste acorde") { [weak self] in self?.loopChord(span) }
-        if capoFret > 0 {
+        if shapeOffset != 0 {
             menu.addSeparator()
             menu.add("Nomes como soam", checked: !chordsByShape) { [weak self] in self?.chordsByShape = false }
-            menu.add("Nomes pela forma (capo \(capoFret)ª)", checked: chordsByShape) { [weak self] in self?.chordsByShape = true }
+            menu.add("Nomes como na TAB (\(offsetLabel))", checked: chordsByShape) { [weak self] in self?.chordsByShape = true }
         }
         if !chordEdits.isEmpty {
             menu.addSeparator()

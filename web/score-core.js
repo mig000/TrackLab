@@ -348,11 +348,17 @@
     return score.tracks.map((track) => (track.staves[0] && track.staves[0].capo) || 0);
   }
 
+  // A afinação de cada pista (da corda mais aguda à mais grave, como o alphaTab; vazia sem cordas).
+  function tunings(score) {
+    return score.tracks.map((track) => (track.staves[0] && track.staves[0].tuning ? [...track.staves[0].tuning] : []));
+  }
+
   return {
     CURSOR_AT,
     trackNotes,
     writtenChords,
     capos,
+    tunings,
     showPreferences,
     cleanPoints,
     secondsToTick,

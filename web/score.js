@@ -1448,7 +1448,7 @@
       state.saveTimer = null;
       try {
         post({ type: "save", gp: exportBase64() });
-        post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score) });
+        post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score), tunings: core.tunings(state.score) });
       } catch (error) {
         report(error);
       }
@@ -1478,7 +1478,7 @@
     if (!state.saveTimer) return null;
     window.clearTimeout(state.saveTimer);
     state.saveTimer = null;
-    post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score) });
+    post({ type: "notes", notes: core.trackNotes(state.score), chords: core.writtenChords(state.score), capos: core.capos(state.score), tunings: core.tunings(state.score) });
     return exportBase64();
   }
 
@@ -2339,6 +2339,7 @@
         notes: core.trackNotes(state.score),
         chords: core.writtenChords(state.score),
         capos: core.capos(state.score),
+        tunings: core.tunings(state.score),
       });
       render();
     },

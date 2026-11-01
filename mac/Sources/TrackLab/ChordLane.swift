@@ -47,7 +47,7 @@ struct ChordLane: View {
         } message: {
             if let renaming, !renaming.alternatives.isEmpty {
                 Text("As notas também aceitam: \(renaming.alternatives.map(model.shown).joined(separator: ", ")). Vazio é sem acorde."
-                     + (model.showingShapes ? " Os nomes são pela forma do capo \(model.capoFret)ª." : ""))
+                     + (model.showingShapes ? " Os nomes são como na TAB (\(model.offsetLabel))." : ""))
             } else {
                 Text("Vazio é sem acorde.")
             }

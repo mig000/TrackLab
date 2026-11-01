@@ -109,7 +109,7 @@ struct ChordCard: View {
                         .buttonStyle(.borderless).disabled(shapes.count < 2)
                 }
                 if let shape = model.shapeName(for: chord), shape != chord.name {
-                    Text(model.showingShapes ? "soa \(chord.name) · capo \(model.capoFret)ª" : "forma de \(shape) · capo \(model.capoFret)ª")
+                    Text(model.showingShapes ? "soa \(chord.name) · \(model.offsetLabel)" : "forma de \(shape) · \(model.offsetLabel)")
                         .font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -137,17 +137,18 @@ struct ChordsGroup: View {
                     }
                     .padding(8)
                     .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.1)))
-                } else if model.capoFret > 0 {
-                    Label("Capo \(model.capoFret)ª", systemImage: "tuningfork").font(.caption).foregroundStyle(.secondary)
+                } else if model.shapeOffset != 0 {
+                    Label(model.shapeOffset > 0 ? "Capo \(model.capoFret)ª" : "Afinada \(model.offsetLabel)", systemImage: "tuningfork")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                if model.capoFret > 0 {
+                if model.shapeOffset != 0 {
                     Picker("Nomes", selection: Binding(get: { model.chordsByShape }, set: { model.chordsByShape = $0 })) {
                         Text("Como soam").tag(false)
-                        Text("Pela forma").tag(true)
+                        Text("Como na TAB").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .help("Os nomes na barra de acordes e aqui: como soam no disco, ou pela forma que a mão faz com o capo")
+                    .help("Os nomes na barra de acordes e aqui: como soam no disco, ou pela forma que a mão faz (com o capo ou a afinação da música)")
                 }
                 TimelineView(.periodic(from: .now, by: 0.15)) { _ in
                     let pair = model.chordPair()

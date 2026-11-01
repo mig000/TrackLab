@@ -254,10 +254,15 @@ final class SongModel {
     }
     /// As pistas de guitarra de seis cordas (a base primeiro) e o capo da de base, guardados: a barra de acordes pergunta
     /// o capo a cada nome de cada quadro, e calcular percorria todas as notas (um terço da linha principal tocando).
+    var scoreTunings: [[Int]] = [] {
+        didSet { if scoreTunings != oldValue { updateCapo() } }
+    }
     @ObservationIgnored var chordGuitarTracks: [Int] = []
     /// As digitações de cada acorde mostrado no inspetor (pelo trecho, o nome, as notas e o capo).
     @ObservationIgnored var shapeCache: [String: [ChordShape]] = [:]
-    var chordCapo = 0
+    /// Quantos semitons o som está acima da forma que a mão faz na guitarra de base: o capo (+7 no Here Comes the
+    /// Sun), a afinação abaixo do padrão (−2 no Yesterday, afinado um tom abaixo) e o que o som mostra que o GP não diz.
+    var shapeOffset = 0
     /// Os nomes dos acordes pela forma do capo (o que a mão faz: D sob o Lá que soa com capo 7) em vez de como soam;
     /// só vale numa música com capo.
     var chordsByShape = UserDefaults.standard.bool(forKey: "chordsByShape") {
@@ -440,6 +445,7 @@ final class SongModel {
         bridge.onNotes = { [weak self] notes in self?.scoreNotes = notes }
         bridge.onChords = { [weak self] chords in self?.writtenChords = chords }
         bridge.onCapos = { [weak self] capos in self?.scoreCapos = capos }
+        bridge.onTunings = { [weak self] tunings in self?.scoreTunings = tunings }
         bridge.onFitted = { [weak self] count, asked in self?.fitted(count: count, asked: asked) }
         bridge.onShiftEnd = { [weak self] seconds in
             self?.soundShift = 0

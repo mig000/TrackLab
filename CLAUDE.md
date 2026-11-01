@@ -803,10 +803,13 @@ diagrama, "Capo 7ª" no grupo). Quando a guitarra de base não soa onde a TAB di
 tom abaixo" nas pistas com ele (o Michelle). A página aplica (`edit("pitchFix", [{track, capo}|{track, tune}])`,
 `edit.pitchFix`: o capo da pauta, que o alphaTab soma na altura de cada nota, ou a afinação de todas as cordas; as casas
 ficam), num passo do Desfazer da TAB, grava o Guitar Pro e a TAB sintetizada é refeita (`resynthAfterSave`); a Lente, a
-TAB sintetizada e a leitura dos acordes passam a soar como o disco. Numa música com capo, os nomes da barra, dos cartões e
-do menu podem ser como soam ou pela forma do capo (`chordsByShape`, guardado, no grupo Acordes "Como soam | Pela forma" e
-no menu do acorde; `shown` e `sounding(fromShown:)`: o que se escreve ao renomear pela forma é guardado como soa); o
-cartão diz o outro ("soa A · capo 7ª" ou "forma de D · capo 7ª"). O capo e as pistas de guitarra ficam guardados
+TAB sintetizada e a leitura dos acordes passam a soar como o disco. Numa música em que a forma da mão e o som
+não coincidem (`shapeOffset`: o capo do GP, a afinação do GP abaixo da padrão, pelas cinco cordas de cima, e o que o som
+mostra que o GP não diz; +7 no Here Comes the Sun, −2 no Yesterday, afinado um tom abaixo, em que a TAB é escrita em Sol
+e soa Fá), os nomes da barra, dos cartões e do menu podem ser como soam ou como na TAB (`chordsByShape`, guardado, no
+grupo Acordes "Como soam | Como na TAB" e no menu do acorde; `shown` e `sounding(fromShown:)`: o que se escreve ao
+renomear como na TAB é guardado como soa); o cartão diz o outro ("soa Em · 1 tom abaixo", "forma de D · capo 7ª"). A
+página manda a afinação de cada pista com as notas (`tunings`). O capo e as pistas de guitarra ficam guardados
 (`chordCapo`, `chordGuitarTracks`, refeitos por `updateCapo` quando as notas, o capo do GP ou o deslocamento mudam) e as
 digitações dos cartões também (`shapeCache`): a barra perguntava o capo a cada nome de cada quadro, e calculá-lo percorria
 todas as notas (no Something tocando, a barra tomava 35 % da linha principal e a rolagem engasgava; agora 1,5 %).
