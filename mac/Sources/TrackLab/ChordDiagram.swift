@@ -108,6 +108,13 @@ struct ChordCard: View {
                     Button { choice = (index + 1) % shapes.count } label: { Image(systemName: "chevron.right") }
                         .buttonStyle(.borderless).disabled(shapes.count < 2)
                 }
+                if let drawn = shapes[index].drawn {
+                    // A base não tem o acorde pedido: o desenho (e o som do alto-falante) é deste.
+                    Text("desenho de \(model.showingShapes || model.shapeOffset == 0 ? drawn : ChordReader.transpose(drawn, by: SongModel.semitones(model.shapeOffset), ChordReader.names))")
+                        .font(.caption2).foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .help("A base de digitações não tem \(model.shown(chord.name)): este é o mais perto que ela tem")
+                }
                 if let shape = model.shapeName(for: chord), shape != chord.name {
                     Text(model.showingShapes ? "soa \(chord.name) · \(model.offsetLabel)" : "forma de \(shape) · \(model.offsetLabel)")
                         .font(.caption2).foregroundStyle(.secondary)

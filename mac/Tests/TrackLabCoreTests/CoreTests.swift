@@ -1006,6 +1006,18 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
                                  tuning: 0.2, grid: grid, step: 240, open: open, from: (3, 7))
     #expect(bent.count == 1 && bent[0].pitch == 62 && bent[0].string == 3 && bent[0].fret == 7)
     #expect(bent[0].bend.last?[1] == 4)
+    // A corda de uma nota que fica (fora da faixa) não serve enquanto ela soa: o Ré 4 ao lado do Dó 4 da corda 3, com a
+    // mão na casa 5, vai para outra corda.
+    let held = ScoreNote(tick: 960, duration: 960, pitch: 60, string: 3, fret: 5)
+    let beside = Recognition.notes([heard(0.5, 1.0, 62)], tuning: 0.2, grid: grid, step: 240, open: open,
+                                   from: (3, 5), occupied: [held])
+    #expect(beside.count == 1 && beside[0].string != 3 && beside[0].pitch == 62)
+    // Uma nota que nenhuma corda conhecida toca não some calada: com `keepUnplaced` ela volta na corda 0.
+    let low = heard(0.5, 1.0, 52)
+    #expect(Recognition.notes([low], tuning: 0.2, grid: grid, step: 240, open: [1: 64]).isEmpty)
+    #expect(Recognition.notes([low], tuning: 0.2, grid: grid, step: 240, open: [1: 64], keepUnplaced: true).map(\.string) == [0])
+    // Com todas as cordas da afinação, ela tem lugar.
+    #expect(Recognition.notes([low], tuning: 0.2, grid: grid, step: 240, open: open).first.map { [4, 5].contains($0.string) } == true)
 }
 
 @Test func coresDasPartes() {

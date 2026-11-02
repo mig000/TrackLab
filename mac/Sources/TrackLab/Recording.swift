@@ -205,6 +205,9 @@ extension SongModel {
             guard let self, let session = studio.session, studio.recording else { return }
             if engine.transportVersion != session.clock.version { finishRecording(stopHost: CACurrentMediaTime()) }
         }
+        // A entrada desligada ou remontada no meio (o botão, outro dispositivo, outros canais, um efeito, o próprio
+        // dispositivo) termina a gravação com o que já entrou, em vez de perdê-la.
+        input.onInterrupt = { [weak self] in self?.finishRecording(stopHost: CACurrentMediaTime()) }
         notice = "Gravando a Guitarra \(studio.armed)" + (engine.loop != nil ? ": cada volta do loop vira um take." : ".")
     }
 
@@ -221,6 +224,7 @@ extension SongModel {
         if let watcher = studio.watcher { engine.unobserve(watcher) }
         studio.watcher = nil
         studio.session = nil
+        InputEngine.shared.onInterrupt = nil
         let raw = InputEngine.shared.stopRecording(at: stopHost ?? CACurrentMediaTime())
         studio.setRecording(false, from: nil)
         applyTakeGains()
@@ -443,8 +447,8 @@ extension SongModel {
         guard let take = studio.takes.first(where: { $0.id == id }) else { return }
         let menu = NSMenu()
         menu.autoenablesItems = false
-        let bars = [grid.bar(at: take.start + 0.01), grid.bar(at: max(take.start, take.end - 0.01))].compactMap { $0 }
-        let place = bars.isEmpty ? "" : bars[0] == bars[1] ? "c. \(bars[0]) · " : "c. \(bars[0])–\(bars[1]) · "
+        let place = TakeLanes.place(first: grid.bar(at: take.start + 0.01),
+                                    last: grid.bar(at: max(take.start, take.end - 0.01)))
         menu.addTitle("\(take.name) · Guitarra \(take.lane)",
                       detail: "\(place)\(String(format: "%.1f", take.length)) s · \(Int((take.rate * 100).rounded())) %"
                         + (take.input.map { " · \($0)" } ?? ""))

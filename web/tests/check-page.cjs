@@ -100,6 +100,30 @@ test("colar no cursor de inserção no meio de uma nota entra no tique do cursor
   assert.ok(head && edit.span(head).end === 480);
 });
 
+test("o cursor na voz 2 continua nela andando de corda e de batida: a nota digitada entra na voz 2", () => {
+  const p = page(load());
+  const staff = staffOf(p);
+  const note = edit.notesOf(staff)[0];
+  const voiceOne = edit.timeline(staff, 0).map((e) => [e.start, e.end]);
+  // Na voz 2, no meio da primeira semínima (tique 480), e duas cordas abaixo.
+  p.state.caretVoice = 1;
+  p.state.caret = [...edit.caretOf(note.beat, 1), 480, 1];
+  p.tracklab.edit("string", 1);
+  p.tracklab.edit("string", 1);
+  assert.equal(p.state.caret[7], 1);
+  p.tracklab.edit("fret", 3);
+  const after = staffOf(p);
+  assert.deepEqual(edit.timeline(after, 0).map((e) => [e.start, e.end]), voiceOne, "a voz 1 fica como estava");
+  const added = edit.notesOf(after).find((n) => n.beat.voice.index === 1 && n.fret === 3);
+  assert.ok(added && added.beat.absolutePlaybackStart === 480);
+  // Andando de batida, também.
+  const q = page(load());
+  q.state.caretVoice = 1;
+  q.state.caret = [...edit.caretOf(edit.notesOf(staffOf(q))[0].beat, 1), 0, 1];
+  q.tracklab.edit("nav", 1);
+  assert.equal(q.state.caret[7], 1);
+});
+
 test("recortar notas das duas vozes leva as duas ao recorte e deixa pausa só nelas", () => {
   const p = page(withSecondVoice(1440));
   const staff = staffOf(p);

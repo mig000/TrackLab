@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
@@ -361,3 +362,24 @@ def test_chords_by_sound_are_computed_once_and_named_with_the_beats(client, monk
                         json={"beats": [[0, 2], [80 * frame, 4], [120 * frame, 2], "x"]}).json()
     assert len(calls) == 1 and [row[2] for row in named(again["chords"])] == ["C:maj", "G:maj"]
     assert package.find(song_id).file(f"peaks/chordprobs-source-v{chordsound.VERSION}.npy").is_file()
+
+
+def test_chords_by_sound_read_from_the_cache_name_the_same(client, monkeypatch):
+    """Guardadas e lidas de novo, probabilidades pequenas (uma rede confiante) dão os mesmos acordes: em float16 elas
+    viravam zero e a segunda leitura dava "sem acorde" na música toda."""
+    from tracklab import models
+    from tracklab.media import chordsound
+    from test_chordsound import named, probs
+
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    monkeypatch.setattr(models, "ensure", lambda name, download=None: Path(name))
+    monkeypatch.setattr(chordsound, "probabilities",
+                        lambda path, weights: probs((100, 0), (100, 7), background=1e-9))
+    stale = package.find(song_id).file("peaks/chordprobs-source-v1.npy")
+    stale.parent.mkdir(exist_ok=True)
+    np.save(stale, np.zeros((4, 100), dtype=np.float16))
+    first = client.post(f"/api/songs/{song_id}/chords/sound", json={}).json()["chords"]
+    again = client.post(f"/api/songs/{song_id}/chords/sound", json={}).json()["chords"]
+    assert first == again and [row[2] for row in named(again)] == ["C:maj", "G:maj"]
+    assert not stale.exists()

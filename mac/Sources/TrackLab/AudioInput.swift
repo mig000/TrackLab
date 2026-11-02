@@ -216,6 +216,12 @@ final class InputEngine {
     private(set) var recording = false
     /// Quando a frequência mudou (para a nota ao vivo na Lente).
     @ObservationIgnored var onPitch: ((Double?) -> Void)?
+    /// Quem grava, avisado antes de a entrada desligar ou remontar no meio de uma gravação (o botão, outro
+    /// dispositivo, outros canais, um efeito, a configuração do dispositivo): ele termina a gravação e guarda os takes
+    /// do que já entrou.
+    @ObservationIgnored var onInterrupt: (() -> Void)?
+    /// Os canais que a entrada usa de fato (o mapa pode ter sido recusado e a entrada caído nos primeiros).
+    private(set) var activeChannels: InputChannels?
 
     var deviceUID: String? = UserDefaults.standard.string(forKey: "input.device") {
         didSet {
@@ -287,7 +293,7 @@ final class InputEngine {
 
     var label: String {
         guard let device else { return "Sem entrada" }
-        return "\(device.name) · \(channels.label)"
+        return "\(device.name) · \(((running ? activeChannels : nil) ?? channels).label)"
     }
 
     /// A latência da entrada (o dispositivo e o buffer), em segundos.
@@ -362,6 +368,10 @@ final class InputEngine {
 
     func stop() {
         guard running else { return }
+        if recording, let onInterrupt {
+            self.onInterrupt = nil
+            onInterrupt()
+        }
         if recording { _ = stopRecording(at: nil) }
         teardown()
         running = false
@@ -404,14 +414,22 @@ final class InputEngine {
         let available = Int(input.inputFormat(forBus: 0).channelCount)
         var chosen = channels.first + channels.count <= max(available, 1) ? channels
             : InputChannels(first: 0, stereo: available > 1)
-        // O mapa só quando muda alguma coisa: os primeiros canais são o que o dispositivo já dá.
-        if setup.map, chosen.first > 0 {
+        // O mapa só quando muda alguma coisa: os primeiros canais são o que o dispositivo já dá. O Canal 1 sozinho num
+        // dispositivo de mais canais também pede o mapa (sem ele, a entrada vinha com o 1 e o 2).
+        var mapped = false
+        if setup.map, chosen.first > 0 || chosen.count < available {
             var map = (0..<chosen.count).map { Int32(chosen.first + $0) }
-            _ = AudioUnitSetProperty(inputUnit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Output, 1, &map,
-                                     UInt32(MemoryLayout<Int32>.size * map.count))
-        } else {
-            chosen = InputChannels(first: 0, stereo: available > 1)
+            let status = AudioUnitSetProperty(inputUnit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Output, 1,
+                                              &map, UInt32(MemoryLayout<Int32>.size * map.count))
+            mapped = status == noErr
+            if !mapped { log("mapa de canais \(map) recusado (\(status))") }
         }
+        if !mapped {
+            let fallback = InputChannels(first: 0, stereo: available > 1)
+            if fallback != chosen { log("canais: \(chosen.label) pedido, \(fallback.label) em uso") }
+            chosen = fallback
+        }
+        activeChannels = chosen
         let hardware = input.inputFormat(forBus: 0)
         guard hardware.sampleRate > 0,
               let format = AVAudioFormat(standardFormatWithSampleRate: hardware.sampleRate, channels: AVAudioChannelCount(chosen.count))

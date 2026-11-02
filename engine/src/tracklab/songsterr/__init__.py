@@ -159,7 +159,7 @@ def import_song(url: str, *, source: Source | None = None, root: Path | None = N
                                    "tracks": track_summary(meta, tracks)}
         _check(cancel)
         try:
-            _add_audio(draft, source, ident, meta, bars, say)
+            _add_audio(draft, source, ident, [meta["revisionId"]], bars, say, cancel)
         except TrackLabError as error:
             draft.manifest["warnings"].append(f"Áudio não incluído: {error}")
         _check(cancel)
@@ -182,27 +182,51 @@ def _extend(points: list[float], bars: list[tuple[int, int]]) -> list[float]:
 def add_audio(song: SongPackage, *, source: Source | None = None, progress: Progress | None = None,
               cancel=None) -> SongPackage:
     """O áudio e o mapa de uma música do repertório que entrou sem eles (o Songsterr tinha poucos pontos de
-    sincronia): a partitura fica como está."""
+    sincronia): a partitura fica como está. Os pontos são os da revisão de onde veio o Guitar Pro (os da revisão de
+    agora só quando ela tem os mesmos compassos), e o mapa sai nas fórmulas do Guitar Pro da música: uma partitura
+    editada nos compassos (outra fórmula, um compasso a mais) não casa com os pontos e é recusada sem mudar nada."""
+    from .. import package
+
     source = source or Source()
     origin = song.manifest.get("origin") or {}
     ident = origin.get("songId")
     if origin.get("kind") != "songsterr" or not isinstance(ident, int):
         raise SongsterrError("Esta música não veio do Songsterr.")
     say = _say(progress, cancel)
+    score_info = song.manifest.get("score") or {}
+    try:
+        effective = package.score_signatures(song.file(score_info.get("file") or "score/original.gp").read_bytes())
+        original_file = song.file(score_info.get("original") or "score/original.gp")
+        imported = package.score_signatures(original_file.read_bytes()) if original_file.is_file() else effective
+    except (OSError, package.PackageError):
+        raise SongsterrError("Não consegui ler a partitura da música.") from None
+    if effective != imported:
+        raise SongsterrError("A partitura foi editada nos compassos (fórmulas ou quantos) desde a importação: os pontos "
+                             "do Songsterr não casam mais com ela. Importe a música de novo.")
     say("Buscando a partitura no Songsterr…", 0.02)
     try:
         meta, tracks = source.fetch(ident)
     except requests.RequestException as error:
         raise SongsterrError(f"O Songsterr não respondeu ({error.__class__.__name__}).") from None
-    bars = signatures(tracks)
-    if len(bars) != (song.manifest.get("score") or {}).get("measures"):
+    revisions = [origin["revisionId"]] if isinstance(origin.get("revisionId"), int) else []
+    if meta.get("revisionId") not in revisions and signatures(tracks) == effective:
+        revisions.append(meta["revisionId"])
+    if not revisions:
         raise SongsterrError("A partitura do Songsterr mudou desde a importação: importe a música de novo.")
 
     class Target:
         manifest = {"warnings": [], "origin": dict(origin)}
         file = staticmethod(song.file)
 
-    _add_audio(Target, source, ident, meta, bars, say)
+    written = [p for p in ("audio/source.flac", "score/tempo-map.json") if not song.file(p).exists()]
+    try:
+        _add_audio(Target, source, ident, revisions, effective, say, cancel)
+        _check(cancel)
+    except BaseException:
+        # Nada pela metade: o que esta busca escreveu sai (a música continua como estava).
+        for path in written:
+            song.file(path).unlink(missing_ok=True)
+        raise
 
     def record(data: dict) -> None:
         for key in ("audio", "tempoMap", "origin"):
@@ -214,13 +238,20 @@ def add_audio(song: SongPackage, *, source: Source | None = None, progress: Prog
     return song
 
 
-def _add_audio(draft: Draft, source: Source, ident: int, meta: dict, bars: list[tuple[int, int]], say) -> None:
+def _add_audio(draft: Draft, source: Source, ident: int, revisions: list[int], bars: list[tuple[int, int]], say,
+               cancel=None) -> None:
+    """`revisions`: de onde tirar os pontos, na ordem (a primeira com vídeo pronto vale)."""
     say("Procurando o vídeo vinculado…", 0.15)
-    try:
-        entries = source.video_points(ident, meta["revisionId"])
-    except (requests.RequestException, KeyError) as error:
-        raise SongsterrError(f"não consegui ler os pontos de sincronização ({error.__class__.__name__}).") from None
-    candidates = [e for e in entries or [] if isinstance(e, dict) and e.get("feature") is None and e.get("status") == "done"]
+    candidates, revision = [], None
+    for revision in revisions:
+        try:
+            entries = source.video_points(ident, revision)
+        except (requests.RequestException, KeyError) as error:
+            raise SongsterrError(f"não consegui ler os pontos de sincronização ({error.__class__.__name__}).") from None
+        candidates = [e for e in entries or [] if isinstance(e, dict) and e.get("feature") is None
+                      and e.get("status") == "done"]
+        if candidates:
+            break
     if not candidates:
         raise SongsterrError("não há vídeo principal vinculado e pronto no Songsterr.")
     entry = candidates[0]
@@ -248,12 +279,15 @@ def _add_audio(draft: Draft, source: Source, ident: int, meta: dict, bars: list[
     with tempfile.TemporaryDirectory(prefix="tracklab-audio-") as temp:
         downloaded, video_meta = source.download(video, Path(temp))
         say("Convertendo o áudio…", 0.8)
-        info = to_source(downloaded, draft.file("audio/source.flac"))
+        info = to_source(downloaded, draft.file("audio/source.flac"), cancel=cancel)
+    _check(cancel)
     atomic_json(draft.file("score/tempo-map.json"), tempo)
     draft.manifest["audio"] = {"file": "audio/source.flac", "sha256": info.sha256, "duration": info.duration,
                                "sampleRate": info.sample_rate, "channels": info.channels}
     draft.manifest["tempoMap"] = {"file": "score/tempo-map.json", "source": "songsterr", "points": len(tempo["points"])}
     draft.manifest["origin"].update({"videoId": video, "video": video_meta})
+    if revision != draft.manifest["origin"].get("revisionId"):
+        draft.manifest["origin"]["audioRevisionId"] = revision
     if len(points) == len(bars):
         draft.manifest["warnings"].append("O último compasso usa andamento estimado; confira o fim da música.")
 

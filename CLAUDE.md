@@ -64,7 +64,7 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   só o import, o `with` e o `np.int`), os cinco pesos do commit 481f4ce7 do repositório original no `models.py`
   (`CHORDNET`, ~28 MB, conferidos por SHA-256; são os mesmos que o ChordMiniApp usa). O CQT do original (`hybrid_cqt` do
   librosa, 22 050 Hz, hop 512, 288 linhas) sobre o áudio original inteiro e a média das cinco redes dão as
-  probabilidades de cada quadro (~50 s para 5 min na CPU do iMac), guardadas em `peaks/chordprobs-source-v1.npy`; o nome
+  probabilidades de cada quadro (~50 s para 5 min na CPU do iMac), guardadas em `peaks/chordprobs-source-v2.npy` (em float32: a v1, em float16, zerava as abaixo de ~3e-8, e o HMM, que parte de "sem acorde" e tira o log, dava a música inteira sem acorde na segunda leitura; o log tem um piso de 1e-12 e a v1 é apagada); o nome
   sai a cada pedido, pelo HMM do original preso às batidas que o app manda (`[segundo, tipo]`: 2 no 1 do compasso, 3 no
   meio, 4 nos outros tempos; trocar custa 10, 20 e 40, porque os 15, 45 e 100 do original engoliam os acordes curtos dos
   riffs). O librosa entra no extra `separate`, com o numba < 0.61 e o llvmlite < 0.44 no Intel (os mais novos não têm
@@ -156,7 +156,10 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   até 4 e até 10 % dos compassos, os que faltam no fim seguem o andamento do último com ponto (`MISSING_MAX`, `_extend`,
   com aviso para conferir no Ajuste); antes o áudio ficava de fora. Uma música que entrou só com a partitura busca o áudio
   de novo (`add_audio`, `POST songs/{id}/audio`, na fila; no app, Faixas › "Buscar o áudio de novo"): a partitura fica,
-  o áudio e o mapa entram. Nos quatro Beatles (1/11), contra a Isophonics, TAB e som juntos: 84, 91, 95 e 83 %; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
+  o áudio e o mapa entram. Os pontos são os da revisão de onde veio o GP (`origin.revisionId`; os da revisão nova só se
+  ela tem as mesmas fórmulas, e então `origin.audioRevisionId`), o mapa sai nas fórmulas do GP, e um GP editado nos
+  compassos (outras fórmulas ou quantos que a original) é recusado sem mudar nada; cancelar no meio, também na conversão
+  para FLAC, não deixa áudio nem mapa. Nos quatro Beatles (1/11), contra a Isophonics, TAB e som juntos: 84, 91, 95 e 83 %; `vendor/` é o conversor de teaqu (MIT) que o BackingLab 2 usa, `score.py` as
   correções do BackingLab no GP. O áudio vem do vídeo principal vinculado (yt-dlp, sem cookies; node como runtime JS
   se o YouTube pedir) e é convertido uma vez para FLAC; o GP não leva áudio embutido.
 - `media/`: probe / convert / peaks / separate copiados do TabLab. `separate` (Demucs 6s) cai para a CPU se o MPS
@@ -276,14 +279,18 @@ e o pico do sinal nos 3 primeiros segundos vão para `~/Library/Logs/TrackLab-en
 o próprio dispositivo escolhido dispara só religa o motor, sem remontar: remontando, o Helix religava sem parar; e o
 monitor entra no mixer principal com o formato explícito: com `format: nil` a entrada inteira dava zero, já no tap do
 dispositivo, em qualquer dispositivo), com os
-canais pelo mapa do AUHAL só quando não são os primeiros (no Helix, 1/2 é o som processado e 7 o DI), os efeitos AU no caminho (a janela de cada um,
+canais pelo mapa do AUHAL quando não são os primeiros ou são menos que os do dispositivo (no Helix, 1/2 é o som processado e 7 o DI; o Canal 1 sozinho também pede o mapa, sem ele vinham o 1 e o 2; um mapa recusado vai para o registro e o rótulo mostra os canais em uso, `activeChannels`), os efeitos AU no caminho (a janela de cada um,
 ligar e desligar, a ordem; a cadeia guardada entre as aberturas e com cada take), ouvir pelo Mac (desligado: o Helix já
 devolve o som sem atraso), o nível e o afinador (`Tuner`, YIN, a cada 4.096 amostras); o microfone pede a permissão do
 macOS (`NSMicrophoneUsageDescription` no build). A gravação escreve tudo o que entra num arquivo e marca o instante de
 host do primeiro quadro menos a latência da entrada; R para (ou uma pausa, um salto, outra velocidade:
 `StemEngine.transportVersion`) e `TakeCut.passes` corta pelo relógio do plano (`StemEngine.Clock`: a música ouvida em
 cada instante de host): com loop, cada volta vira um take recortado no loop (o pré-rolo de um compasso fica de fora; uma
-volta de menos de 1 s ou de meio loop, também), sem loop, um take; mais o ajuste à mão em ms do inspetor. Os takes
+volta de menos de 1 s ou de meio loop, também), sem loop, um take; mais o ajuste à mão em ms do inspetor. O relógio
+da gravação não tem piso em zero: gravando com a música parada, a entrada manda som antes de a música soar (o `lead` e a
+latência da saída), e esse começo fica de fora em vez de empurrar o take para depois. Desligar ou remontar a entrada no
+meio (o botão, outro dispositivo, outros canais, um efeito, o próprio dispositivo) termina a gravação com o que já
+entrou (`InputEngine.onInterrupt`); antes o take se perdia e R dizia "Nada gravado". Os takes
 (`TakeStudio`, `Recording.swift`) ficam em pistas Guitarra 1 a 4: numa pista, entre os que se sobrepõem, só um soa
 (`TakeLanes.choose`; o último gravado), B passa ao anterior (`alternate`), um clique no take o faz soar. Cada take toca
 num player do `StemEngine` ("take:<id>") agendado por `TakeSchedule.pieces` (silêncio até ele, o áudio, silêncio no
@@ -303,8 +310,10 @@ uma calibração firme ainda falta. Cada build ad hoc pede o microfone de novo (
 terminal (ffmpeg, um AVAudioEngine) usa a permissão do `claude`. `Backend` inicia `engine/.venv/bin/tracklab serve --port 0 --parent-pid`,
 lê a porta do stdout (`PortReader`, em TrackLabCore: só uma linha inteira vale; `TRACKLAB_URL` aponta para outro
 motor). Fechar a música grava antes o que estava a caminho (`saveEverything`: a edição da página, a TAB, os trechos) e
-a música seguinte espera (`SongModel.closing`); ao sair, o app espera essas gravações até 5 s
-(`applicationShouldTerminate`). `StemEngine`: o original e as seis faixas num
+a música seguinte espera (`SongModel.closing`); ao sair, o app espera essas gravações e as dos trechos da biblioteca
+(`LibraryModel.finishAll`) até 5 s (`applicationShouldTerminate`). O Guitar Pro que a página mandou fica no app até o
+motor confirmar (`unsavedScore`): uma gravação que falhou é tentada de novo ao sair da edição, ao fechar e ao sair, e se
+falhar outra vez vai para uma cópia em `~/TrackLab/Recuperação` (a página só sabe do pendente até mandar). `StemEngine`: o original e as seis faixas num
 AVAudioEngine, início comum em tempo de host, um TimePitch (velocidade 0,5–1,5, tom ±6 e ajuste fino de ±50 cents, propriedades calculadas: com o `@Observable`, prender o
 valor no `didSet` chamava o `didSet` de novo até estourar a pilha); o metrônomo (K) é uma faixa de cliques
 (`Metronome.samples`, nas batidas do mapa, o 1 mais forte) gerada no app e trocada com `setClick` quando o mapa muda;

@@ -97,10 +97,8 @@ extension SongModel {
 
     /// Refaz as pistas de guitarra e o capo (as notas, as pistas, o capo do GP ou o deslocamento mudaram).
     func updateCapo() {
-        let roles = scoreTracks.map { ($0.index, HarmonyRole.of(name: $0.name)) }
-        let order: [HarmonyRole] = [.rhythm, .guitar, .lead]
-        chordGuitarTracks = order.flatMap { role in roles.filter { $0.1 == role }.map(\.0) }
-            .filter { scoreNotes.indices.contains($0) && (scoreNotes[$0].map(\.string).max() ?? 0) == 6 }
+        chordGuitarTracks = ChordReader.guitarTracks(names: scoreTracks.map { ($0.index, $0.name) }, tunings: scoreTunings,
+                                                     notes: scoreNotes)
         let main = chordGuitarTracks.first
         let written = main.flatMap { scoreCapos.indices.contains($0) ? scoreCapos[$0] : nil } ?? 0
         // A afinação do GP contra a padrão, pelas cinco cordas de cima (o drop D só baixa a de baixo).

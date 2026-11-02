@@ -1201,7 +1201,7 @@
     const from = Math.round(region.from);
     const to = Math.round(region.to);
     const incoming = (Array.isArray(region.notes) ? region.notes : [])
-      .map((n) => ({ start: Math.round(n.tick), end: Math.round(n.end), string: strings - n.string + 1, data: n }))
+      .map((n) => ({ start: Math.round(n.tick), end: Math.round(n.end), string: strings - n.string + 1, data: n, original: n }))
       .filter((n) => n.end - n.start >= MIN_TICKS && n.string >= 1 && n.string <= strings && n.data.fret >= 0)
       .sort((a, b) => a.start - b.start);
     if (!incoming.length && !(to > from)) return "empty";
@@ -1240,6 +1240,8 @@
         const curve = curves.get(head.string);
         lines.push({
           start: ev.start, end, string: head.string, cut: end < ev.end, tied: head.isTieDestination, pitch: head.realValue,
+          // Onde começa cada parte ligada: o corte cai ali, e cada parte fica com o vibrato e o resto que tinha.
+          breaks: parts.slice(1).map((p) => p.start).filter((t) => t > ev.start && t < end),
           fraction: (t) => (t - ev.start) / (ev.end - ev.start),
           bend: curve && curve.bent ? curve.points : [],
           head: () => Object.assign(new m.Note(), plain(head)),
@@ -1247,6 +1249,29 @@
           last: parts[parts.length - 1].note,
         });
       }
+    }
+    // Uma nota achada na corda de uma nota que fica (fora da faixa de alturas) ou de outra achada, no mesmo tempo, vai
+    // para a corda livre mais perto em que a altura cabe; sem nenhuma, o trecho é recusado. Antes ficavam duas casas
+    // na mesma corda e batida, e a escolha e o apagar pegavam a nota errada. `data.placed` diz onde ela ficou.
+    const overlaps = (a, b) => a.start < b.end && b.start < a.end;
+    const taken = lines.filter((l) => l.end > l.start);
+    for (const n of incoming) {
+      const pitch = openPitch(staff, n.string) + n.data.fret;
+      const free = (string) => !taken.some((l) => l.string === string && overlaps(l, n)
+        && !(n.data.continues && l.cut && l.start < from && l.pitch === pitch));
+      if (!free(n.string)) {
+        const options = [];
+        for (let string = 1; string <= strings; string++) {
+          const fret = pitch - openPitch(staff, string);
+          if (fret >= 0 && fret <= 24 && free(string)) options.push({ string, fret });
+        }
+        options.sort((a, b) => Math.abs(a.string - n.string) - Math.abs(b.string - n.string));
+        if (!options.length) return "busy";
+        n.string = options[0].string;
+        n.data = Object.assign({}, n.data, { fret: options[0].fret, slide: null });
+      }
+      n.original.placed = { string: strings - n.string + 1, fret: n.data.fret };
+      taken.push({ start: n.start, end: n.end, string: n.string });
     }
     for (const [index, n] of incoming.entries()) {
       const next = incoming.slice(index + 1).find((o) => o.string === n.string && Math.abs(o.start - n.end) <= MIN_TICKS);
@@ -1279,8 +1304,18 @@
     // Os pedaços de tempo entre todos os começos e fins (e as barras de compasso, para cada parte ligada levar o vibrato
     // dela): cada um com as linhas que soam nele vira uma batida.
     const bars = staff.bars.slice(first, last + 1).map((bar) => bar.masterBar.start);
-    const marks = [...new Set([lo, hi, ...bars, ...lines.flatMap((l) => [l.start, l.end])])]
+    const marks = [...new Set([lo, hi, ...bars, ...lines.flatMap((l) => [l.start, l.end, ...(l.breaks || [])])])]
       .filter((t) => t >= lo && t <= hi).sort((a, b) => a - b);
+    // O que é da batida e não das notas (o texto, o acorde escrito, a palhetada, o tapping, a alavanca…) vai para a
+    // batida nova que começa onde a original começava (ou, sem ela, a primeira que começa dentro dela), uma vez só.
+    const originals = touched.flatMap((ev) => [ev.beat, ...ev.tail]).map((beat) => ({ beat,
+      start: beat.absolutePlaybackStart, end: beat.absolutePlaybackStart + beat.playbackDuration }));
+    const starts = marks.slice(0, -1).filter((a, i) => lines.some((l) => l.start <= a && l.end >= marks[i + 1]));
+    const home = new Map();
+    for (const o of originals) {
+      const tick = starts.includes(o.start) ? o.start : starts.find((t) => t > o.start && t < o.end);
+      if (tick !== undefined && !home.has(tick)) home.set(tick, o.beat);
+    }
     const built = [];
     for (let i = 0; i + 1 < marks.length; i++) {
       const a = marks[i];
@@ -1288,6 +1323,11 @@
       const sounding = lines.filter((l) => l.start <= a && l.end >= b);
       if (!sounding.length) continue;
       const beat = new m.Beat();
+      const original = home.get(a);
+      if (original) {
+        Object.assign(beat, plain(original));
+        for (const p of original.whammyBarPoints || []) beat.addWhammyBarPoint(new m.BendPoint(p.offset, p.value));
+      }
       for (const line of sounding) {
         const attack = a === line.start;
         let note;

@@ -77,6 +77,7 @@
     next: "Não cabe: a nota seguinte começa antes. Apague ou encurte a seguinte primeiro.",
     end: "Não cabe: o trecho passaria do fim da música.",
     same: "A nota já está dividida aí.",
+    busy: "Uma nota achada não cabe em nenhuma corda livre (as que ficam ocupam as outras).",
   };
 
   const THEMES = {
@@ -1879,7 +1880,9 @@
       return;
     }
     const notes = Array.isArray(value.notes) ? value.notes : [];
-    chooseWheres(notes.map((n) => ({ track: value.track, tick: Math.round(n.tick), string: n.string, voice: 0 })));
+    // Pela corda em que cada nota ficou (uma achada na corda de uma nota que fica muda de corda).
+    chooseWheres(notes.map((n) => ({ track: value.track, tick: Math.round(n.tick),
+      string: n.placed ? n.placed.string : n.string, voice: 0 })));
     drawSelection();
     postSelection();
     post({ type: "notice", text: `Trecho reconhecido: ${notes.length} ${notes.length === 1 ? "nota" : "notas"} · ⌘Z desfaz` });
@@ -1897,9 +1900,14 @@
     }
     const string = state.caret[5];
     const count = beat.voice.bar.staff.tuning.length;
+    // O cursor na voz 2 continua nela (no tique da batida): antes, ↑↓ e ←→ o recriavam sem a voz, e a nota digitada
+    // ou colada entrava na voz 1.
+    const voice = state.caret[7] || 0;
     const land = (target, alpha) => {
-      const there = target.notes.find((n) => n.string === alpha);
-      if (there) {
+      const there = voice === 0 && target.notes.find((n) => n.string === alpha);
+      if (voice > 0) {
+        state.caret = [...edit.caretOf(target, alpha), target.absolutePlaybackStart, voice];
+      } else if (there) {
         choose(edit.pathOf(there));
       } else {
         state.caret = edit.caretOf(target, alpha);
@@ -1913,7 +1921,6 @@
         if (tick !== null) {
           // No meio de uma nota longa ou de uma pausa: a nota nova entra no tique (a longa se divide).
           const staff = beat.voice.bar.staff;
-          const voice = state.caret[7] || 0;
           const where = { track: staff.track.index, tick, string: count - string + 1, voice };
           let reason = null;
           change(() => {
@@ -1954,7 +1961,7 @@
         const alpha = string + Math.sign(value);
         if (alpha < 1 || alpha > count) return;
         if (tick !== null) {
-          state.caret = [...edit.caretOf(beat, alpha), tick];
+          state.caret = [...edit.caretOf(beat, alpha), ...state.caret.slice(6)];
           drawSelection();
           postSelection();
           return;

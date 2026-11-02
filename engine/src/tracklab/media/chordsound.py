@@ -21,7 +21,12 @@ from . import align
 
 RATE = 22_050
 HOP = 512
-VERSION = 1             # no nome do arquivo guardado: outra receita refaz as probabilidades
+# No nome do arquivo guardado: outra receita refaz as probabilidades. A v1 guardava em float16, que zerava as
+# probabilidades abaixo de ~3e-8: o HMM tira o log sem piso e parte de "sem acorde", e um zero ali deixava a música
+# inteira sem acorde na segunda leitura.
+VERSION = 2
+# O menor valor que entra no log do HMM: um zero (da rede ou de um arquivo antigo) não mata todos os caminhos.
+FLOOR = 1e-12
 CHORD_LIST = Path(__file__).with_name("chordnet") / "submission_chord_list.txt"
 # As larguras das seis saídas da rede, na ordem: tríade, baixo, sétima, nona, décima primeira, décima terceira.
 WIDTHS = (73, 13, 4, 4, 3, 3)
@@ -79,6 +84,7 @@ def decode(probs: np.ndarray, beats: list[tuple[float, int]] | None = None) -> l
     from .chordnet.xhmm import XHMMDecoder
 
     hmm = XHMMDecoder(diff_trans_penalty=FREE_PENALTY, beat_trans_penalty=BEAT_PENALTIES, template_file=str(CHORD_LIST))
+    probs = np.maximum(np.asarray(probs, dtype=np.float32), FLOOR)
     count = probs.shape[0]
     arr = beat_frames(count, beats or [])
     names = hmm.decode(split(probs), arr)

@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             Task { @MainActor in
                 await SongModel.finishAll()
+                await LibraryModel.finishAll()
                 self.replyOnce(sender)
             }
             Task { @MainActor in

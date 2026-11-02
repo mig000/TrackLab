@@ -66,8 +66,9 @@ public enum TakeCut {
         return min(1, (loop.upperBound - loop.lowerBound) / 2)
     }
 
-    /// `elapsed`: a música tocada no plano até o primeiro quadro (o que se ouvia quando ele foi tocado); `frames` do
-    /// arquivo a `sampleRate`, gravados com a música a `rate`.
+    /// `elapsed`: a música tocada no plano até o primeiro quadro (o que se ouvia quando ele foi tocado; negativo quando
+    /// a entrada já mandava som antes de a música soar, e esse começo fica de fora); `frames` do arquivo a
+    /// `sampleRate`, gravados com a música a `rate`.
     public static func passes(plan: PlaybackPlan, elapsed: Double, frames: Int, sampleRate: Double,
                               rate: Double) -> [Pass] {
         guard frames > 0, sampleRate > 0, rate > 0 else { return [] }
@@ -90,7 +91,9 @@ public enum TakeCut {
                 lap += 1
             }
         } else {
-            pieces.append((rawStart...min(rawEnd, plan.duration), rawStart))
+            // O que entrou antes de a música começar a soar (o play com a entrada já ligada) fica de fora.
+            let first = max(rawStart, plan.start)
+            if first < min(rawEnd, plan.duration) { pieces.append((first...min(rawEnd, plan.duration), first)) }
         }
         let shortest = minimum(loop: plan.loop)
         return pieces.compactMap { piece in
@@ -157,6 +160,17 @@ public enum TakeSchedule {
 
 /// As regras das pistas: numa pista, entre os takes que se sobrepõem, só um soa.
 public enum TakeLanes {
+    /// Onde o take fica na partitura, pelos compassos das pontas (nil antes do primeiro ou depois do último): "c. 3 · ",
+    /// "c. 3–5 · ", "até o c. 2 · " num take que começa na introdução, ou nada fora da partitura.
+    public static func place(first: Int?, last: Int?) -> String {
+        switch (first, last) {
+        case let (first?, last?): first == last ? "c. \(first) · " : "c. \(first)–\(last) · "
+        case let (first?, nil): "do c. \(first) em diante · "
+        case let (nil, last?): "até o c. \(last) · "
+        case (nil, nil): ""
+        }
+    }
+
     /// `id` passa a soar; os da mesma pista que se sobrepõem a ele deixam de soar.
     public static func choose(_ id: String, in takes: [Take]) -> [Take] {
         guard let chosen = takes.first(where: { $0.id == id }) else { return takes }

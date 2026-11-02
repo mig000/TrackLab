@@ -106,6 +106,74 @@ def test_audio_can_be_fetched_again_for_a_song_without_it():
     assert without.file("score/original.gp").read_bytes() == score
 
 
+def test_audio_fetched_again_uses_the_points_of_the_revision_of_the_score():
+    """O Songsterr mudou para 3/4 com os mesmos quatro compassos: os pontos são os da revisão do GP (a 7) e o mapa sai
+    nas fórmulas dele (4/4), não nas da revisão nova."""
+    without = songsterr.import_song("27", source=FakeSource([guitar_track(4)], points=[0.0, 1.0]))
+
+    class Newer(FakeSource):
+        def fetch(self, ident):
+            meta, tracks = super().fetch(ident)
+            return dict(meta, revisionId=8), tracks
+
+        def video_points(self, ident, revision):
+            assert revision == 7, "os pontos da revisão do GP"
+            return super().video_points(ident, revision)
+
+    songsterr.add_audio(without, source=Newer([guitar_track(4, (3, 4))], points=[0.0, 2.0, 4.0, 6.0, 8.0]))
+    found = package.find(without.manifest["id"])
+    tempo = json.loads(found.file("score/tempo-map.json").read_text())
+    bars = sorted(p["tick"] for p in tempo["points"] if p["kind"] == "detected")
+    assert bars[:4] == [0, 3840, 7680, 11520]
+    assert found.manifest["origin"]["revisionId"] == 7 and "audioRevisionId" not in found.manifest["origin"]
+
+
+def test_audio_is_refused_for_a_score_edited_in_its_bars():
+    """O GP editado para 6/8 (os mesmos três compassos) não casa com os pontos do 4/4: recusado, nada muda."""
+    from pathlib import Path
+
+    without = songsterr.import_song("27", source=FakeSource([guitar_track(3)], points=[0.0, 1.0]))
+    edited = (Path(__file__).parents[2] / "web/tests/fixtures/seis-por-oito.gp").read_bytes()
+    assert package.score_signatures(edited)[0] == (6, 8)
+    without.save_score(edited)
+    found = package.find(without.manifest["id"])
+    before = json.dumps(found.manifest, sort_keys=True)
+    with pytest.raises(SongsterrError, match="editada nos compassos"):
+        songsterr.add_audio(found, source=FakeSource([guitar_track(3)], points=[0.0, 2.0, 4.0, 6.0]))
+    again = package.find(without.manifest["id"])
+    assert json.dumps(again.manifest, sort_keys=True) == before
+    assert not again.file("audio/source.flac").exists() and not again.file("score/tempo-map.json").exists()
+
+
+def test_cancelling_while_the_audio_converts_publishes_nothing(monkeypatch):
+    """Cancelar durante a conversão para FLAC termina cancelado, sem áudio nem mapa na música."""
+    from tracklab.errors import JobCancelled
+
+    without = songsterr.import_song("27", source=FakeSource([guitar_track(4)], points=[0.0, 1.0]))
+
+    class Cancel:
+        asked = False
+
+        def check(self):
+            if self.asked:
+                raise JobCancelled()
+
+    cancel = Cancel()
+    real = songsterr.to_source
+
+    def converting(src, dst, **kwargs):
+        cancel.asked = True
+        return real(src, dst, **kwargs)
+
+    monkeypatch.setattr(songsterr, "to_source", converting)
+    with pytest.raises(JobCancelled):
+        songsterr.add_audio(without, source=FakeSource([guitar_track(4)], points=[0.5, 1.5, 2.5, 3.5, 4.5]),
+                            cancel=cancel)
+    found = package.find(without.manifest["id"])
+    assert not found.manifest["audio"]
+    assert not found.file("audio/source.flac").exists() and not found.file("score/tempo-map.json").exists()
+
+
 def test_a_failure_in_the_score_leaves_no_package():
     class Broken(FakeSource):
         def generate(self, tracks, path, meta):

@@ -108,3 +108,31 @@ import Testing
     #expect(Tuner.frequency(hum, sampleRate: sampleRate) == nil)
     #expect(abs(Tuner.pitch(440) - 69) < 1e-9)
 }
+
+/// O menu do take com uma ponta fora da partitura (a introdução do áudio, depois do último compasso) não quebra.
+@Test func lugarDoTakeComPontaForaDaPartitura() {
+    #expect(TakeLanes.place(first: 3, last: 3) == "c. 3 · ")
+    #expect(TakeLanes.place(first: 3, last: 5) == "c. 3–5 · ")
+    #expect(TakeLanes.place(first: nil, last: 2) == "até o c. 2 · ")
+    #expect(TakeLanes.place(first: 7, last: nil) == "do c. 7 em diante · ")
+    #expect(TakeLanes.place(first: nil, last: nil) == "")
+}
+
+/// Gravando com a música parada, a entrada já mandava som antes de a música soar (o `lead` e a latência da saída): o
+/// relógio dá o primeiro quadro 0,2 s antes do começo, e esse pedaço fica de fora, com e sem loop.
+@Test func gravarComAMusicaParadaDescartaOQueVeioAntes() {
+    let sampleRate = 44_100.0
+    for rate in [0.5, 1, 1.5] {
+        let early = 0.2 * rate
+        let solto = TakeCut.passes(plan: PlaybackPlan(start: 30, loop: nil, duration: 100), elapsed: -early,
+                                   frames: Int(5.2 * sampleRate), sampleRate: sampleRate, rate: rate)
+        #expect(solto.count == 1)
+        #expect(abs(solto[0].start - 30) < 1e-9)
+        #expect(abs(Double(solto[0].frame) - 0.2 * sampleRate) <= 1)
+        let comLoop = TakeCut.passes(plan: PlaybackPlan(start: 10, loop: 10...14, duration: 100), elapsed: -early,
+                                     frames: Int((0.2 + 8 / rate) * sampleRate), sampleRate: sampleRate, rate: rate)
+        #expect(comLoop.map(\.start) == [10, 10])
+        #expect(abs(Double(comLoop[0].frame) - 0.2 * sampleRate) <= 1)
+        #expect(abs(Double(comLoop[1].frame) - (0.2 + 4 / rate) * sampleRate) <= 1)
+    }
+}

@@ -190,6 +190,19 @@ public enum ChordReader {
         return 0
     }
 
+    /// As pistas de guitarra de seis cordas com notas, a base primeiro (de onde saem o capo, a forma e a digitação). Seis
+    /// cordas pela afinação da pauta (`tunings`, como a página manda): uma guitarra que não toca a sexta corda na música
+    /// toda ainda é de seis, e uma de sete que só desce até a sexta não é. Sem a afinação, pela corda mais grave tocada.
+    public static func guitarTracks(names: [(index: Int, name: String)], tunings: [[Int]], notes: [[ScoreNote]]) -> [Int] {
+        let order: [HarmonyRole] = [.rhythm, .guitar, .lead]
+        func strings(_ track: Int) -> Int {
+            tunings.indices.contains(track) && !tunings[track].isEmpty ? tunings[track].count
+                : notes[track].map(\.string).max() ?? 0
+        }
+        return order.flatMap { role in names.filter { HarmonyRole.of(name: $0.name) == role }.map(\.index) }
+            .filter { notes.indices.contains($0) && !notes[$0].isEmpty && strings($0) == 6 }
+    }
+
     /// O deslocamento de cada pista até o disco (0 na que já soa no lugar), para o app propor o capo ou a afinação.
     public static func trackShifts(tracks: [Track], barTicks: [Double], sound: [(from: Double, to: Double, name: String)]) -> [Int] {
         guard let start = barTicks.first, let end = barTicks.last, end > start, !sound.isEmpty else {

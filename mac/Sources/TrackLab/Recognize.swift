@@ -45,17 +45,37 @@ extension SongModel {
         tabMessage = "Ouvindo o trecho…"
         let tuning = self.tuning
         let stem = pitchStem(track: track).stem
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.recognizing = false }
+        // Só o pedido mais novo publica: um retângulo marcado antes que respondesse depois trazia de volta os cartões dele
+        // (e o clique aplicaria o trecho antigo); mudar de pista, de afinação, de separação ou as notas também o descarta.
+        let generation = invalidateRecognition()
+        let version = notesVersion
+        recognizeTask = Task { [weak self] in
             do {
-                let heard = try await Backend.shared.transcribe(id, from: from, to: to, low: low + tuning,
+                let heard = try await Backend.shared.transcribe(self?.id ?? "", from: from, to: to, low: low + tuning,
                                                                  high: high + tuning, stem: stem)
+                guard let self, self.recognizeGeneration == generation, !Task.isCancelled else { return }
+                self.recognizing = false
+                guard self.scoreTrack == track, self.tuning == tuning, self.pitchStem(track: track).stem == stem,
+                      self.notesVersion == version, self.editingTab else {
+                    self.tabMessage = "O trecho mudou enquanto era ouvido: marque de novo."
+                    return
+                }
                 self.showRegion(heard, track: track, seconds: from...to, pitches: low...high)
             } catch {
+                guard let self, self.recognizeGeneration == generation, !Task.isCancelled else { return }
+                self.recognizing = false
                 self.tabMessage = "Não deu para ouvir o trecho: \(error.localizedDescription)"
             }
         }
+    }
+
+    /// Descarta o pedido em curso (o novo toma o lugar, ou a leitura foi dispensada) e devolve a geração nova.
+    @discardableResult
+    func invalidateRecognition() -> Int {
+        recognizeTask?.cancel()
+        recognizeTask = nil
+        recognizeGeneration += 1
+        return recognizeGeneration
     }
 
     private func showRegion(_ heard: [HeardNote], track: Int, seconds: ClosedRange<Double>, pitches: ClosedRange<Double>) {
@@ -68,14 +88,27 @@ extension SongModel {
             Double(note.pitch) >= pitches.lowerBound - 0.5 && Double(note.pitch) <= pitches.upperBound + 0.5
         }
         let current = all.filter { inBand($0) && $0.tick >= from && $0.tick < to }
-        // A afinação de cada corda pelas notas da pista (como as posições do braço nos cartões de um trecho).
+        // A altura de cada corda solta: a afinação da pauta com o capo (todas as cordas, também as que a TAB não usa:
+        // antes, uma nota que só cabia numa corda sem nota escrita sumia), e onde há nota, a que ela dá.
         var open: [Int: Int] = [:]
-        for note in all where open[note.string] == nil { open[note.string] = note.pitch - note.fret }
+        if scoreTunings.indices.contains(track) {
+            let capo = scoreCapos.indices.contains(track) ? scoreCapos[track] : 0
+            for (index, pitch) in scoreTunings[track].enumerated() { open[index + 1] = pitch + capo }
+        }
+        for note in all where open[note.string] == nil || !scoreTunings.indices.contains(track) {
+            open[note.string] = note.pitch - note.fret
+        }
+        let occupied = all.filter { !inBand($0) && $0.tick < to && $0.tick + $0.duration > from }
         // A posição de antes: a última nota da pista que começa antes do trecho (ou a primeira das que saem).
         let before = all.last { $0.tick < from } ?? current.first
-        let found = Recognition.notes(heard, tuning: tuning, grid: grid, step: step, open: open,
-                                      from: before.map { ($0.string, $0.fret) }, existing: current)
+        let heardNotes = Recognition.notes(heard, tuning: tuning, grid: grid, step: step, open: open,
+                                           from: before.map { ($0.string, $0.fret) }, existing: current, occupied: occupied,
+                                           keepUnplaced: true)
             .filter { $0.tick < to }
+        // As que não couberam em corda nenhuma (fora do braço, ou com as cordas ocupadas pelas que ficam).
+        let left = heardNotes.filter { $0.string == 0 }.count
+        let found = heardNotes
+            .filter { $0.string > 0 }
             .map { note -> RecognizedNote in
                 var note = note
                 note.end = min(note.end, to)
@@ -97,8 +130,10 @@ extension SongModel {
         regionReading = RegionReading(track: track, seconds: grid.seconds(at: from)...grid.seconds(at: to),
                                       ticks: from...to, pitches: pitches, current: current, found: found, sound: sound,
                                       continues: continues)
-        tabMessage = found.isEmpty ? "Nenhuma nota nessa faixa de alturas: estreite ou mude o retângulo."
-            : "Reconhecido: \(found.count) nota\(found.count == 1 ? "" : "s") · um clique no cartão troca"
+        let lost = left > 0 ? " · \(left) fora do braço ou sem corda livre" : ""
+        tabMessage = found.isEmpty && left == 0 ? "Nenhuma nota nessa faixa de alturas: estreite ou mude o retângulo."
+            : found.isEmpty ? "Ouvi \(left) nota\(left == 1 ? "" : "s"), mas nenhuma cabe numa corda livre."
+            : "Reconhecido: \(found.count) nota\(found.count == 1 ? "" : "s")\(lost) · um clique no cartão troca"
     }
 
     /// Troca as notas do trecho pelas reconhecidas.
@@ -115,10 +150,13 @@ extension SongModel {
         bridge.edit("replaceRegion", ["track": region.track, "from": region.ticks.lowerBound, "to": region.ticks.upperBound,
                                       "low": region.pitches.lowerBound, "high": region.pitches.upperBound, "notes": notes])
         regionReading = nil
+        invalidateRecognition()
     }
 
     func dismissRegion() {
         regionReading = nil
         tabMessage = nil
+        recognizing = false
+        invalidateRecognition()
     }
 }

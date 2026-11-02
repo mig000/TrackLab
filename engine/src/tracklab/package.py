@@ -77,6 +77,34 @@ def score_measures(data: bytes) -> int:
     return count
 
 
+def score_signatures(data: bytes) -> list[tuple[int, int]]:
+    """A fórmula de cada compasso de um Guitar Pro 7 (o `Time` de cada MasterBar), na ordem."""
+    result: list[tuple[int, int]] = []
+    path: list[str] = []
+    text: list[str] = []
+
+    def start(name, _attributes):
+        path.append(name)
+        text.clear()
+
+    def end(name):
+        if name == "Time" and path[-3:] == ["MasterBars", "MasterBar", "Time"]:
+            top, _, bottom = "".join(text).strip().partition("/")
+            result.append((int(top), int(bottom)))
+        path.pop()
+
+    parser = expat.ParserCreate()
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = text.append
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            parser.Parse(archive.read("Content/score.gpif"), True)
+    except (zipfile.BadZipFile, KeyError, expat.ExpatError, EOFError, OSError, ValueError):
+        raise PackageError("Isso não é um Guitar Pro 7 que o TrackLab leia.") from None
+    return result
+
+
 def _sweep_partials(folder: Path) -> None:
     """As pastas de uma separação ou síntese interrompida (o app fechado no meio do trabalho) ficavam para sempre,
     escondidas e com os áudios pela metade. As de agora (um trabalho em curso) são novas e ficam."""

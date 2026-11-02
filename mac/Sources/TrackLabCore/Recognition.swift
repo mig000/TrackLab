@@ -66,9 +66,12 @@ public enum Recognition {
     /// afinação da gravação `tuning` descontada); o começo e o fim presos na grade de `step` tiques (o fim estica até a
     /// nota seguinte se sobra menos de um passo, e uma nota não passa do começo da seguinte); a corda onde a casa fica
     /// mais perto da posição de antes (`from`, a nota tocada antes do trecho), a mesma da nota que já estava ali com essa
-    /// altura, e a mesma da anterior num slide. `open`: a altura de cada corda solta (1 é a mais aguda).
+    /// altura, e a mesma da anterior num slide. `open`: a altura de cada corda solta (1 é a mais aguda). `occupied`: as
+    /// notas que ficam (fora da faixa de alturas): a corda de uma delas, enquanto ela soa, não serve. `keepUnplaced`:
+    /// devolve também as que não couberam em corda nenhuma, com a corda 0 (para dizer quantas ficaram de fora).
     public static func notes(_ heard: [HeardNote], tuning: Double, grid: TempoGrid, step: Double, open: [Int: Int],
-                             from: (string: Int, fret: Int)? = nil, existing: [ScoreNote] = []) -> [RecognizedNote] {
+                             from: (string: Int, fret: Int)? = nil, existing: [ScoreNote] = [],
+                             occupied: [ScoreNote] = [], keepUnplaced: Bool = false) -> [RecognizedNote] {
         let step = max(30, step)
         func snap(_ seconds: Double) -> Double { (grid.tick(at: seconds) / step).rounded() * step }
         var placed: [RecognizedNote] = []
@@ -113,17 +116,19 @@ public enum Recognition {
         var position = from
         for index in line.indices {
             let pitch = line[index].pitch
+            let span = line[index].tick..<line[index].end
+            let busy = Set(occupied.filter { $0.tick < span.upperBound && $0.tick + $0.duration > span.lowerBound }.map(\.string))
             let choices = strings.compactMap { string -> (string: Int, fret: Int)? in
-                guard let base = open[string], (0...24).contains(pitch - base) else { return nil }
+                guard let base = open[string], (0...24).contains(pitch - base), !busy.contains(string) else { return nil }
                 return (string, pitch - base)
             }
             guard !choices.isEmpty else { continue }
             var choice: (string: Int, fret: Int)?
             if line[index].slide == "previous", index > 0, let base = open[line[index - 1].string],
-               line[index - 1].string > 0, (0...24).contains(pitch - base) {
+               line[index - 1].string > 0, (0...24).contains(pitch - base), !busy.contains(line[index - 1].string) {
                 choice = (line[index - 1].string, pitch - base)
             } else if let same = existing.first(where: { $0.pitch == pitch && abs($0.tick - line[index].tick) <= step }),
-                      let base = open[same.string], (0...24).contains(pitch - base) {
+                      let base = open[same.string], (0...24).contains(pitch - base), !busy.contains(same.string) {
                 choice = (same.string, pitch - base)
             } else if let position {
                 choice = choices.min { a, b in
@@ -140,6 +145,6 @@ public enum Recognition {
                 position = choice
             }
         }
-        return line.filter { $0.string > 0 }
+        return keepUnplaced ? line : line.filter { $0.string > 0 }
     }
 }

@@ -103,6 +103,8 @@ public struct ScoreEntry: Codable, Hashable, Sendable {
 
 public struct AudioEntry: Codable, Hashable, Sendable {
     public let file: String
+    /// O SHA-256 do FLAC (muda quando o áudio é outro: o espectro guardado não vale mais).
+    public let sha256: String?
     public let duration: Double?
     public let sampleRate: Int?
     public let channels: Int?

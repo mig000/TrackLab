@@ -8,6 +8,9 @@ public struct ChordShape: Hashable, Sendable {
     public var barres: [Int]
     /// Tirada da TAB (o que o guitarrista toca ali), e não da base de digitações.
     public var fromTab: Bool
+    /// O acorde que a digitação é de fato, quando a base não tem o pedido (o "C7" de um "C7/G", o "Cm" de um
+    /// "Cmadd11"): o cartão diz o que desenha e toca. nil quando é o pedido.
+    public var drawn: String?
 
     public init(frets: [Int], fingers: [Int] = [], barres: [Int] = [], fromTab: Bool = false) {
         self.frets = frets
@@ -76,18 +79,36 @@ public struct ChordLibrary: Sendable {
         let parts = plain.split(separator: "/", maxSplits: 1).map(String.init)
         guard let head = parts.first, let (root, rest) = ChordReader.rootOf(head) else { return [] }
         let suffix = Self.suffix(rest)
-        // Com baixo: a inversão que a base tem ("C/G", "Am/G"); senão o acorde sem o baixo.
-        if parts.count > 1, let (bass, _) = ChordReader.rootOf(parts[1]) {
-            let minor = suffix.hasPrefix("m") && !suffix.hasPrefix("maj")
+        // Com baixo: a inversão que a base tem ("C/G", "Am/G"), que só existe para as tríades maior e menor (um "C7/G"
+        // ou "Csus4/G" pegava o C/G maior, sem a sétima ou com a terça no lugar da quarta); senão o acorde sem o baixo.
+        if parts.count > 1, suffix == "major" || suffix == "minor", let (bass, _) = ChordReader.rootOf(parts[1]) {
+            let minor = suffix == "minor"
             let name = ChordReader.flats[bass].replacingOccurrences(of: "Gb", with: "F#")
             for candidate in [(minor ? "m/" : "/") + name, (minor ? "m/" : "/") + ChordReader.sharps[bass]] {
                 if let found = table["\(root)|\(candidate)"], !found.isEmpty { return found }
             }
         }
-        for candidate in [suffix, Self.simpler(suffix)] {
-            if let found = table["\(root)|\(candidate)"], !found.isEmpty { return found }
+        let rootName = String(head.dropLast(rest.count))
+        for (index, candidate) in [suffix, Self.simpler(suffix)].enumerated() {
+            guard let found = table["\(root)|\(candidate)"], !found.isEmpty else { continue }
+            guard index > 0 || parts.count > 1 else { return found }
+            let drawn = rootName + Self.display(candidate)
+            return found.map { shape in
+                var shape = shape
+                shape.drawn = drawn
+                return shape
+            }
         }
         return []
+    }
+
+    /// O sufixo do chords-db como a barra o escreve ("major" → "", "minor" → "m").
+    static func display(_ suffix: String) -> String {
+        switch suffix {
+        case "major": ""
+        case "minor": "m"
+        default: suffix
+        }
     }
 
     /// O sufixo da barra no nome do chords-db.

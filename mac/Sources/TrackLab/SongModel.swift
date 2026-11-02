@@ -146,8 +146,7 @@ final class SongModel {
     /// Saindo da edição: a última mudança gravada já (sem esperar os 1,5 s da página) e, se a partitura mudou, a TAB
     /// sintetizada refeita. Antes, concluir logo depois de uma mudança deixava a síntese da partitura de antes.
     private func finishScoreEdits() async {
-        if let data = await bridge.flush() { saveScore(data) }
-        await scoreSave?.value
+        await drainScore()
         if !editingTab, !adjusting, synthOutdated { await synthesize(quiet: true) }
     }
     private(set) var tabSelection: TabSelection?
@@ -312,6 +311,7 @@ final class SongModel {
     private(set) var scoreNotes: [[ScoreNote]] = [] {
         didSet {
             notesVersion += 1
+            reinterpretCurves()
             pruneCorrections()
             measureLater()
             refreshChords()
@@ -324,6 +324,9 @@ final class SongModel {
     /// e as que ele achou, para escolher nos cartões; `recognizing` enquanto o motor ouve.
     var regionReading: RegionReading?
     var recognizing = false
+    /// O pedido de reconhecer em curso e a geração dele: só o mais novo publica.
+    @ObservationIgnored var recognizeTask: Task<Void, Never>?
+    @ObservationIgnored var recognizeGeneration = 0
     /// O próximo arrasto na Lente marca o trecho a reconhecer (Editar › Reconhecer um trecho no espectro, ⌥⌘R).
     var selectingRegion = false
     /// Corrigir assim que as curvas da pista chegarem (a Lente estava fechada ou ainda medindo).
@@ -474,8 +477,7 @@ final class SongModel {
 
     /// Tudo o que está a caminho do motor: a edição pendente na página, a gravação da TAB e a dos trechos.
     func saveEverything() async {
-        if let data = await bridge.flush() { saveScore(data) }
-        await scoreSave?.value
+        await drainScore()
         await sectionsSave?.value
         await chordsSave?.value
     }
@@ -649,10 +651,9 @@ final class SongModel {
         }
         var others: [String: [Int]] = [:]
         for note in batch {
-            let rest = (together[note.tick] ?? []).filter { $0 != note.pitch }
+            let rest = (together[note.tick] ?? []).filter { $0 != note.pitch }.sorted()
             if !rest.isEmpty { others[curveKey(note, track: track)] = rest }
         }
-        let chords = Set(others.keys)
         guard let curves = try? await Backend.shared.pitchCurves(id, notes: list, others: others,
                                                                 stem: pitchStem(track: track).stem)
         else {
@@ -660,16 +661,12 @@ final class SongModel {
             curvesRetryAt = Date().addingTimeInterval(5)
             return false
         }
-        // A nota seguinte da corda, se começa onde a nota acaba (a subida no fim que chega a ela é a passagem).
-        let line = scoreNotes.indices.contains(track) ? scoreNotes[track] : []
-        func next(_ note: ScoreNote) -> Int? {
-            line.first { $0.string == note.string && abs($0.tick - (note.tick + note.duration)) < 1 }?.pitch
-        }
+        let starts = RawCurve.Context.starts(scoreNotes.indices.contains(track) ? scoreNotes[track] : [])
         for (item, note) in zip(list, batch) {
             guard let curve = curves[item.key] else { continue }
             let raw = RawCurve(curve: curve, start: item.start, end: item.end, pitch: item.pitch,
-                               chord: chords.contains(item.key), plain: note.bend.isEmpty, next: next(note),
-                               written: note.bend, approached: note.approached, slidesOut: note.slidesOut)
+                               context: .of(note, next: RawCurve.Context.next(of: note, in: starts),
+                                            others: others[item.key] ?? []))
             rawCurves[item.key] = raw
             soundNotes[item.key] = raw.sound(tuning: tuning)
         }
@@ -683,17 +680,80 @@ final class SongModel {
         let start: Double
         let end: Double
         let pitch: Int
-        let chord: Bool
-        let plain: Bool
-        let next: Int?
-        let written: [ScoreNote.BendPoint]
-        let approached: Bool
-        let slidesOut: Bool
+        var context: Context
+
+        /// A escrita da nota e das vizinhas que a leitura do som usa (o bend escrito, como chega e sai, a seguinte da
+        /// corda, o acorde): muda sem mudar a chave da curva, e a `SoundNote` é refeita com ela.
+        struct Context: Equatable {
+            /// As outras alturas da pista na mesma batida (o motor mede uma nota de acorde entre elas).
+            let others: [Int]
+            let plain: Bool
+            let next: Int?
+            let written: [ScoreNote.BendPoint]
+            let approached: Bool
+            let slidesOut: Bool
+
+            var chord: Bool { !others.isEmpty }
+
+            /// `next`: a altura da seguinte da corda, se começa onde a nota acaba (a subida no fim que chega a ela é a
+            /// passagem).
+            static func of(_ note: ScoreNote, next: Int?, others: [Int]) -> Context {
+                Context(others: others, plain: note.bend.isEmpty, next: next, written: note.bend,
+                        approached: note.approached, slidesOut: note.slidesOut)
+            }
+
+            /// As notas da pista pela corda e pelo tique em que começam, para achar a seguinte de cada uma.
+            static func starts(_ line: [ScoreNote]) -> [String: Int] {
+                var result: [String: Int] = [:]
+                for note in line { result["\(note.string):\(Int(note.tick.rounded()))"] = note.pitch }
+                return result
+            }
+
+            static func next(of note: ScoreNote, in starts: [String: Int]) -> Int? {
+                starts["\(note.string):\(Int((note.tick + note.duration).rounded()))"]
+            }
+        }
+
+        var chord: Bool { context.chord }
+        var plain: Bool { context.plain }
 
         func sound(tuning: Double) -> SoundNote {
-            SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: chord,
-                      next: next, written: written, approached: approached, slidesOut: slidesOut)
+            SoundNote(curve: curve.shifted(by: -tuning), start: start, end: end, pitch: Double(pitch), chord: context.chord,
+                      next: context.next, written: context.written, approached: context.approached,
+                      slidesOut: context.slidesOut)
         }
+    }
+
+    /// As notas mudaram sem mudar a chave da curva (um slide, um bend escrito, a nota seguinte, outra nota no acorde): a
+    /// mesma medida lida com a escrita de agora. Antes a `SoundNote` ficava com a leitura de quando foi medida até
+    /// reabrir a música. Uma nota que entrou ou saiu de um acorde é medida de novo (o motor mede entre as outras).
+    private func reinterpretCurves() {
+        guard !rawCurves.isEmpty else { return }
+        var changed = false
+        for (track, notes) in scoreNotes.enumerated() {
+            var together: [Double: [Int]] = [:]
+            for note in notes { together[note.tick, default: []].append(note.pitch) }
+            let starts = RawCurve.Context.starts(notes)
+            for note in notes {
+                let key = curveKey(note, track: track)
+                guard var raw = rawCurves[key] else { continue }
+                let others = (together[note.tick] ?? []).filter { $0 != note.pitch }.sorted()
+                if others != raw.context.others {
+                    rawCurves[key] = nil
+                    soundNotes[key] = nil
+                    curvesAsked.remove(key)
+                    changed = true
+                    continue
+                }
+                let context = RawCurve.Context.of(note, next: RawCurve.Context.next(of: note, in: starts), others: others)
+                guard context != raw.context else { continue }
+                raw.context = context
+                rawCurves[key] = raw
+                soundNotes[key] = raw.sound(tuning: tuning)
+                changed = true
+            }
+        }
+        if changed { pitchCurvesVersion += 1 }
     }
 
     @ObservationIgnored private var rawCurves: [String: RawCurve] = [:]
@@ -766,7 +826,10 @@ final class SongModel {
         guard let detail, lensVisible else { return }
         let stem = pitchStem(track: scoreTrack).stem
             ?? (detail.active?.files[Stem.guitar.rawValue] != nil ? Stem.guitar.rawValue : nil)
-        let key = "\(detail.activeStems ?? "")/\(stem ?? "original")/\(paper ? "papel" : "escuro")"
+        // O áudio na chave: uma música que não tinha (a Lente dizia "não tem áudio") e o ganha pelo "Buscar o áudio de
+        // novo" pede o espectro outra vez, sem reabrir.
+        let audio = detail.audio?.sha256 ?? "sem-áudio"
+        let key = "\(audio)/\(detail.activeStems ?? "")/\(stem ?? "original")/\(paper ? "papel" : "escuro")"
         guard key != spectrumKey else { return }
         spectrumKey = key
         if let kept = spectra[key] {
@@ -799,7 +862,7 @@ final class SongModel {
 
     /// Os sons da faixa em que a pista soa (para o som sem nota escrita); uma vez por faixa.
     func loadSounds(stem: String?) async {
-        let key = "\(detail?.activeStems ?? "")/\(stem ?? "original")"
+        let key = "\(detail?.audio?.sha256 ?? "sem-áudio")/\(detail?.activeStems ?? "")/\(stem ?? "original")"
         guard key != soundsKey else { return }
         soundsKey = key
         do {
@@ -1914,15 +1977,23 @@ final class SongModel {
 
     /// A gravação da TAB em curso: a seguinte espera por ela.
     @ObservationIgnored private var scoreSave: Task<Void, Never>?
+    /// O último Guitar Pro que a página mandou e o motor ainda não confirmou. A página só guarda o "pendente" até
+    /// mandar: uma gravação que falhava (o motor ocupado, um erro) deixava a edição só na memória da página, e fechar a
+    /// música a perdia. Fica aqui até o motor confirmar, e é mandado de novo ao sair da edição, ao fechar e ao sair.
+    @ObservationIgnored private var unsavedScore: Data?
 
     /// Uma gravação por vez, na ordem em que a página manda: uma mais velha que demorasse (o motor ocupado) chegaria
     /// depois da mais nova e desfaria a última edição no pacote.
     private func saveScore(_ data: Data) {
+        unsavedScore = data
         let previous = scoreSave
         scoreSave = Task {
             await previous?.value
+            // Uma mais nova já está na fila: ela leva a partitura de agora.
+            guard unsavedScore == data else { return }
             do {
                 try await Backend.shared.putScore(id, data)
+                if unsavedScore == data { unsavedScore = nil }
                 tabMessage = "Guardado"
                 synthChanged = true
                 if let fresh = try? await Backend.shared.song(id) { detail = fresh }
@@ -1931,8 +2002,29 @@ final class SongModel {
                     await synthesize(quiet: true)
                 }
             } catch {
-                tabMessage = "Não consegui guardar a TAB: \(error.localizedDescription)"
+                tabMessage = "Não consegui guardar a TAB: \(error.localizedDescription). Tento de novo ao sair da edição."
             }
+        }
+    }
+
+    /// A edição pendente na página e a que ainda não foi confirmada, gravadas: a que falhou é tentada mais uma vez e,
+    /// se falhar de novo, vai para uma cópia em `Recuperação` (ao lado do repertório), com aviso.
+    private func drainScore() async {
+        if let data = await bridge.flush() { saveScore(data) }
+        await scoreSave?.value
+        guard let data = unsavedScore else { return }
+        saveScore(data)
+        await scoreSave?.value
+        guard let data = unsavedScore, let detail else { return }
+        let folder = detail.url("").deletingLastPathComponent().deletingLastPathComponent().appending(path: "Recuperação")
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let file = folder.appending(path: "\(id) \(stamp).gp")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: file)
+            tabMessage = "A TAB editada não foi guardada no pacote; uma cópia ficou em \(file.path)."
+        } catch {
+            tabMessage = "A TAB editada não foi guardada: \(error.localizedDescription)"
         }
     }
 
@@ -2075,6 +2167,7 @@ final class SongModel {
                     return
                 }
                 await load()
+                await loadSpectrum()
                 return
             }
         } catch {

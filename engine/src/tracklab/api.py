@@ -354,9 +354,12 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
                 probs = chordsound.probabilities(found.file(audio["file"]), weights)
                 cache.parent.mkdir(exist_ok=True)
                 temp = cache.with_name(f".{cache.name}.{threading.get_ident()}.partial.npy")
-                np.save(temp, probs.astype(np.float16))
+                np.save(temp, probs.astype(np.float32))
                 temp.replace(cache)
-        return {"chords": chordsound.decode(probs.astype(np.float32), beats), "version": chordsound.VERSION}
+                for old in cache.parent.glob("chordprobs-source-v*.npy"):
+                    if old != cache:
+                        old.unlink(missing_ok=True)
+        return {"chords": chordsound.decode(probs, beats), "version": chordsound.VERSION}
 
     @app.get("/api/songs/{song_id}/sounds")
     def song_sounds(song_id: str, stem: str | None = None) -> dict:

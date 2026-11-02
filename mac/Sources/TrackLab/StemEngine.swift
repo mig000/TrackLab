@@ -296,8 +296,10 @@ final class StemEngine {
     var clock: Clock? {
         guard isPlaying else { return nil }
         let (anchorElapsed, anchorHost, latency, rate) = (anchorElapsed, anchorHost, latency, Double(rateValue))
+        // Sem o piso em zero do cursor: o primeiro quadro de uma gravação começada com a música parada chega antes de a
+        // música soar (o `lead` e a latência da saída), e o corte dos takes precisa saber quanto antes.
         return Clock(plan: plan, rate: rate, version: transportVersion) { host in
-            anchorElapsed + max(0, host - anchorHost - latency) * rate
+            anchorElapsed + (host - anchorHost - latency) * rate
         }
     }
 

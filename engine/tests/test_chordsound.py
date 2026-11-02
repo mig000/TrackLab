@@ -8,12 +8,12 @@ from tracklab.media import chordsound
 FRAME = chordsound.HOP / chordsound.RATE
 
 
-def probs(*segments):
+def probs(*segments, background=1e-4):
     """Probabilidades com um acorde maior forte em cada trecho (`(quadros, fundamental)`) e o baixo nele."""
     rows = []
     for frames, root in segments:
         for _ in range(frames):
-            row = np.full(sum(chordsound.WIDTHS), 1e-4, dtype=np.float32)
+            row = np.full(sum(chordsound.WIDTHS), background, dtype=np.float32)
             row[1 + root] = 0.9            # a tríade maior da fundamental (o índice 1 + 12·(tipo − 1) + fundamental)
             row[73 + 1 + root] = 0.9       # o baixo nela (o índice 0 é "sem baixo")
             row[73 + 13] = 0.9             # sem sétima, sem nona, sem décima primeira, sem décima terceira
@@ -47,3 +47,13 @@ def test_beat_frames_marks_each_kind():
     arr = chordsound.beat_frames(20, [(0, 2), (2 * FRAME, 2), (6 * FRAME, 4), (10 * FRAME, 3), (14 * FRAME, 4)])
     assert list(arr[:3]) == [1, 1, 2] and arr[6] == 4 and arr[10] == 3 and arr[14] == 4
     assert arr[3:6].sum() == 0 and list(arr[15:]) == [1] * 5
+
+
+def test_a_zero_probability_does_not_silence_the_song():
+    # Uma rede confiante (o resto a 1e-9) e um arquivo antigo em float16, que zerava esses valores: o HMM parte de
+    # "sem acorde" e, sem piso no log, um zero no primeiro quadro deixava a música inteira sem acorde.
+    confident = probs((100, 0), (100, 7), background=1e-9)
+    assert [row[2] for row in named(chordsound.decode(confident))] == ["C:maj", "G:maj"]
+    zeroed = confident.astype(np.float16)
+    assert (zeroed == 0).any()
+    assert [row[2] for row in named(chordsound.decode(zeroed))] == ["C:maj", "G:maj"]

@@ -120,8 +120,18 @@ final class LibraryModel {
     }
 
     /// As gravações dos trechos da biblioteca, uma por vez (como as da música aberta, `SongModel.save`).
-    @ObservationIgnored private var sectionsSave: Task<Void, Never>?
+    @ObservationIgnored private var sectionsSave: Task<Void, Never>? {
+        didSet { Self.saving = sectionsSave }
+    }
     @ObservationIgnored private var sectionsRevision = 0
+    /// A última gravação dos trechos da biblioteca, para o app esperar antes de sair (a fila da música aberta não a
+    /// conhece: saindo logo depois de marcar um favorito em Trechos, o motor saía antes de gravar).
+    private static var saving: Task<Void, Never>?
+
+    /// Antes de o app sair: as gravações dos trechos a caminho.
+    static func finishAll() async {
+        await saving?.value
+    }
 
     /// Muda um trecho direto da biblioteca (tipo, etiquetas, favorito): a música manda a lista inteira de volta, e o
     /// motor mantém o treino de cada trecho pelo id. A lista muda na tela já e a mudança seguinte parte dela (antes,

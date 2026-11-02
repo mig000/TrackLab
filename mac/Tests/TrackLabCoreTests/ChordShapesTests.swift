@@ -18,7 +18,8 @@ private func library() throws -> ChordLibrary {
     #expect(chords.shapes(for: "Bb").first?.frets.first == -1)
     #expect(!chords.shapes(for: "F#m7b5").isEmpty && !chords.shapes(for: "A♭").isEmpty)
     // Um nome que a base não tem: o mais perto (Cmadd11 → Dó menor; C(add9) → Cadd9).
-    #expect(chords.shapes(for: "Cmadd11") == chords.shapes(for: "Cm"))
+    #expect(chords.shapes(for: "Cmadd11").map(\.frets) == chords.shapes(for: "Cm").map(\.frets))
+    #expect(chords.shapes(for: "Cmadd11").first?.drawn == "Cm" && chords.shapes(for: "Cm").first?.drawn == nil)
     #expect(chords.shapes(for: "C(add9)") == chords.shapes(for: "Cadd9"))
     #expect(chords.shapes(for: "xyz").isEmpty)
 }
@@ -39,4 +40,38 @@ private func library() throws -> ChordLibrary {
     let shapes = chords.shapes(for: "A", played: nil, hand: hand)
     #expect(shapes.first?.frets == [5, 7, 7, 6, 5, 5])
     #expect(chords.shapes(for: "A", played: ChordShape(frets: [-1, 0, 2, 2, 2, -1], fromTab: true), hand: hand).first?.fromTab == true)
+}
+
+/// Um acorde com baixo que não é tríade maior nem menor não pega a inversão do maior: o C7/G desenha um C7 (com o Si♭) e
+/// o Csus4/G um Csus4 (com o Fá), e o cartão diz que o desenho é sem o baixo.
+@Test func inversoesNaoPerdemAQualidade() throws {
+    let chords = try library()
+    let standard = [40, 45, 50, 55, 59, 64]
+    func classes(_ shape: ChordShape) -> Set<Int> {
+        Set(zip(shape.frets, standard).compactMap { $0 < 0 ? nil : ($0 + $1) % 12 })
+    }
+    for (name, needs) in [("C7/G", 10), ("Csus4/G", 5), ("Cmaj7/G", 11), ("Caug/G", 8), ("Am7/G", 7)] {
+        let shapes = chords.shapes(for: name)
+        #expect(!shapes.isEmpty, "\(name)")
+        #expect(shapes.allSatisfy { classes($0).contains(needs) }, "\(name)")
+        #expect(shapes.first?.drawn == name.split(separator: "/").first.map(String.init), "\(name)")
+    }
+    #expect(chords.shapes(for: "Csus4/G").allSatisfy { !classes($0).contains(4) })
+    // As tríades com baixo continuam com a inversão da base.
+    #expect(chords.shapes(for: "C/G").first?.frets == [3, 3, 2, 0, 1, 0] && chords.shapes(for: "C/G").first?.drawn == nil)
+    #expect(chords.shapes(for: "Am/G").first?.drawn == nil)
+}
+
+/// As guitarras de seis cordas pela afinação da pauta: uma que não toca a sexta corda continua (com o capo dela), uma de
+/// sete que só desce à sexta não entra, e a base vem antes do solo.
+@Test func guitarrasDeSeisCordasPelaAfinacao() {
+    let six = [64, 59, 55, 50, 45, 40]
+    let high = [ScoreNote(tick: 0, duration: 960, pitch: 69, string: 1, fret: 5)]
+    let toSixth = [ScoreNote(tick: 0, duration: 960, pitch: 40, string: 6, fret: 0)]
+    let names = [(index: 0, name: "Lead Guitar"), (index: 1, name: "Rhythm Guitar"), (index: 2, name: "7-string Guitar"),
+                 (index: 3, name: "Guitar 3")]
+    #expect(ChordReader.guitarTracks(names: names, tunings: [six, six, six + [35], six], notes: [toSixth, high, toSixth, []])
+            == [1, 0])
+    // Sem a afinação (antes de a página mandar), pela corda mais grave tocada.
+    #expect(ChordReader.guitarTracks(names: names, tunings: [], notes: [toSixth, high, toSixth, []]) == [2, 0])
 }

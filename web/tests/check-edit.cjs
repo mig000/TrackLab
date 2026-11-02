@@ -975,6 +975,64 @@ test("o trecho reconhecido no espectro troca as notas da faixa de alturas e junt
     [[11520, 1440], [13440, 960], [14400, 960]]);
 });
 
+test("o trecho reconhecido não mexe no que fica fora da faixa: a batida, as partes ligadas e a corda ocupada", () => {
+  const core = require("../score-core.js");
+  const m = alphaTab.model;
+  const beatAt = (sc, tick) => sc.tracks[0].staves[0].bars.flatMap((b) => b.voices[0].beats)
+    .find((b) => b.absolutePlaybackStart === tick && b.notes.length);
+  // O que é da batida (o texto, o acorde escrito, a palhetada, o tapping) fica, reconhecendo uma nota noutra corda.
+  let score = load();
+  let staff = score.tracks[0].staves[0];
+  const chord = new m.Chord();
+  chord.name = "C";
+  staff.addChord("c1", chord);
+  Object.assign(beatAt(score, 0), { text: "w/ reverb", chordId: "c1", pickStroke: m.PickStroke.Down, tap: true });
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 0, to: 960, low: 70, high: 72,
+    notes: [{ tick: 0, end: 960, string: 2, fret: 12 }] }), true);
+  for (const sc of [edit.refinish(alphaTab, score), reread(edit.refinish(alphaTab, score))]) {
+    const beat = beatAt(sc, 0);
+    assert.deepEqual(beat.notes.map((n) => n.realValue).sort(), [60, 71]);
+    assert.equal(beat.text, "w/ reverb");
+    assert.equal(beat.pickStroke, m.PickStroke.Down);
+    assert.equal(beat.tap, true);
+    assert.deepEqual(core.writtenChords(sc).map((c) => c[2]), ["C"]);
+  }
+  // Uma mínima de Dó em duas partes ligadas, com vibrato só na segunda: reconhecer outra altura por cima dela deixa as
+  // duas partes, cada uma com o que tinha.
+  score = load();
+  const second = beatAt(score, 960).notes[0];
+  second.isTieDestination = true;
+  second.vibrato = m.VibratoType.Slight;
+  score = edit.refinish(alphaTab, score);
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 0, to: 1920, low: 70, high: 72,
+    notes: [{ tick: 0, end: 1920, string: 2, fret: 12 }] }), true);
+  for (const sc of [edit.refinish(alphaTab, score), reread(edit.refinish(alphaTab, score))]) {
+    const parts = [0, 960].map((t) => beatAt(sc, t).notes.find((n) => n.realValue === 60));
+    assert.ok(parts[0] && parts[1], "as duas partes do Dó");
+    assert.equal(parts[0].vibrato, m.VibratoType.None);
+    assert.equal(parts[1].vibrato, m.VibratoType.Slight);
+    assert.ok(parts[1].isTieDestination);
+  }
+  // O Ré achado na corda do Dó que fica (corda 3, casa 7, no mesmo tempo) vai para outra corda: uma nota por corda, e a
+  // escolha e o apagar pegam o Ré, não o Dó.
+  score = load();
+  staff = score.tracks[0].staves[0];
+  const found = { tick: 0, end: 960, string: 3, fret: 7 };
+  assert.equal(edit.replaceRegion(alphaTab, staff, { from: 0, to: 960, low: 61, high: 63, notes: [found] }), true);
+  score = edit.refinish(alphaTab, score);
+  const beat = beatAt(score, 0);
+  assert.deepEqual(beat.notes.map((n) => n.realValue).sort(), [60, 62]);
+  assert.equal(new Set(beat.notes.map((n) => n.string)).size, 2);
+  assert.ok(found.placed && found.placed.string !== 3);
+  const re = edit.findNote(score, 0, 0, found.placed.string, 0);
+  assert.equal(re.realValue, 62);
+  // Sem corda livre para ele, o trecho é recusado.
+  score = load();
+  assert.equal(edit.replaceRegion(alphaTab, score.tracks[0].staves[0], { from: 0, to: 960, low: 40, high: 41,
+    notes: [{ tick: 0, end: 960, string: 6, fret: 0 }, { tick: 0, end: 960, string: 6, fret: 1 }] }), "busy");
+});
+
 test("o capo e a afinação de uma pista inteira: as mesmas casas, as notas soam no disco, e o Guitar Pro guarda", () => {
   const score = load();
   const note = score.tracks[0].staves[0].bars.flatMap((b) => b.voices[0].beats).flatMap((b) => b.notes)[0];
