@@ -46,7 +46,8 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   nomes, então um índice velho não erra); SQLite com FTS5 (sem acento,
   pelo começo das palavras) em `~/TrackLab/multitracks.sqlite`, refeito inteiro por `POST multitracks/scan` (na
   fila: ~6 min no HD frio, ~40 s com cache; 4.459 músicas em 28/10). A busca do Songsterr marca o resultado que está
-  na biblioteca (mesmo título e artista, sem acento nem parênteses). As escondidas (uma regravação que não serve, uma
+  na biblioteca (mesmo título e artista, sem acento nem parênteses), e "Importar" nele traz as faixas dela no lugar do
+  Demucs (um .mogg, depois do Demucs), como Fontes › Multitracks › "Procurar a TAB". As escondidas (uma regravação que não serve, uma
   cópia repetida) ficam numa lista à parte, pelo caminho, em `~/TrackLab/multitracks-hidden.json` (`GET` e `PUT
   multitracks/hidden`): os arquivos do HD não mudam, a varredura continua indexando-as e só a busca, a marca na busca do
   Songsterr e o casamento com a música as deixam de fora (pedida pelo caminho, uma escondida vale). Em Fontes ›
@@ -73,8 +74,10 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   Sultans; sem bateria e voz não ajudou.
 - Acordes (`PUT songs/{id}/chords`, `set_chord_edits`): as correções da barra de acordes do app no manifesto
   (`chordEdits`: `from` e `to` em tiques e o nome; vazio é "sem acorde"), em ordem; a leitura dos acordes é do app.
-- Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/` e só vira a ativa sem A/B se não
-  houver outra (`PUT songs/{id}/stems/active`). `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
+- Escada de separação (Fase 4, `stems.py`): cada fonte é uma pasta em `stems/`. A multitrack (pasta ou .mogg) vira a ativa ao
+  chegar, por ser a melhor que há; o Demucs só se não houver multitrack (o de um .mogg, feito antes, fica no A/B); o
+  MVSEP, só se não houver outra (espera o A/B); o app troca com `PUT songs/{id}/stems/active`, e a escolha fica no
+  manifesto. `media/align.py` acha a multitrack sobre o áudio do vídeo (GCC-PHAT
   em 24 trechos, consenso numa reta: deslocamento e velocidade até 2 %, depois uma passada fina; ganho pela energia);
   sem consenso é outra gravação e nada entra. Medido em 28/10: Highway Star +0,39 %, Purple Haze −0,83 %, American
   Woman 72,8 s de introdução a mais no vídeo; o cover do GH3 da Sunshine é recusado. Entre transferências sobra uma
@@ -319,7 +322,11 @@ valor no `didSet` chamava o `didSet` de novo até estourar a pilha); o metrônom
 (`Metronome.samples`, nas batidas do mapa, o 1 mais forte) gerada no app e trocada com `setClick` quando o mapa muda;
 no transporte, "Tom" abre o popover com os semitons, os cents e o Lá 440 (desconta a afinação medida da gravação); o loop é agendado no
 player (`PlaybackPlan`: até o fim do loop e o loop de novo, 20 min por vez), sem seek a cada volta. `SongModel`
-abre a música (manifesto, mapa, ondas, áudio, GP); a mixagem abre em "Sem guitarra". `FitaView`: a onda do
+abre a música (manifesto, mapa, ondas, áudio, GP). Na primeira vez, a pista é a guitarra solo (pelo nome: lead,
+solo, slide…), senão outra guitarra (`ScoreEntry.studyTrack`), e o som é a banda inteira nas faixas; depois, a música
+reabre como ficou: a pista, as de baixo ("Com"), original ou faixas, os grupos Áudio e TAB e cada faixa
+(`SongListening`, nas preferências do app em `escuta.<id>`, gravado ao fechar a música e ao sair; as pistas da TAB
+sintetizada, que chegam depois, esperam em `pendingMix`). `FitaView`: a onda do
 original e a da guitarra sob a agulha (a 40 % até um clique: `SongModel.playheadAt`); clique na TAB, na Onda ou na
 Lente = o cabeçote vai até ali e a agulha fica no lugar do clique (a tela não salta; a TAB recebe a mesma fração por
 `ScoreBridge.setCursor`; dentro de um loop parado só a agulha anda); clicar, arrastar e soltar em qualquer painel, também
@@ -841,7 +848,8 @@ consulta o índice.
 
 Escada de separação (Fase 4): no mixer, o seletor de faixas (Demucs 6s, Multitrack, MVSEP 6 faixas, MVSEP Guitar, MVSEP Solo e base) e
 o A/B (B) trocam a separação no mesmo ponto, tocando, com a mesma mixagem; "Melhorar as faixas" pede a multitrack ou o
-MVSEP (com a cota do dia) e a nova chega como o outro lado do A/B. A faixa `rhythm` (Base) entra no mixer e "Sem
+MVSEP (com a cota do dia): a multitrack chega tocando, com a de antes do outro lado do A/B, e o MVSEP chega como o outro
+lado do A/B. A faixa `rhythm` (Base) entra no mixer e "Sem
 guitarra" cala as duas. A chave do MVSEP fica nas Chaves do macOS (TrackLab › Ajustes, ⌘,); o app ad hoc pede
 permissão para lê-la de novo a cada build.
 

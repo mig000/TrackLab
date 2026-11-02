@@ -58,7 +58,9 @@ struct ImportSheet: View {
                             .help("Na biblioteca de multitracks: \(multitrack.instruments.joined(separator: ", ")) "
                                 + "(\(multitrack.formatLabel), \(multitrack.collection))")
                     }
-                    Button("Importar") { start(String(result.id), title: "\(result.artist) — \(result.title)") }
+                    Button("Importar") {
+                        start(String(result.id), title: "\(result.artist) — \(result.title)", with: result.multitrack)
+                    }
                 }
             }
             .frame(minHeight: 260)
@@ -103,8 +105,10 @@ struct ImportSheet: View {
         }
     }
 
-    private func start(_ reference: String, title: String) {
-        let multitrack = multitrack
+    /// A multitrack da biblioteca que é o resultado (a busca a marca) entra no lugar do Demucs, como a de Fontes ›
+    /// Multitracks: é a melhor separação que há.
+    private func start(_ reference: String, title: String, with found: MultitrackSong? = nil) {
+        let multitrack = found ?? multitrack
         Task { await library.importSong(reference, title: title, multitrack: multitrack) }
         dismiss()
     }

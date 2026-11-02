@@ -68,6 +68,10 @@ final class SongModel {
     private(set) var synthMessage: String?
     private var synthChanged = false
     @ObservationIgnored private var synthRetried = false
+    /// O que se escutava e via nesta música da última vez (`SongListening`, nas preferências do app); as entradas do
+    /// mixer que ainda não chegaram (a TAB sintetizada vem depois) esperam em `pendingMix`.
+    @ObservationIgnored private var listening: SongListening?
+    @ObservationIgnored private var pendingMix: [String: StemMix] = [:]
     /// A multitrack da biblioteca que é esta música (para "Faixas da multitrack").
     private(set) var multitrack: MultitrackSong?
     private(set) var mvsepUsage: MVSEPUsage?
@@ -481,8 +485,10 @@ final class SongModel {
         }
     }
 
-    /// Tudo o que está a caminho do motor: a edição pendente na página, a gravação da TAB e a dos trechos.
+    /// Tudo o que está a caminho do motor: a edição pendente na página, a gravação da TAB e a dos trechos; e, no app,
+    /// o que se escutava.
     func saveEverything() async {
+        saveListening()
         await drainScore()
         await sectionsSave?.value
         await chordsSave?.value
@@ -494,9 +500,25 @@ final class SongModel {
         await closing?.value
     }
 
+    private var listeningKey: String { "escuta.\(id)" }
+
+    /// A pista, as de baixo e a mixagem desta música, para ela reabrir como ficou. Só depois de aberta: uma que não
+    /// abriu não apaga o que estava guardado.
+    func saveListening() {
+        guard phase == .ready, detail != nil else { return }
+        var mix = pendingMix
+        for (key, entry) in engine.mix { mix[key] = entry }
+        let value = SongListening(track: scoreTrack, others: scoreOthers, useStems: engine.useStems,
+                                  audioOn: engine.audioOn, tabOn: engine.tabOn, mix: mix)
+        if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: listeningKey) }
+    }
+
     func load() async {
         phase = .loading
         await Self.closing?.value
+        listening = UserDefaults.standard.data(forKey: listeningKey)
+            .flatMap { try? JSONDecoder().decode(SongListening.self, from: $0) }
+        pendingMix = listening?.mix ?? [:]
         do {
             let detail = try await Backend.shared.song(id)
             self.detail = detail
@@ -563,10 +585,26 @@ final class SongModel {
         } else if keepMix {
             // A/B: a mesma escuta na separação nova (o atalho de antes vale para as faixas que ela tem, a Base inclusa).
             if let preset { apply(preset) }
+        } else if let listening {
+            // Como ficou da última vez: original ou faixas, os grupos e cada faixa.
+            engine.useStems = listening.useStems ?? true
+            engine.audioOn = listening.audioOn ?? true
+            engine.tabOn = listening.tabOn ?? false
         } else {
+            // A primeira vez: a banda inteira, nas faixas (um clique em "Sem guitarra" e ela sai).
             engine.useStems = true
-            // Abre pronta para tocar junto: a banda sem a guitarra.
-            engine.mix = MixPreset.noGuitar.apply(to: engine.mix, stems: engine.stemIDs)
+            engine.mix = MixPreset.full.apply(to: engine.mix, stems: engine.stemIDs)
+        }
+        restorePendingMix()
+    }
+
+    /// As faixas guardadas que já estão no mixer voltam como estavam; as que faltam (a TAB sintetizada, que chega
+    /// depois) esperam a vez delas.
+    private func restorePendingMix() {
+        let present = Set(engine.stemIDs + engine.synthIDs)
+        for (key, entry) in pendingMix where present.contains(key) {
+            engine.mix[key] = entry
+            pendingMix[key] = nil
         }
     }
 
@@ -577,9 +615,11 @@ final class SongModel {
         }
         do {
             let data = try Data(contentsOf: detail.url(score.file))
-            let first = score.tracks.first(where: \.isGuitar)?.index ?? 0
+            // A pista de antes, se havia; senão a guitarra solo, ou outra guitarra.
+            let first = listening?.track(in: score) ?? score.studyTrack
             scoreTrack = first
             bridge.load(gp: data, track: first, points: grid.points, page: scorePage)
+            if let others = listening?.others(in: score, main: first), !others.isEmpty { scoreOthers = others }
         } catch {
             scoreMessage = "Não consegui ler a partitura: \(error.localizedDescription)"
         }
@@ -2219,7 +2259,12 @@ final class SongModel {
                 let fresh = try await Backend.shared.song(id)
                 self.detail = fresh
                 if previous?.activeStems != fresh.activeStems {
-                    try loadAudio(fresh, keepMix: false)
+                    // A multitrack passa a tocar ao chegar; a de antes fica do outro lado do A/B.
+                    compareKey = previous?.activeStems
+                    if let active = fresh.activeStems, let label = fresh.stems[active]?.label {
+                        notice = "\(label) pronta e tocando; B volta à de antes."
+                    }
+                    try loadAudio(fresh, keepMix: true)
                     await loadGuitarPeaks(fresh)
                     await loadSpectrum()
                     measureLater()

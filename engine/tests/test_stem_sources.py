@@ -77,12 +77,13 @@ def library(tmp_path, parts, rate=44_100, ini="[song]\nname = Sunshine of Your L
     return tmp_path / "Multitracks", found[0]
 
 
-def test_the_multitrack_lands_on_the_video_and_waits_for_the_ab(song, parts, tmp_path):
+def test_the_multitrack_lands_on_the_video_and_becomes_the_active_one(song, parts, tmp_path):
     folder, entry = library(tmp_path, parts)
     demucs_key = song.manifest["activeStems"]
     result = stems.import_multitrack(song, entry, folder=folder)
-    assert result["key"].startswith("multitrack-") and result["active"] is False
-    assert song.manifest["activeStems"] == demucs_key                    # o A/B decide
+    # A multitrack é a melhor que há: passa a ser a que toca, e o Demucs fica do outro lado do A/B.
+    assert result["key"].startswith("multitrack-") and result["active"] is True
+    assert song.manifest["activeStems"] == result["key"] and demucs_key in song.manifest["stems"]
     alignment = result["alignment"]
     assert alignment["offset"] == pytest.approx(DELAY, abs=0.0003) and alignment["speed"] == pytest.approx(1, abs=1e-4)
     assert set(result["files"]) == {"guitar", "bass", "other"}           # rhythm é o baixo; crowd fica de fora
@@ -95,7 +96,13 @@ def test_the_multitrack_lands_on_the_video_and_waits_for_the_ab(song, parts, tmp
     assert np.std(guitar[middle]) == pytest.approx(np.std(expected[middle]), rel=0.1)   # no volume do vídeo
     again = stems.import_multitrack(song, entry, folder=folder)
     assert again["reused"] is True
+    song.set_active_stems(demucs_key)
+    assert song.manifest["activeStems"] == demucs_key
+    # O Demucs feito depois (aqui, de novo, sem o de antes) não passa na frente da multitrack.
     song.set_active_stems(result["key"])
+    song.update(lambda data: data["stems"].pop(demucs_key))
+    again = stems.separate_song(song, run=fake_run([]))
+    assert again["key"] == demucs_key and again["active"] is False
     assert song.manifest["activeStems"] == result["key"]
 
 

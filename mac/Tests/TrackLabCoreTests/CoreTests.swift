@@ -1031,3 +1031,29 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect(SongParts.color(of: "verse") != SongParts.color(of: "chorus"))
     #expect(SongParts.color(of: "riff do meio") == SongParts.color(of: "riff do meio"))
 }
+
+@Test func aPistaDeEstudoEAGuitarraSolo() {
+    func score(_ names: [String]) -> ScoreEntry {
+        ScoreEntry(file: "x.gp", measures: 1,
+                   tracks: names.enumerated().map { ScoreTrack(index: $0.offset, name: $0.element, instrument: nil) })
+    }
+    // A solo, mesmo depois da base; o nome do Songsterr junta músico, instrumento e papel.
+    #expect(score(["Vocals", "Rhythm Guitar", "Lead Guitar", "Bass"]).studyTrack == 2)
+    #expect(score(["Lead Vocals", "George Harrison | Gibson Les Paul | Guitar Solo", "Bass"]).studyTrack == 1)
+    // Sem solo, a primeira guitarra; sem guitarra, a primeira pista.
+    #expect(score(["Vocals", "Acoustic Guitar", "Electric Guitar"]).studyTrack == 1)
+    #expect(score(["Piano", "Bass Guitar"]).studyTrack == 0)
+}
+
+@Test func aEscutaGuardadaVoltaComAPartituraDeAgora() throws {
+    let score = ScoreEntry(file: "x.gp", measures: 1, tracks: (0..<3).map { ScoreTrack(index: $0, name: "Guitar \($0)", instrument: nil) })
+    let saved = SongListening(track: 2, others: [0, 2, 7], useStems: false, audioOn: true, tabOn: true,
+                              mix: ["guitar": StemMix(volume: 0.5, muted: true), "tab:1": StemMix(volume: 0.3)])
+    let back = try JSONDecoder().decode(SongListening.self, from: JSONEncoder().encode(saved))
+    #expect(back == saved)
+    #expect(back.track(in: score) == 2)
+    // A principal e as que a partitura não tem mais saem das de baixo.
+    #expect(back.others(in: score, main: 2) == [0])
+    // Uma pista que sumiu (a partitura editada perdeu pistas) volta à de estudo.
+    #expect(SongListening(track: 9).track(in: score) == score.studyTrack)
+}

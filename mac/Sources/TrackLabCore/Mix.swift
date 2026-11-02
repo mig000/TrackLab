@@ -196,3 +196,37 @@ extension Stem {
         return .guitar
     }
 }
+
+/// O que se escuta e se vê numa música, guardado por música no app: a pista e as de baixo, original ou faixas, os
+/// grupos Áudio e TAB e cada faixa (volume, mudo, solo). A música reabre como ficou.
+public struct SongListening: Codable, Equatable, Sendable {
+    public var track: Int?
+    public var others: [Int]?
+    public var useStems: Bool?
+    public var audioOn: Bool?
+    public var tabOn: Bool?
+    public var mix: [String: StemMix]?
+
+    public init(track: Int? = nil, others: [Int]? = nil, useStems: Bool? = nil, audioOn: Bool? = nil, tabOn: Bool? = nil,
+                mix: [String: StemMix]? = nil) {
+        self.track = track
+        self.others = others
+        self.useStems = useStems
+        self.audioOn = audioOn
+        self.tabOn = tabOn
+        self.mix = mix
+    }
+
+    /// A pista guardada, se a partitura ainda a tem; senão a de estudo (`ScoreEntry.studyTrack`).
+    public func track(in score: ScoreEntry) -> Int {
+        let indices = Set(score.tracks.map(\.index))
+        if let track, indices.contains(track) { return track }
+        return score.studyTrack
+    }
+
+    /// As de baixo guardadas que a partitura ainda tem, sem a principal.
+    public func others(in score: ScoreEntry, main: Int) -> [Int] {
+        let indices = Set(score.tracks.map(\.index))
+        return (others ?? []).filter { indices.contains($0) && $0 != main }
+    }
+}

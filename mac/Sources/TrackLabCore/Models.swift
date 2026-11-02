@@ -99,6 +99,20 @@ public struct ScoreEntry: Codable, Hashable, Sendable {
     public let file: String
     public let measures: Int?
     public let tracks: [ScoreTrack]
+
+    public init(file: String, measures: Int?, tracks: [ScoreTrack]) {
+        self.file = file
+        self.measures = measures
+        self.tracks = tracks
+    }
+
+    /// A pista que a música abre: a guitarra solo (pelo nome: lead, solo, slide…), senão outra guitarra, senão a
+    /// primeira.
+    public var studyTrack: Int {
+        let guitars = tracks.filter(\.isGuitar)
+        let lead = guitars.first { HarmonyRole.of(name: $0.name) == .lead }
+        return (lead ?? guitars.first ?? tracks.first)?.index ?? 0
+    }
 }
 
 public struct AudioEntry: Codable, Hashable, Sendable {

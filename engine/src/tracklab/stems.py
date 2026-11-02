@@ -59,7 +59,9 @@ def separate_song(package: SongPackage, *, progress: Progress | None = None, can
         receipt["provider"] = "demucs"
         return receipt
 
-    return _publish(package, key, build, progress, demucs.STAGE, activate=True)
+    # A multitrack, quando há, é a que toca: o Demucs feito depois (o de um .mogg, um refeito) fica no A/B.
+    multitrack = any(entry.get("provider") == "multitrack" for entry in package.manifest.get("stems", {}).values())
+    return _publish(package, key, build, progress, demucs.STAGE, activate=not multitrack)
 
 
 def import_multitrack(package: SongPackage, entry: dict, *, folder: Path | None = None,
@@ -82,7 +84,7 @@ def import_multitrack(package: SongPackage, entry: dict, *, folder: Path | None 
         receipt["provider"] = "multitrack"
         return receipt
 
-    return _publish(package, key, build, progress, multitrack_media.STAGE, activate=False)
+    return _publish(package, key, build, progress, multitrack_media.STAGE, activate=True)
 
 
 def _import_mogg(package: SongPackage, entry: dict, audio: dict, *, folder: Path | None, progress, cancel) -> dict:
@@ -107,7 +109,7 @@ def _import_mogg(package: SongPackage, entry: dict, audio: dict, *, folder: Path
         receipt["provider"] = "multitrack"
         return receipt
 
-    return _publish(package, key, build, progress, multitrack_media.STAGE, activate=False)
+    return _publish(package, key, build, progress, multitrack_media.STAGE, activate=True)
 
 
 def multitrack_tracks(entry: dict, base: Path) -> list[tuple[Path, str]]:
