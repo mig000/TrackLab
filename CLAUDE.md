@@ -168,6 +168,16 @@ de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
 - `media/`: probe / convert / peaks / separate copiados do TabLab. `separate` (Demucs 6s) cai para a CPU se o MPS
   recusar uma operação e registra o motivo no recibo.
 - `models.py`: pesos baixados de uma revisão fixa e conferidos por SHA-256 (`~/TrackLab/Modelos`).
+- O tempo ouvido para o Ajuste (`media/beats.py`, `GET songs/{id}/beats?bpm=`): a força dos ataques (o `onset_strength`
+  do librosa a cada 128 amostras a 22 050 Hz, adiantada dois quadros, que é o quanto ela chega depois do ataque: num
+  bumbo de teste as batidas achadas ficavam 18 ms atrasadas e assim ficam a 4 ms) e as batidas do `beat_track` sobre ela,
+  começando no andamento do mapa, na bateria da separação ativa (sem ela, o baixo ou o original), guardadas em
+  `peaks/beats-<faixa>-b<VERSION>-<bpm>.json`. No Sultans (multitrack), as batidas do detector caem a +7 ms das do mapa em
+  mediana e 25 % delas a mais de 25 ms. Os gestos do mapa ganharam `pull: "right"` (o lado direito inteiro anda, o
+  esquerdo estica até 8 batidas) e `moves` (várias batidas levadas uma depois da outra como arrastos; a que não cabe
+  entre as âncoras fica, `movedCount` na resposta) e `follow` (`follow_ranges`: as batidas de uns trechos, `ranges`, até
+os ataques casados, `pairs` em tique escrito e segundo ouvido, pelo `follow_anchors` com a janela de meio compasso; o
+resto do mapa fica como âncora e a fonte não muda).
 - `jobs.py` (do TabLab: um worker, eventos em disco e por SSE; uma importação cancelada no meio da separação termina
   cancelada, com a música já no repertório), `api.py` (FastAPI; o Ajuste usa
   `POST songs/{id}/tempo-map/edit` com um gesto de `anchor_edit` e `PUT songs/{id}/tempo-map` para o Desfazer),
@@ -244,8 +254,8 @@ SwiftPM sem Xcode (`./build.sh` → build/TrackLab.app, `./test.sh`), alvo macOS
 views por `@Local` (= SwiftUI.State).
 
 A tela da música, redesenhada em 31/10 (a proposta, com as pranchas: https://claude.ai/artifact/71SvyMjBhJgvsTxf1X71yc):
-três modos num seletor no centro da barra, `SongModel.mode` (Estudar; Editar, ⌘E, = `editingTab`; Ajustar, ⌘J, =
-`adjusting`), cada um com o lado direito da barra e o inspetor dele. À esquerda da barra o título com o estado (um menu).
+os modos num seletor no centro da barra, `SongModel.mode`, na ordem da vida de uma música (2/11): Ajustar (⌘J, =
+`adjusting`), Editar (⌘E, = `editingTab`), Estudar (onde a música abre) e Gravar, cada um com o lado direito da barra e o inspetor dele. À esquerda da barra o título com o estado (um menu).
 Um inspetor só à direita (`InspectorPanel`, 300 pt, ⌥⌘I, `showInspector`), com o conteúdo pelo modo: em Estudar, o
 Trecho (o ativo: recorde, meta, a sequência, Limpo!), o Mixer (Original/Faixas, os atalhos, cada faixa com M/S e volume,
 a TAB sintetizada com o X e as pistas) e as Faixas (a separação, o A/B, Melhorar, a cota do MVSEP); em Editar, a nota
@@ -347,7 +357,46 @@ os trechos baixos e a guitarra separada ocuparem a faixa. A silhueta da banda (o
 (as seções do Guitar Pro, `songParts`; `SongParts` dá a família, "Verse 2" e "Verso" são a mesma, e a cor dela, sem
 amarelo nem laranja, que são da guitarra), também na faixa da onda em cima da Lente, e o nome de cada parte fica embaixo,
 no começo dela (a que já começou, presa na borda esquerda); cinza fora das partes e numa música sem seções. A
-Lente medir as curvas depende de ela estar à vista; o loop na TAB vai de barra a barra. Ajuste (⌘J,
+Lente medir as curvas depende de ela estar à vista; o loop na TAB vai de barra a barra. A tela do Ajustar (2/11, a
+primeira da proposta "uma tela por atividade", https://claude.ai/artifact/LPqSCZZDfnqGNsM9k2mRco; `Adjust.swift`,
+`AdjustViews.swift`, `TrackLabCore/Adjust.swift`) é a do tempo, sem as notas: a TAB sai da tela (a página continua viva por
+baixo, com altura zero), a Lente e a barra de acordes também, e a Fita fica com a altura toda. Em cima, a música inteira
+(`AdjustOverview`): o andamento de cada compasso pelo mapa, o som contra o mapa por compasso (azul, os a olhar em
+vermelho), os conferidos e o trecho da Fita; um clique leva a música até ali. Na Fita, no lugar das ondas
+(`drawBeatView`): a força dos ataques da bateria (`HeardBeats`, pedida ao entrar no Ajuste), as batidas do detector
+tracejadas, o pente (os ataques escritos da pista principal, sem as notas, ligados ao ataque ouvido mais perto na faixa
+dela, os `sounds` do motor; `Comb.pairs`, um com um, até 120 ms; em vermelho os de 25 ms para cima, com o valor) e o
+intervalo entre as batidas do mapa em ms (vermelho quando foge 5 % dos vizinhos). Cada compasso (`AdjustReview.bars`,
+`BarReview`) leva o andamento, a mediana dos ataques (ao menos 3) e a batida do detector mais perto do 1 (até 150 ms); é
+"a olhar" quando as duas provas dizem 25 ms ou mais para o mesmo lado, uma diz 40 ms ou mais sem a outra contradizer, ou
+o andamento salta (o compasso de antes rápido e este lento, ou o contrário, 3 % cada um contra a mediana de 4 vizinhos de
+cada lado, ou 12 % sozinho: a variação de uma banda ao vivo fica em 1–3 % e não faz o par). Com uma prova só a 25 ms, o
+detector sozinho marcava 61 dos 214 compassos do Sultans; assim, 29. No inspetor (`SyncInspector`): "A olhar" (cada um
+com as duas provas em pontos e o Ir, que põe o loop nele), "Corrigir os N pelo som" (as batidas de dentro dos compassos
+que as duas provas acusam vão até os ataques da guitarra, `follow` no motor: a reta dos ataques casados a meio compasso de
+cada batida, e o resto do mapa parado; no Sultans, 17 → 2. Antes: um deslocamento interpolado entre compassos deixava o
+compasso curto da introdução com batidas a menos de 60 ms e o motor recusava; o 1 de cada um levado como num arrasto,
+`moves`, puxava os vizinhos certos e 17 viravam 34), "A música toda pelo som" (⇧A, agora pelo pente, sem a
+Lente), a conferência de ouvido, os conferidos, Metade, Dobro e ±10 ms ("O mapa inteiro") e as versões. Conferir de
+ouvido (`AdjustCheckSheet`): um compasso por vez em loop, com o clique; Certo (C) marca conferido e toca o seguinte,
+Certo também prende o 1 do compasso (vira âncora: os empurrões seguintes param nele); Cedo (←) e Tarde (→) empurram o
+1 dele 10 ms e tocam de novo, "Até o som" (A) leva até onde as provas dizem, e depois de cada um a conferência mostra o
+que mudou (`MapChange`, `MapChangeView`: as batidas antes e depois, ligadas, e o andamento de cada compasso vizinho antes
+→ depois e quanto o 1 andou; o áudio não muda, o compasso de antes estica até a âncora anterior ou 8 batidas, e os de
+depois encolhem até 8 batidas); pula os
+conferidos e, se escolhido, os que concordam com o som (as duas provas a menos de 15 ms); embaixo, a grade de todos os
+compassos (um clique confere aquele). Ouvir (na barra e na conferência, `AdjustListen`): o disco, o disco com o clique,
+ou o clique sobre a bateria sozinha (ou o baixo); a mixagem e o metrônomo de antes voltam ao escolher o disco e ao sair
+do Ajuste (e é a de antes que a música guarda). O arrasto de uma batida tem o alcance pelas teclas ao soltar
+(`DragReach`): as vizinhas acompanham (8 batidas ou até a âncora), ⌥ só ela, ⇧ tudo à direita junto, ⌥⇧ a música
+inteira; o rótulo do arrasto diz qual. O inspetor do Ajustar é um roteiro (`AdjustSteps`, o passo da vez em
+`SongModel.adjustStep`, saído dos dados): 1, o mapa inteiro (`AdjustReview.overall`: com 8 compassos com prova, a
+mediana a 15 ms ou mais e 60 % deles do mesmo lado, a música toda está deslocada; "Deslocar o mapa" anda a mediana, ou
+"Pelo som, compasso a compasso"); 2, o que o som acusa (`BarReview.fixable`: as duas provas para o mesmo lado; "Corrigir
+os N" sem ouvir); 3, os duvidosos (uma prova só ou o andamento saltando; a conferência só deles); 4, conferir a música (a
+conferência do começo ao fim, pulando os que concordam). O passo feito ganha ✓, o pulado (o link de cada passo) ↷, e o da
+vez fica aberto com o porquê e o botão; a mensagem de cada ação diz o passo seguinte; as ferramentas (Desfazer, Metade,
+Dobro, ±10 ms, Recomeçar) ficam embaixo. Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
 (um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta), ⇧ + arrastar na TAB

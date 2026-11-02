@@ -52,6 +52,52 @@ def test_reach_limits_the_side_without_an_anchor():
     assert times(after) == [0.1, 0.6, 1.05, 1.5, 2.0, 2.5]  # 1 s estava no meio de 0,5–1,5; fica no meio de 0,6–1,5
 
 
+def test_pull_right_moves_everything_after_and_stretches_only_the_left():
+    before = grid([0.5 * k for k in range(20)])
+    after = anchor_edit({"tempoMap": before, "action": "move", "tick": 960 * 10, "seconds": 5.1, "pull": "right"})
+    # Do 10 em diante, tudo 0,1 s depois; à esquerda, só as 8 batidas antes esticam, e o resto fica.
+    assert times(after)[10:] == [round(0.5 * k + 0.1, 6) for k in range(10, 20)]
+    assert times(after)[:3] == [0.0, 0.5, 1.0]
+    assert all(b > a for a, b in zip(times(after), times(after)[1:]))
+    # Uma âncora à direita segura o lado direito até ela.
+    anchored = grid([0.5 * k for k in range(20)], anchors=(15,))
+    held = anchor_edit({"tempoMap": anchored, "action": "move", "tick": 960 * 10, "seconds": 5.1, "pull": "right"})
+    assert times(held)[15:] == [0.5 * k for k in range(15, 20)]
+
+
+def test_moves_take_each_beat_like_a_drag_and_skip_the_ones_that_do_not_fit():
+    before = grid([0.5 * k for k in range(40)], anchors=(30,))
+    after = anchor_edit({"tempoMap": before, "action": "moves",
+                         "moves": [[960 * 8, 4.06], [960 * 16, 7.95], [960 * 29, 15.4]]})
+    assert after["movedCount"] == 2   # o último passaria da âncora em 15 s
+    assert map_of(after).seconds(960 * 8) == pytest.approx(4.06)
+    assert map_of(after).seconds(960 * 16) == pytest.approx(7.95)
+    assert map_of(after).seconds(960 * 29) == pytest.approx(14.5, abs=0.01)   # esticou até a âncora, sem passar
+    kinds = {p["tick"]: p["kind"] for p in after["points"]}
+    assert kinds[960 * 8] == kinds[960 * 16] == "anchor"
+    assert all(b > a for a, b in zip(times(after), times(after)[1:]))
+    with pytest.raises(RhythmError):
+        anchor_edit({"tempoMap": before, "action": "moves", "moves": [[1, 2, 3]]})
+
+
+def test_follow_moves_only_the_accused_bars_to_their_attacks():
+    # 8 compassos de 4/4, 0,5 s por tempo; no compasso 3 a música soa 40 ms depois do mapa.
+    before = grid([0.5 * k for k in range(33)])
+    pairs = []
+    for beat in range(32):
+        for sub in (0, 480):
+            tick = 960 * beat + sub
+            late = 0.04 if 8 <= beat < 12 else 0.0
+            pairs.append([tick, tick / 1920 + late])
+    after = anchor_edit({"tempoMap": before, "action": "follow", "pairs": pairs, "ranges": [[960 * 8, 960 * 12]]})
+    assert after["movedCount"] >= 3
+    moved = {p["tick"]: p["seconds"] - 0.5 * p["tick"] / 960 for p in after["points"]}
+    # Os tempos do compasso 3 vão quase até os 40 ms; fora dele nada anda.
+    assert all(moved[960 * b] == pytest.approx(0.04, abs=0.012) for b in (9, 10))
+    assert all(abs(moved[960 * b]) < 1e-9 for b in list(range(0, 8)) + list(range(12, 33)))
+    assert after["source"] == before["source"]
+
+
 def test_taps_rewrite_the_beats_they_cover():
     before = grid([0.5 * k for k in range(24)], anchors=(6,))
     taps = [2.04, 2.53, 3.07, 3.55, 4.06]  # um pouco atrasados e tremidos, a partir da batida de 2 s

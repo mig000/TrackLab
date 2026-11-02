@@ -63,10 +63,10 @@ struct TrackLabApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 Divider()
-                Button("Editar a TAB") { NotificationCenter.default.post(name: .toggleEdit, object: nil) }
-                    .keyboardShortcut("e")
                 Button("Ajustar a sincronização") { NotificationCenter.default.post(name: .toggleAdjust, object: nil) }
                     .keyboardShortcut("j")
+                Button("Editar a TAB") { NotificationCenter.default.post(name: .toggleEdit, object: nil) }
+                    .keyboardShortcut("e")
                 Button("Gravar a guitarra") { NotificationCenter.default.post(name: .toggleRecord, object: nil) }
                     .keyboardShortcut("r")
             }

@@ -208,7 +208,8 @@ struct FitaView: View {
                     // Um clique numa batida também leva o cabeçote até ali: a Fita não anda (a agulha vai para o
                     // lugar do clique), e o duplo clique acerta a mesma batida.
                     if abs(value.translation.width) > 3 {
-                        model.moveBeat(tick: held.point.tick, to: held.to)
+                        // O alcance pelas teclas seguradas ao soltar: ⌥ só esta, ⇧ tudo à direita, ⌥⇧ a música toda.
+                        model.moveBeat(tick: held.point.tick, to: held.to, reach: DragReach.current())
                     } else {
                         seek(at: value.location.x, width: width, start: start)
                     }
@@ -266,7 +267,7 @@ struct FitaView: View {
         context.fill(barLines, with: .color(.secondary.opacity(0.55)))
 
         // O nome de cada parte embaixo, no começo dela (a que já começou antes fica presa na borda esquerda).
-        if !lens {
+        if !lens, !model.adjusting {
             for part in model.songParts() where part.to > start && part.from < end {
                 let x0 = max(x(part.from), 0) + 4
                 guard x(part.to) - x0 > 44 else { continue }
@@ -281,13 +282,17 @@ struct FitaView: View {
         if lens {
             drawSpectrum(in: &context, size: size, start: soundStart, gridStart: start, pitches: pitches)
         }
+        // No Ajuste, no lugar das ondas: a batida (a força dos ataques da bateria), o detector e o pente.
+        if !lens, model.adjusting {
+            drawBeatView(in: &context, size: size, start: start, soundStart: soundStart)
+        }
         // As ondas: o original atrás, a guitarra na frente.
         let step = 2.0
-        if !lens, let peaks = model.sourcePeaks {
+        if !lens, !model.adjusting, let peaks = model.sourcePeaks {
             fillSource(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                        in: &context, start: start, width: width, height: height)
         }
-        if !lens, let peaks = model.guitarPeaks {
+        if !lens, !model.adjusting, let peaks = model.guitarPeaks {
             context.fill(wave(peaks, start: soundStart, width: width, step: step, middle: middle, half: half),
                          with: .color(.orange.opacity(0.85)))
         }
@@ -320,8 +325,8 @@ struct FitaView: View {
             context.stroke(from, with: .color(.orange.opacity(0.35)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             anchorMark(in: &context, x: x(held.to), height: height, color: .orange)
             let delta = Int(((held.to - held.point.seconds) * 1000).rounded())
-            context.draw(CanvasLabel.image("\(delta > 0 ? "+" : "")\(delta) ms", size: 10, monospaced: true,
-                                           color: .systemOrange, dark: !paper),
+            context.draw(CanvasLabel.image("\(delta > 0 ? "+" : "")\(delta) ms · \(DragReach.current().label)", size: 10,
+                                           monospaced: true, color: .systemOrange, dark: !paper),
                          at: CGPoint(x: x(held.to) + 6, y: 12), anchor: .leading)
         }
 
@@ -331,6 +336,122 @@ struct FitaView: View {
         line.move(to: CGPoint(x: needle, y: 0))
         line.addLine(to: CGPoint(x: needle, y: height))
         context.stroke(line, with: .color(.accentColor), lineWidth: 2)
+    }
+
+    /// No Ajuste, no lugar das ondas (o tempo, sem as notas): embaixo, a força dos ataques da faixa de ritmo (a
+    /// bateria, o baixo ou o original) e, tracejadas, as batidas que o detector achou nela; em cima, o pente (os
+    /// ataques escritos da pista, sem as notas, ligados aos ouvidos na faixa dela; em vermelho os de 25 ms para cima);
+    /// e entre as batidas do mapa, o intervalo em ms, em vermelho quando foge 5 % dos vizinhos (um ponto fora do lugar).
+    private func drawBeatView(in context: inout GraphicsContext, size: CGSize, start: Double, soundStart: Double) {
+        let width = Double(size.width)
+        let height = Double(size.height)
+        func x(_ t: Double) -> Double { (t - start) / span * width }
+        func sx(_ t: Double) -> Double { (t - soundStart) / span * width }
+        let end = start + span
+        let combTop = 18.0
+        let combBottom = 64.0
+        let tick = 13.0
+        let base = height - 4
+        let top = combBottom + 22
+        let blue = Color(red: 0.25, green: 0.5, blue: 0.95)
+        let red = Color(red: 0.9, green: 0.22, blue: 0.17)
+
+        // A força dos ataques, como uma onda só de um lado.
+        if let beats = model.heardBeats, base > top {
+            var area = Path()
+            area.move(to: CGPoint(x: 0, y: base))
+            var px = 0.0
+            while px <= width {
+                let perPixel: Double = span / max(width, 1)
+                let t0: Double = soundStart + px * perPixel
+                let peak = beats.peak(from: t0, to: t0 + 2 * perPixel)
+                area.addLine(to: CGPoint(x: px, y: base - peak * (base - top)))
+                px += 2
+            }
+            area.addLine(to: CGPoint(x: width, y: base))
+            area.closeSubpath()
+            context.fill(area, with: .color(.secondary.opacity(0.32)))
+            var ghosts = Path()
+            for beat in beats.beats where beat >= soundStart - 0.1 && beat <= soundStart + span + 0.1 {
+                ghosts.move(to: CGPoint(x: sx(beat), y: top - 6))
+                ghosts.addLine(to: CGPoint(x: sx(beat), y: base))
+            }
+            context.stroke(ghosts, with: .color(.secondary.opacity(0.8)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+            context.draw(CanvasLabel.image("\(Self.stemName(beats.stem)) · tracejado: o detector", size: 9, weight: .semibold,
+                                           color: .secondaryLabelColor, dark: !paper),
+                         at: CGPoint(x: width - 6, y: base - 4), anchor: .bottomTrailing)
+        } else if base > top {
+            context.draw(Text("Ouvindo as batidas…").font(.caption).foregroundStyle(.secondary),
+                         at: CGPoint(x: width / 2, y: (top + base) / 2))
+        }
+
+        // O pente: os ataques escritos em cima, os ouvidos embaixo, e a ligação entre eles.
+        let written = model.writtenAttacks.filter { $0 >= start - 0.2 && $0 <= end + 0.2 }
+        let heard = model.heardAttacks.filter { $0 >= soundStart - 0.2 && $0 <= soundStart + span + 0.2 }
+        var writtenTicks = Path()
+        for t in written { writtenTicks.addRect(CGRect(x: x(t) - 1, y: combTop, width: 2, height: tick)) }
+        context.fill(writtenTicks, with: .color(.primary))
+        var heardTicks = Path()
+        for t in heard { heardTicks.addRect(CGRect(x: sx(t) - 1, y: combBottom - tick, width: 2, height: tick)) }
+        context.fill(heardTicks, with: .color(blue))
+        var good = Path()
+        var off = Path()
+        let shift = soundStart - start
+        for pair in Comb.pairs(written: written, heard: heard.map { $0 - shift }) {
+            var line = Path()
+            line.move(to: CGPoint(x: x(pair.written), y: combTop + tick))
+            line.addLine(to: CGPoint(x: x(pair.heard), y: combBottom - tick))
+            if abs(pair.offset) >= AdjustReview.threshold {
+                off.addPath(line)
+                if span <= 8 {
+                    let ms = Int((pair.offset * 1000).rounded())
+                    context.draw(CanvasLabel.image("\(ms > 0 ? "+" : "−")\(abs(ms))", size: 9, monospaced: true,
+                                                   color: .systemRed, dark: !paper),
+                                 at: CGPoint(x: (x(pair.written) + x(pair.heard)) / 2 + 3, y: (combTop + combBottom) / 2),
+                                 anchor: .leading)
+                }
+            } else {
+                good.addPath(line)
+            }
+        }
+        context.stroke(good, with: .color(.green.opacity(0.85)), lineWidth: 1.2)
+        context.stroke(off, with: .color(red), lineWidth: 1.8)
+        context.draw(CanvasLabel.image("escrito", size: 9, weight: .semibold, color: .secondaryLabelColor, dark: !paper),
+                     at: CGPoint(x: 6, y: combTop - 1), anchor: .bottomLeading)
+        context.draw(CanvasLabel.image("ouvido", size: 9, weight: .semibold, color: .systemBlue, dark: !paper),
+                     at: CGPoint(x: 6, y: combBottom + 1), anchor: .topLeading)
+
+        // O intervalo entre as batidas do mapa, em ms.
+        let beats = model.grid.beats
+        guard beats.count >= 2 else { return }
+        var first = 0
+        while first < beats.count - 1, beats[first + 1] < start { first += 1 }
+        var index = first
+        while index < beats.count - 1, beats[index] <= end {
+            let gap: Double = beats[index + 1] - beats[index]
+            let pixels: Double = x(beats[index + 1]) - x(beats[index])
+            if pixels > 34 {
+                var around: [Double] = []
+                for k in max(0, index - 3)...min(beats.count - 2, index + 3) where k != index {
+                    around.append(beats[k + 1] - beats[k])
+                }
+                around.sort()
+                let typical: Double = around.isEmpty ? gap : around[around.count / 2]
+                let odd: Bool = typical > 0 && abs(gap - typical) / typical > 0.05
+                context.draw(CanvasLabel.image("\(Int((gap * 1000).rounded()))", size: 9, weight: odd ? .bold : .regular,
+                                               monospaced: true, color: odd ? .systemRed : .tertiaryLabelColor, dark: !paper),
+                             at: CGPoint(x: (x(beats[index]) + x(beats[index + 1])) / 2, y: combBottom + 14), anchor: .center)
+            }
+            index += 1
+        }
+    }
+
+    static func stemName(_ stem: String) -> String {
+        switch stem {
+        case Stem.drums.rawValue: "a bateria"
+        case Stem.bass.rawValue: "o baixo"
+        default: "a música toda"
+        }
     }
 
     /// O espectro do trecho visível, como a Lente do TabLab: em cima, uma faixa estreita com a onda; embaixo, o que vai

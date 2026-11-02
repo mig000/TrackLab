@@ -54,6 +54,9 @@ struct SongView: View {
         }
         .background(TabEditKeys(model: model))
         .sheet(isPresented: Binding(get: { model.showKeys }, set: { model.showKeys = $0 })) { KeysSheet() }
+        .sheet(isPresented: Binding(get: { model.checkingBar != nil }, set: { if !$0 { model.stopChecking() } })) {
+            AdjustCheckSheet(model: model)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
@@ -81,6 +84,12 @@ struct SongView: View {
     /// A TAB e as camadas embaixo dela (a Onda e a Lente), uma sobre a outra; cada uma com os controles dela no canto.
     private var lanesColumn: some View {
         VStack(spacing: 0) {
+            // No Ajuste, a música inteira em cima: o andamento, o som contra o mapa, os conferidos.
+            if model.adjusting {
+                AdjustOverview(model: model, span: span)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
             ZStack {
                 ScoreView(bridge: model.bridge)
                 if let message = model.scoreMessage {
@@ -102,13 +111,17 @@ struct SongView: View {
                 model.span = span
                 model.bridge.setSpan(span)
             }
-            if lanes {
+            // No Ajuste a TAB sai da tela (o tempo se ajusta sem as notas), mas a página continua viva por baixo.
+            .frame(height: model.adjusting ? 0 : nil)
+            .clipped()
+            .opacity(model.adjusting ? 0 : 1)
+            if lanes, !model.adjusting {
                 ResizeHandle(help: "Arraste para mudar a altura da TAB; duplo clique volta à altura da pauta") { delta, start in
                     tabHeight = min(max(80, (start ?? tabMeasured) + delta), 900)
                 } begin: { tabMeasured } reset: { tabHeight = 0 }
             }
             // Os acordes da música, na escala da Fita (fora das páginas, que não têm a escala).
-            if model.chordsVisible, !model.scorePage, !model.chordSpans.isEmpty {
+            if model.chordsVisible, !model.scorePage, !model.chordSpans.isEmpty, !model.adjusting {
                 ChordLane(model: model, span: span)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     .padding(.horizontal, 12)
@@ -123,22 +136,23 @@ struct SongView: View {
             }
             if !lanes { Divider() }
             // A Onda e a Lente: com as duas, a Onda tem a altura do divisor e a Lente o resto.
-            if model.waveVisible {
+            // No Ajuste, a Fita mostra a batida e o pente e fica com a altura toda.
+            if model.waveVisible || model.adjusting {
                 FitaView(model: model, span: $span)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     // Com a Lente embaixo, a altura do divisor, mas encolhe se a janela não comporta tudo (a soma das
                     // mínimas passava da janela e empurrava o cabeçalho para fora).
-                    .frame(minHeight: 60, maxHeight: model.lensVisible ? waveHeight : .infinity)
-                    .layoutPriority(model.lensVisible ? 1 : 0)
+                    .frame(minHeight: 60, maxHeight: model.lensVisible && !model.adjusting ? waveHeight : .infinity)
+                    .layoutPriority(model.lensVisible && !model.adjusting ? 1 : 0)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
-            if model.waveVisible, model.lensVisible {
+            if model.waveVisible, model.lensVisible, !model.adjusting {
                 ResizeHandle(help: "Arraste para dividir a altura entre a Onda e a Lente") { delta, start in
                     waveHeight = min(max(60, (start ?? waveHeight) + delta), 600)
                 } begin: { waveHeight } reset: { waveHeight = 150 }
             }
-            if model.lensVisible {
+            if model.lensVisible, !model.adjusting {
                 FitaView(model: model, span: $span, lens: true, strip: !model.waveVisible)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     .frame(minHeight: 90, maxHeight: .infinity)
@@ -220,8 +234,8 @@ struct SongView: View {
             .labelsHidden()
             .fixedSize()
             .disabled(model.detail?.score == nil)
-            .help("Estudar: tocar e treinar. Editar (⌘E): a TAB, nota a nota. Ajustar (⌘J): a sincronização, batida a "
-                  + "batida. Gravar (⌘R): a guitarra por cima da música, em takes.")
+            .help("Na ordem de uma música nova: Ajustar (⌘J), a TAB no lugar do som; Editar (⌘E), a TAB certa, nota a "
+                  + "nota; Estudar, tocar e treinar; Gravar (⌘R), a guitarra por cima da música, em takes.")
             headerSides
         }
         .padding(.horizontal, 16)
@@ -290,28 +304,29 @@ struct SongView: View {
             trackMenu
             viewMenu
         case .adjust:
+            Menu("Ouvir: \(model.adjustListen.label)") {
+                ForEach(AdjustListen.allCases) { option in
+                    Button(option.label) { model.adjustListen = option }
+                }
+            }
+            .fixedSize()
+            .help("O que se ouve no Ajuste: o disco, o disco com o clique do mapa, ou só o clique sobre a bateria (onde "
+                  + "um clique fora do lugar mais aparece). Saindo do Ajuste, a mixagem de antes volta.")
+            Divider().frame(height: 16)
             Button { model.downbeatHere() } label: { HStack(spacing: 3) { Text("O 1 é aqui"); KeyHint("U") } }
                 .keyboardShortcut("u", modifiers: [])
                 .help("U: tocando, aperte no tempo forte; o começo de compasso mais perto vem até o toque")
             Button { model.tap() } label: { HStack(spacing: 3) { Text("Bater junto"); KeyHint("T") } }
                 .keyboardShortcut("t", modifiers: [])
                 .help("T: com a música tocando, aperte em cada batida de um trecho; quando parar, as batidas dele viram os seus toques")
-            Divider().frame(height: 16)
-            Button { model.syncBarToSound() } label: { HStack(spacing: 3) { Text("Pelo som"); KeyHint("A") } }
-                .keyboardShortcut("a", modifiers: [])
-                .help("A: o 1 do compasso que toca vai para onde as notas dele soam (os ataques medidos no espectro)")
-            Button { model.syncAllToSound() } label: { HStack(spacing: 3) { Text("Tudo"); KeyHint("⇧A") } }
-                .keyboardShortcut("a", modifiers: [.shift])
-                .help("⇧A: a música toda de uma vez: cada compasso vai para onde as notas dele soam, suavizado pelos vizinhos")
-            Divider().frame(height: 16)
-            Button("Metade") { model.halveBeats() }
-                .help("Metade das batidas no mapa (o tempo não muda)")
-            Button("Dobro") { model.doubleBeats() }
-                .help("O dobro de batidas no mapa (o tempo não muda)")
-            Button("−10 ms") { model.shiftAll(by: -0.01) }
-                .help("Atraso do vídeo: a TAB e a grade inteiras 10 ms antes do som")
-            Button("+10 ms") { model.shiftAll(by: 0.01) }
-                .help("A TAB e a grade inteiras 10 ms depois do som")
+            // A e ⇧A continuam nas teclas (o roteiro do inspetor tem os botões): a barra não cabia numa janela estreita.
+            Group {
+                Button("Pelo som") { model.syncBarToSound() }.keyboardShortcut("a", modifiers: [])
+                Button("Tudo pelo som") { model.syncAllToSound() }.keyboardShortcut("a", modifiers: [.shift])
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .accessibilityHidden(true)
             Divider().frame(height: 16)
             let current = model.currentBars
             let done = !current.isEmpty && current.allSatisfy(model.checkedBars.contains)

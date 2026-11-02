@@ -136,13 +136,16 @@ def _number(value) -> bool:
 # MARK: - Âncoras da pessoa
 
 
-def move_anchor(tempo_map: dict, tick: float, seconds: float, reach: float | None = None) -> dict:
+def move_anchor(tempo_map: dict, tick: float, seconds: float, reach: float | None = None,
+                right_whole: bool = False) -> dict:
     """A batida do tique levada ao segundo dado, como âncora; mexe só até as âncoras vizinhas (a regra do sync-lab).
 
     Entre a âncora da esquerda e a nova, e entre a nova e a da direita, cada ponto é re-esticado na proporção do
     tempo que ocupava no trecho, então a variação de andamento ouvida dentro do trecho se mantém. Sem âncora de um
     lado, esse lado inteiro anda junto com a batida; com `reach` (tiques), só até o primeiro ponto a essa distância,
-    que fica parado como se fosse âncora. As outras âncoras não se mexem, e a batida não passa delas.
+    que fica parado como se fosse âncora; com `right_whole`, o lado direito anda inteiro até a âncora seguinte (o
+    "levar tudo à direita" do Ajuste), e o `reach` vale só para a esquerda. As outras âncoras não se mexem, e a
+    batida não passa delas.
     Um tique que não é ponto do mapa vira ponto no segundo em que o mapa o punha. O mapa sai conferido."""
     clean = normalize_tempo_map(tempo_map)
     points = [dict(p) for p in clean["points"]]
@@ -157,7 +160,7 @@ def move_anchor(tempo_map: dict, tick: float, seconds: float, reach: float | Non
     if reach:
         if left is None:
             left = next((k for k in range(index - 1, -1, -1) if tick - points[k]["tick"] >= reach), None)
-        if right is None:
+        if right is None and not right_whole:
             right = next((k for k in range(index + 1, len(points)) if points[k]["tick"] - tick >= reach), None)
     if (left is not None and seconds <= points[left]["seconds"]) or (right is not None and seconds >= points[right]["seconds"]):
         raise RhythmError("A batida precisa ficar entre as âncoras vizinhas.")
@@ -281,11 +284,49 @@ def shift_all(tempo_map: dict, seconds: float) -> dict:
     return normalize_tempo_map(dict(clean, points=points))
 
 
+def apply_moves(tempo_map: dict, moves) -> dict:
+    """Várias batidas levadas aos seus segundos, uma depois da outra, como arrastos (`move_anchor` com o alcance de
+    8 batidas): o "corrigir os compassos a olhar" do Ajuste. Cada uma vira âncora; a que não cabe entre as âncoras
+    vizinhas (ou deixaria um trecho fora de 10 a 1000 bpm) fica onde estava. `movedCount` diz quantas andaram."""
+    if not isinstance(moves, list) or not moves:
+        raise RhythmError("Envie as batidas (moves) como [[tique, segundo], …].")
+    current = normalize_tempo_map(tempo_map)
+    moved = 0
+    for item in moves:
+        if not (isinstance(item, list) and len(item) == 2 and _number(item[0]) and _number(item[1])):
+            raise RhythmError("Cada batida (moves) é [tique, segundo].")
+        try:
+            current = move_anchor(current, item[0], item[1], reach=_reach(current, DEFAULT_REACH_BEATS))
+            moved += 1
+        except RhythmError:
+            continue
+    return dict(current, movedCount=moved)
+
+
+def follow_ranges(tempo_map: dict, pairs, ranges) -> dict:
+    """As batidas dentro dos trechos `ranges` (`[[tique, tique], …]`, o fim fora) levadas aos ataques casados
+    (`pairs`, `[[tique escrito, segundo ouvido], …]`) pela reta local de cada uma (`follow_anchors`); o resto do mapa
+    fica. `movedCount` diz quantas batidas tiveram apoio."""
+    if not isinstance(pairs, list) or not isinstance(ranges, list) or not ranges:
+        raise RhythmError("Envie os ataques (pairs) e os trechos (ranges).")
+    clean_pairs = [(float(p[0]), float(p[1])) for p in pairs
+                   if isinstance(p, list) and len(p) == 2 and _number(p[0]) and _number(p[1])]
+    spans = [(float(r[0]), float(r[1])) for r in ranges
+             if isinstance(r, list) and len(r) == 2 and _number(r[0]) and _number(r[1]) and r[1] > r[0]]
+    # Meio compasso de cada lado: com o compasso inteiro, os vizinhos certos entravam na reta e o compasso deslocado
+    # andava só metade do que o som pedia.
+    result, summary = follow_anchors(tempo_map, clean_pairs, only=lambda tick: any(a <= tick < b for a, b in spans),
+                                     window=FOLLOW_WINDOW / 2)
+    return dict(result, movedCount=summary["beats"])
+
+
 def anchor_edit(raw: dict) -> dict:
     """Um gesto da régua sobre o mapa enviado pelo app (que guarda o mapa e o Desfazer): `move` leva a batida do
     `tick` a `seconds` como âncora, puxando o lado sem âncora até `reach` batidas (padrão 8), ou o resto inteiro com
-    `pull`; `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`);
-    `half` e `double` mudam a densidade das batidas; `offset` desloca o mapa inteiro `seconds` (o atraso do vídeo).
+    `pull` (`"right"`: só o da direita); `release` solta a âncora do `tick`; `tap` regrava um trecho pelos toques (`taps`, ver `tap_beats`);
+    `half` e `double` mudam a densidade das batidas; `offset` desloca o mapa inteiro `seconds` (o atraso do vídeo);
+    `moves` leva várias batidas de uma vez (`apply_moves`); `follow` leva as batidas de uns trechos aos ataques
+    casados (`follow_ranges`).
     Sem `tempoMap`, parte da reta da régua (`ruler`)."""
     if not isinstance(raw, dict):
         raise RhythmError("Envie o gesto como um objeto com tempoMap, tick e seconds.")
@@ -296,6 +337,10 @@ def anchor_edit(raw: dict) -> dict:
         return halve_beats(tempo_map)
     if raw.get("action") == "double":
         return double_beats(tempo_map)
+    if raw.get("action") == "moves":
+        return apply_moves(tempo_map, raw.get("moves"))
+    if raw.get("action") == "follow":
+        return follow_ranges(tempo_map, raw.get("pairs"), raw.get("ranges"))
     if raw.get("action") == "tap":
         if not isinstance(raw.get("taps"), list):
             raise RhythmError("Para bater junto, envie os toques (taps) em segundos.")
@@ -310,6 +355,9 @@ def anchor_edit(raw: dict) -> dict:
     if not _number(raw.get("seconds")):
         raise RhythmError("Para mover a batida, envie o segundo (seconds) em que ela cai.")
     reach = None
+    if raw.get("pull") == "right":
+        # O lado direito inteiro anda junto; o esquerdo estica até o alcance, como num arrasto.
+        return move_anchor(tempo_map, tick, raw["seconds"], reach=_reach(tempo_map, DEFAULT_REACH_BEATS), right_whole=True)
     if not raw.get("pull"):
         beats = raw.get("reach", DEFAULT_REACH_BEATS)
         if not _number(beats) or beats <= 0:
@@ -326,23 +374,26 @@ FOLLOW_MIN_SPAN = TICKS_PER_QUARTER  # os ataques da janela cobrem ao menos um t
 FOLLOW_OUTLIER = 0.08  # um ataque que foge mais que isso da reta dos vizinhos não vota
 
 
-def follow_anchors(tempo_map: dict, pairs: list[tuple[float, float]]) -> tuple[dict, dict]:
+def follow_anchors(tempo_map: dict, pairs: list[tuple[float, float]], only=None,
+                   window: float = FOLLOW_WINDOW) -> tuple[dict, dict]:
     """O mapa levado aos ataques casados com a referência, batida a batida: `pairs` são (tique escrito, segundo
     ouvido). Cada batida com ataques confiáveis por perto vai à reta local deles; entre essas, as outras se
     re-espaçam por igual; antes da primeira e depois da última, andam junto com a ponta. As âncoras da pessoa não se
-    mexem e o compasso em volta delas fica com elas. Volta o mapa e um resumo (batidas apoiadas, maior correção)."""
+    mexem e o compasso em volta delas fica com elas. Com `only` (um teste do tique), só as batidas que passam nele
+    andam: as outras ficam onde estão, como âncoras, e o mapa guarda a fonte (o "corrigir os compassos que o som
+    acusa" do Ajuste). Volta o mapa e um resumo (batidas apoiadas, maior correção)."""
     clean = normalize_tempo_map(tempo_map)
     points = [dict(p) for p in clean["points"]]
-    good = _consistent(sorted(pairs))
+    good = _consistent(sorted(pairs), window)
     anchors = [p["tick"] for p in points if p["kind"] == "anchor"]
     target: dict[int, float] = {}
     for k, point in enumerate(points):
-        if point["kind"] == "anchor":
+        if point["kind"] == "anchor" or (only is not None and not only(point["tick"])):
             target[k] = point["seconds"]
             continue
-        if any(abs(point["tick"] - a) < FOLLOW_WINDOW for a in anchors):
+        if only is None and any(abs(point["tick"] - a) < FOLLOW_WINDOW for a in anchors):
             continue
-        estimate = _local(good, point["tick"])
+        estimate = _local(good, point["tick"], window)
         if estimate is not None:
             target[k] = estimate
     # Nada que vá contra a ordem: uma estimativa que não cresce com as vizinhas sai.
@@ -352,13 +403,14 @@ def follow_anchors(tempo_map: dict, pairs: list[tuple[float, float]]) -> tuple[d
         kept = sorted(target)
         for a, b in zip(kept, kept[1:]):
             if target[b] - target[a] < (points[b]["tick"] - points[a]["tick"]) / TICKS_PER_QUARTER * MIN_SECONDS_PER_QUARTER:
-                drop = b if points[b]["kind"] != "anchor" else a
-                if points[drop]["kind"] == "anchor":
+                fixed = (lambda k: points[k]["kind"] == "anchor" or (only is not None and not only(points[k]["tick"])))
+                drop = b if not fixed(b) else a
+                if fixed(drop):
                     continue
                 del target[drop]
                 changed = True
                 break
-    supported = [k for k in target if points[k]["kind"] != "anchor"]
+    supported = [k for k in target if points[k]["kind"] != "anchor" and (only is None or only(points[k]["tick"]))]
     if not supported:
         return clean, {"beats": 0, "pairs": len(good), "largest": 0.0}
     kept = sorted(target)
@@ -366,7 +418,7 @@ def follow_anchors(tempo_map: dict, pairs: list[tuple[float, float]]) -> tuple[d
     for k, point in enumerate(points):
         old = point["seconds"]
         if k in target:
-            if point["kind"] != "anchor":
+            if point["kind"] != "anchor" and (only is None or only(point["tick"])):
                 point.update(seconds=target[k], kind="detected", confidence=1.0)
         elif k < kept[0]:
             point["seconds"] = old + (target[kept[0]] - _old(clean, kept[0]))
@@ -385,7 +437,10 @@ def follow_anchors(tempo_map: dict, pairs: list[tuple[float, float]]) -> tuple[d
             point["kind"] = "interpolated"
             point["confidence"] = 0.3
         largest = max(largest, abs(point["seconds"] - old))
-    result = normalize_tempo_map(dict(clean, points=points, source="reference", algorithm="seguir-referencia-1"))
+    if only is None:
+        result = normalize_tempo_map(dict(clean, points=points, source="reference", algorithm="seguir-referencia-1"))
+    else:
+        result = normalize_tempo_map(dict(clean, points=points))
     return result, {"beats": len(supported), "pairs": len(good), "largest": round(largest, 4)}
 
 
@@ -407,12 +462,12 @@ def _line(pairs: list[tuple[float, float]]) -> tuple[float, float] | None:
     return ms - slope * mt, slope
 
 
-def _consistent(pairs: list[tuple[float, float]]) -> list[tuple[float, float]]:
+def _consistent(pairs: list[tuple[float, float]], window: float = FOLLOW_WINDOW) -> list[tuple[float, float]]:
     """Os ataques que concordam com a reta dos vizinhos (sem eles mesmos): um casamento errado não puxa a grade."""
     kept = []
     ticks = [tick for tick, _ in pairs]
     for i, (tick, seconds) in enumerate(pairs):
-        lo, hi = bisect.bisect_left(ticks, tick - FOLLOW_WINDOW), bisect.bisect_right(ticks, tick + FOLLOW_WINDOW)
+        lo, hi = bisect.bisect_left(ticks, tick - window), bisect.bisect_right(ticks, tick + window)
         near = pairs[lo:i] + pairs[i + 1:hi]
         if len(near) < FOLLOW_MIN_POINTS - 1:
             continue
@@ -422,10 +477,10 @@ def _consistent(pairs: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return kept
 
 
-def _local(pairs: list[tuple[float, float]], tick: float) -> float | None:
+def _local(pairs: list[tuple[float, float]], tick: float, window: float = FOLLOW_WINDOW) -> float | None:
     """O segundo do tique pela reta dos ataques confiáveis em volta; None sem apoio dos dois lados."""
-    lo = bisect.bisect_left(pairs, (tick - FOLLOW_WINDOW, -math.inf))
-    hi = bisect.bisect_right(pairs, (tick + FOLLOW_WINDOW, math.inf))
+    lo = bisect.bisect_left(pairs, (tick - window, -math.inf))
+    hi = bisect.bisect_right(pairs, (tick + window, math.inf))
     near = pairs[lo:hi]
     if len(near) < FOLLOW_MIN_POINTS or near[-1][0] - near[0][0] < FOLLOW_MIN_SPAN:
         return None

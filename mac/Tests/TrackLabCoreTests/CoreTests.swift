@@ -1057,3 +1057,87 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     // Uma pista que sumiu (a partitura editada perdeu pistas) volta à de estudo.
     #expect(SongListening(track: 9).track(in: score) == score.studyTrack)
 }
+
+@Test func oPenteCasaCadaAtaqueComOOuvidoMaisPerto() {
+    // Um ouvido serve a um escrito só, o mais perto primeiro; longe demais, nada.
+    let pairs = Comb.pairs(written: [1.0, 1.1, 2.0, 3.0], heard: [1.03, 1.12, 2.5, 2.98], within: 0.12)
+    #expect(pairs.map(\.written) == [1.0, 1.1, 3.0])
+    #expect(pairs.map { ($0.offset * 1000).rounded() } == [30, 20, -20])
+}
+
+@Test func osCompassosAOlharNoAjuste() {
+    // 8 compassos de 4/4 a 120 bpm (2 s cada); o mapa do c. 5 ficou 45 ms cedo (o 1 dele em 7,955 s), pouco para o
+    // andamento saltar; o do c. 7 ficou 150 ms tarde (o c. 6 alonga e o 7 encurta, para lados opostos).
+    var points: [TempoPoint] = []
+    for beat in 0...32 {
+        var seconds = Double(beat) * 0.5
+        if beat == 16 { seconds -= 0.045 }
+        if beat == 24 { seconds += 0.15 }
+        points.append(TempoPoint(tick: Double(beat) * 960, seconds: seconds, kind: beat % 4 == 0 ? "detected" : "interpolated"))
+    }
+    let grid = TempoGrid(points: points, barTicks: (0...8).map { Double($0) * 3840 })
+    // A guitarra toca em cada tempo, no tempo de verdade; o detector também acha cada tempo.
+    let truth = (0..<32).map { Double($0) * 0.5 }
+    let written = (0..<32).map { grid.seconds(at: Double($0) * 960) }
+    let review = AdjustReview.bars(grid: grid, written: written, heard: truth.map { $0 + 0.004 }, detected: truth)
+    #expect(review.count == 8)
+    let five = review[4]
+    #expect(five.bar == 5 && five.doubtful)
+    #expect(abs((five.detector ?? 0) - 0.045) < 0.001)
+    #expect(abs((five.attacks ?? 0) - 0.004) < 0.001)   // os ataques de dentro do compasso, na mediana, estão quase certos
+    // O 1 do c. 7 fora do lugar: o c. 6 sai lento e o 7 rápido; é o começo do 7 que está errado.
+    #expect(!five.tempoJump && !review[5].tempoJump && review[6].tempoJump && review[6].doubtful)
+    #expect(!review[0].doubtful && review[0].agrees())
+    // Uma prova sozinha a 30 ms não acusa; as duas juntas, sim; para lados opostos, não.
+    func bar(_ a: Double?, _ d: Double?) -> BarReview {
+        BarReview(bar: 1, start: 0, bpm: 120, attacks: a, attackCount: 4, detector: d, tempoJump: false)
+    }
+    #expect(!bar(0.03, nil).doubtful && !bar(nil, 0.03).doubtful && bar(0.03, 0.028).doubtful)
+    #expect(bar(-0.05, nil).doubtful && !bar(0.05, -0.03).doubtful && bar(0.05, 0.01).doubtful)
+    #expect(bar(0.03, 0.02).correction == 0.025)
+    // A correção só mexe nos duvidosos.
+    let fix = AdjustReview.corrections(review)
+    #expect(fix[0] == 0 && fix[4] != 0)
+}
+
+@Test func aForcaDosAtaquesPeloTempo() {
+    let beats = HeardBeats(rate: 100, envelope: [0, 0, 255, 0, 51], beats: [0.02], tempo: 120, stem: "drums")
+    #expect(beats.strength(at: 0.02) == 1)
+    #expect(beats.strength(at: 9) == 0)
+    #expect(abs(beats.peak(from: 0.03, to: 0.05) - 0.2) < 1e-9)
+}
+
+@Test func oAjusteComecaPeloTodo() {
+    func bar(_ n: Int, _ a: Double?, _ d: Double?, jump: Bool = false) -> BarReview {
+        BarReview(bar: n, start: Double(n) * 2, bpm: 120, attacks: a, attackCount: 4, detector: d, tempoJump: jump)
+    }
+    // A música toda 45 ms adiantada: o primeiro passo é o todo.
+    let shifted = (1...12).map { bar($0, 0.045 + Double($0 % 3) * 0.004, 0.04) }
+    #expect(AdjustReview.overall(shifted)?.global == true)
+    #expect(abs((AdjustReview.overall(shifted)?.median ?? 0) - 0.0445) < 0.001)   // a média das duas provas
+    // No lugar, com dois compassos fora: não é o todo.
+    let local = (1...12).map { bar($0, $0 == 5 ? 0.06 : 0.004, $0 == 5 ? 0.05 : -0.003) }
+    #expect(AdjustReview.overall(local)?.global == false)
+    // Corrigível sem ouvir: as duas provas para o mesmo lado; uma só, ou o salto de andamento, pedem o ouvido.
+    #expect(local[4].fixable && local[4].doubtful)
+    #expect(!bar(1, 0.05, nil).fixable && bar(1, 0.05, nil).doubtful)
+    #expect(!bar(1, 0.002, 0.001, jump: true).fixable && bar(1, 0.002, 0.001, jump: true).doubtful)
+}
+
+@Test func oQueOEmpurraoMudouNoMapa() {
+    // 6 compassos de 4/4 a 120 bpm; o 1 do c. 4 andou 10 ms, e as batidas de antes (desde o c. 2) esticaram.
+    func points(_ shift: (Int) -> Double) -> [TempoPoint] {
+        (0...24).map { TempoPoint(tick: Double($0) * 960, seconds: Double($0) * 0.5 + shift($0), kind: $0 % 4 == 0 ? "detected" : "interpolated") }
+    }
+    let bars = (0...6).map { Double($0) * 3840 }
+    let before = TempoGrid(points: points { _ in 0 }, barTicks: bars)
+    let after = TempoGrid(points: points { beat in beat >= 4 && beat <= 12 ? Double(beat - 4) / 8 * 0.01 : beat > 12 && beat < 20 ? Double(20 - beat) / 8 * 0.01 : 0 },
+                          barTicks: bars)
+    let change = MapChange.between(before, after, bars: 2, 5)
+    #expect(change?.bars.map(\.bar) == [2, 3, 4, 5])
+    #expect(abs((change?.bars[2].shift ?? 0) - 0.01) < 1e-9)
+    // Os dois compassos de antes ficam mais lentos, os dois de depois mais rápidos.
+    #expect((change?.bars[0].bpmAfter ?? 0) < 120 && (change?.bars[1].bpmAfter ?? 0) < 120)
+    #expect((change?.bars[2].bpmAfter ?? 0) > 120 && (change?.bars[3].bpmAfter ?? 0) > 120)
+    #expect(change?.beats.filter(\.downbeat).count == 5)
+}

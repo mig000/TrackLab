@@ -80,8 +80,10 @@ final class SongModel {
 
     /// Os três modos da tela (o seletor no centro da barra): Estudar, Editar (a TAB) e Ajustar (a sincronização). Cada
     /// um troca o lado direito da barra e o inspetor; a edição e o Ajuste continuam sendo `editingTab` e `adjusting`.
+    /// Na ordem da vida de uma música (2/11): a TAB no lugar do som (Ajustar), a TAB certa (Editar), estudar com ela e,
+    /// por fim, gravar. A música abre em Estudar, o uso de todo dia.
     enum StudioMode: String, CaseIterable, Identifiable {
-        case study, edit, adjust, record
+        case adjust, edit, study, record
         var id: String { rawValue }
         var label: String {
             switch self {
@@ -168,12 +170,20 @@ final class SongModel {
         didSet { if tabMessage != nil { notice = nil } }
     }
 
-    /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
+    /// O modo Ajuste: a tela é a do tempo (a música inteira em cima, a batida e o pente na Fita, sem a TAB e sem a
+    /// Lente); arrastar uma batida a leva até onde ela soa e U põe o 1 no toque.
     var adjusting = false {
         didSet {
             if adjusting {
                 editingTab = false
                 recordMode = false
+                if !oldValue {
+                    adjustSkipped = []
+                    Task { await loadAdjust() }
+                }
+            } else if oldValue {
+                stopChecking()
+                adjustListen = .record
             }
             bridge.setAdjusting(adjusting)
             // Saindo do Ajuste com o mapa mudado, a TAB sintetizada é refeita em segundo plano.
@@ -348,7 +358,28 @@ final class SongModel {
     @ObservationIgnored private var suspectCache: (key: [Int], list: [Suspect])?
     /// Os sons da faixa da pista (`GET songs/{id}/sounds`), para o som sem nota escrita.
     private(set) var heardSounds: [HeardSound] = []
-    @ObservationIgnored private var soundsVersion = 0
+    @ObservationIgnored private(set) var soundsVersion = 0
+    /// O tempo ouvido para o Ajuste (`HeardBeats`: a força dos ataques da bateria, do baixo ou do original e as batidas
+    /// do detector), pedido ao entrar no Ajuste; e a conta dos compassos (`AdjustReview`), guardada pela chave.
+    var heardBeats: HeardBeats?
+    @ObservationIgnored var beatsKey: String?
+    @ObservationIgnored var reviewCache: (key: String, bars: [BarReview])?
+    @ObservationIgnored var attacksCache: (key: String, written: [Double])?
+    /// O que se ouve no Ajuste; a mixagem e o metrônomo de antes voltam ao escolher o disco ou sair do Ajuste.
+    var adjustListen: AdjustListen = .record {
+        didSet { if adjustListen != oldValue { applyAdjustListen() } }
+    }
+    @ObservationIgnored var listenBefore: (useStems: Bool, mix: [String: StemMix], metronome: Bool)?
+    /// A conferência de ouvido: o compasso que toca em loop esperando Certo, Cedo ou Tarde; e a conta da sentada.
+    var checkingBar: Int?
+    var checkSkipAgreeing = true
+    /// O que o último Cedo, Tarde ou Até o som mudou em volta do compasso em conferência.
+    var checkChange: MapChange?
+    /// A conferência só dos compassos a olhar (o passo 3 do roteiro) ou da música toda (o passo 4).
+    var checkOnlyDoubtful = false
+    /// Os passos do roteiro que o Miguel mandou pular nesta visita ao Ajuste.
+    var adjustSkipped: Set<AdjustStep> = []
+    var checkSession = (checked: 0, nudged: 0, skipped: 0)
     @ObservationIgnored private var soundsKey: String?
 
     /// ⇧ + arrastar em curso: quanto a onda da Fita andou sob as linhas paradas, em segundos.
@@ -356,7 +387,7 @@ final class SongModel {
     /// O mapa de tempo como o motor o gravou; os gestos do Ajuste partem dele.
     private(set) var tempoMap: TempoMapDocument?
     /// O que o último gesto recusado disse (some no próximo que der certo).
-    private(set) var adjustMessage: String?
+    var adjustMessage: String?
     private(set) var saving = false
     private var undoStack: [TempoMapDocument] = []
     private var redoStack: [TempoMapDocument] = []
@@ -507,8 +538,9 @@ final class SongModel {
     func saveListening() {
         guard phase == .ready, detail != nil else { return }
         var mix = pendingMix
-        for (key, entry) in engine.mix { mix[key] = entry }
-        let value = SongListening(track: scoreTrack, others: scoreOthers, useStems: engine.useStems,
+        // No Ajuste, o que se ouve é emprestado (o clique, a bateria sozinha): guarda a escuta de antes dele.
+        for (key, entry) in listenBefore?.mix ?? engine.mix { mix[key] = entry }
+        let value = SongListening(track: scoreTrack, others: scoreOthers, useStems: listenBefore?.useStems ?? engine.useStems,
                                   audioOn: engine.audioOn, tabOn: engine.tabOn, mix: mix)
         if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: listeningKey) }
     }
@@ -1225,11 +1257,11 @@ final class SongModel {
     /// vizinhas acompanham, como num arrasto.
     func syncBarToSound(bar chosen: Int? = nil) {
         guard let bar = chosen ?? grid.bar(at: engine.currentTime), grid.barTicks.indices.contains(bar - 1) else { return }
-        guard lensVisible else {
+        guard lensVisible || adjusting else {
             adjustMessage = "Abra o espectro: é ele que mede quando as notas soam."
             return
         }
-        guard let offset = barOffsets()[bar - 1] else {
+        guard let offset = soundOffsets()[bar - 1] else {
             adjustMessage = measuring ? "Medindo o som das notas…" : "Compasso \(bar): poucas notas com ataque claro para dizer."
             return
         }
@@ -1252,13 +1284,15 @@ final class SongModel {
             adjustMessage = "A partitura ainda está carregando; tente de novo em seguida."
             return
         }
-        if !afterMeasuring, !lensVisible || measuring || scoreNotes[track].contains(where: { !curveAsked($0, track: track) }) {
+        // No Ajuste, o pente (os ataques ouvidos da faixa) mede sem a Lente.
+        let combed = adjusting && !heardSounds.isEmpty
+        if !combed, !afterMeasuring, !lensVisible || measuring || scoreNotes[track].contains(where: { !curveAsked($0, track: track) }) {
             syncWhenMeasured = true
             if lensVisible { measureLater() } else { lensVisible = true }
             adjustMessage = "Medindo quando as notas soam, para sincronizar…"
             return
         }
-        let offsets = barOffsets()
+        let offsets = soundOffsets()
         guard offsets.count >= 3,
               let result = SoundSync.synced(current.points, barTicks: grid.barTicks, offsets: offsets), result.bars > 0 else {
             adjustMessage = "Poucas notas com ataque claro para sincronizar pelo som."
@@ -2095,6 +2129,26 @@ final class SongModel {
 
     /// Um gesto por vez: o motor aplica ao mapa gravado e devolve o novo, que entra no Desfazer.
     /// `message`: o aviso do Ajuste depois que o mapa novo chega (o mapa novo limpa o anterior).
+    /// Um gesto do Ajuste sobre o mapa (para o resto do app: `edit` é daqui).
+    func editTempo(_ gesture: Backend.TempoGesture, message: String? = nil) { edit(gesture, message: message) }
+
+    /// Um mapa inteiro no lugar do gravado, num passo do Desfazer e no histórico do pacote.
+    func putMap(_ map: TempoMapDocument, message: String) {
+        guard !saving, let current = tempoMap else { return }
+        saving = true
+        Task {
+            defer { saving = false }
+            do {
+                show(try await Backend.shared.putTempo(id, map))
+                undoStack.append(current)
+                redoStack.removeAll()
+                adjustMessage = message
+            } catch {
+                adjustMessage = error.localizedDescription
+            }
+        }
+    }
+
     private func edit(_ gesture: Backend.TempoGesture, message: String? = nil) {
         guard !saving, let before = tempoMap else { return }
         saving = true

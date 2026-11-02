@@ -310,6 +310,20 @@ def test_two_spectrum_requests_at_once_share_one_computation(client, monkeypatch
     assert not list(Path(package.find(song_id).file("peaks")).glob("*partial*"))
 
 
+def test_the_beats_come_from_the_drums_and_are_kept_per_tempo(client):
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    first = client.get(f"/api/songs/{song_id}/beats", params={"bpm": 120}).json()
+    assert first["stem"] == "drums" and first["rate"] == pytest.approx(22050 / 128)
+    assert first["envelope"] and all(0 <= v <= 255 for v in first["envelope"]) and isinstance(first["beats"], list)
+    peaks = Path(package.find(song_id).file("peaks"))
+    assert len(list(peaks.glob("beats-*-120.json"))) == 1
+    # Outro andamento do mapa: outra análise, e a de antes sai.
+    client.get(f"/api/songs/{song_id}/beats", params={"bpm": 90})
+    assert [p.name.endswith("-90.json") for p in peaks.glob("beats-*.json")] == [True]
+    assert client.get(f"/api/songs/{song_id}/beats", params={"stem": "nada", "bpm": 90}).json()["stem"] == "drums"
+
+
 def test_takes_are_kept_in_the_manifest_and_their_files_swept(client):
     import os
     import time

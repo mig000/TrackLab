@@ -420,7 +420,8 @@ struct StemJobView: View {
 
 // MARK: - Ajustar
 
-/// A sincronização: os compassos conferidos, os que o som diz estarem fora, as versões do mapa.
+/// A sincronização como um roteiro (`AdjustSteps`): o mapa inteiro, os compassos que o som acusa, os duvidosos e a
+/// música toda conferida, do geral para o particular, com o passo da vez aberto; embaixo, as ferramentas.
 struct SyncInspector: View {
     let model: SongModel
 
@@ -430,28 +431,25 @@ struct SyncInspector: View {
         }
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
-                InspectorGroup("Conferidos", summary: "\(model.checkedBars.count) de \(model.barCount)", key: "conferidos") {
-                    ProgressView(value: Double(model.checkedBars.count), total: Double(max(1, model.barCount))).tint(.green)
-                    let first = (1...max(1, model.barCount)).first { !model.checkedBars.contains($0) }
-                    Text(first.map { "Falta conferir do c. \($0) em diante." } ?? "Tudo conferido.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button { model.toggleChecked() } label: {
-                        HStack(spacing: 4) { Text("Conferido: o loop ou o compasso que toca"); KeyHint("C") }.frame(maxWidth: .infinity)
-                    }
-                }
-                bySound
-                InspectorGroup("Versões do mapa", summary: "\(model.anchorCount) âncoras", key: "versoes") {
+                AdjustSteps(model: model)
+                InspectorGroup("Ferramentas", summary: "\(model.anchorCount) âncoras", key: "ferramentas") {
                     HStack(spacing: 4) {
                         Button { model.undo() } label: { Label("Desfazer", systemImage: "arrow.uturn.backward") }
                             .disabled(!model.canUndo)
                         Button { model.redo() } label: { Label("Refazer", systemImage: "arrow.uturn.forward") }
                             .disabled(!model.canRedo)
                     }
-                    Text("Cada mudança vai para o histórico do pacote (as últimas 200 versões).")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Button("Metade") { model.halveBeats() }.help("Metade das batidas no mapa (o tempo não muda): quando as linhas estão no dobro do pulso")
+                        Button("Dobro") { model.doubleBeats() }.help("O dobro de batidas no mapa (o tempo não muda): quando as linhas estão na metade do pulso")
+                        Button("−10 ms") { model.shiftAll(by: -0.01) }.help("O mapa inteiro 10 ms antes")
+                        Button("+10 ms") { model.shiftAll(by: 0.01) }.help("O mapa inteiro 10 ms depois")
+                    }
                     Button { model.restartFromSongsterr() } label: { Label("Recomeçar do Songsterr", systemImage: "arrow.counterclockwise") }
                         .disabled(model.saving)
                         .help("Volta ao mapa como veio do Songsterr; o atual fica no histórico e no Desfazer")
+                    Text("Cada mudança vai para o histórico do pacote (as últimas 200 versões).")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(AdjustGuide.text).font(.caption).foregroundStyle(.secondary)
             }
@@ -459,39 +457,194 @@ struct SyncInspector: View {
         }
         .controlSize(.small)
     }
+}
 
-    /// Onde as notas soam antes ou depois do mapa (a mediana dos ataques por compasso), de 25 ms para cima.
-    private var bySound: some View {
-        let offsets = model.lensVisible ? model.barOffsets().filter { abs($0.value) >= 0.025 }.sorted { $0.key < $1.key } : []
-        return InspectorGroup("Pelo som", summary: model.lensVisible ? "\(offsets.count) compassos fora" : "abra a Lente", key: "pelosom") {
-            if !model.lensVisible {
-                Text("A Lente mede quando as notas soam: mostre-a (⌥⌘2).").font(.caption).foregroundStyle(.secondary)
-            } else if model.measuring {
-                Text("Medindo o som das notas…").font(.caption).foregroundStyle(.secondary)
-            } else if offsets.isEmpty {
-                Text("O som cai nas batidas (a menos de 25 ms).").font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(offsets.prefix(12), id: \.key) { index, offset in
-                    HStack {
-                        Text("c. \(index + 1)").font(.caption.monospacedDigit())
-                        Text("\(offset > 0 ? "+" : "−")\(Int((abs(offset) * 1000).rounded())) ms")
-                            .font(.caption.monospacedDigit()).foregroundStyle(Color(red: 0.2, green: 0.5, blue: 0.9))
-                        Spacer()
-                        Button("Ir") { if let range = model.barRange(index + 1) { model.engine.seek(to: range.lowerBound) } }
-                            .buttonStyle(.borderless)
+/// O roteiro do Ajuste: quatro passos numerados; os feitos com ✓ e o que deram, o da vez aberto com o porquê e o botão,
+/// os seguintes fechados com o que os espera. O passo da vez sai dos dados (`SongModel.adjustStep`) e muda sozinho
+/// quando o anterior não tem mais o que fazer.
+struct AdjustSteps: View {
+    let model: SongModel
+
+    var body: some View {
+        let current = model.adjustStep
+        let overall = model.adjustOverall
+        let fixable = model.fixableBars
+        let toHear = model.doubtfulToHear
+        VStack(alignment: .leading, spacing: 6) {
+            if !model.adjustReady {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Ouvindo a bateria e a guitarra…").font(.caption).foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 4)
+            }
+            AdjustStepCard(number: 1, title: "O mapa inteiro", state: state(.whole, current),
+                           summary: wholeSummary(overall)) {
+                Text("Quase todo compasso cai para o mesmo lado: a música toda está deslocada. Acerte o todo antes "
+                     + "dos compassos, senão todos acusam.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                if let overall {
+                    Button { model.shiftWholeMap() } label: {
+                        Text("Deslocar o mapa \(signed(overall.median))").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button { model.syncAllToSound() } label: {
+                        HStack(spacing: 4) { Text("Pelo som, compasso a compasso"); KeyHint("⇧A") }.frame(maxWidth: .infinity)
+                    }
+                    .help("Quando o deslocamento muda ao longo da música: cada compasso vai para onde o som dele está, suavizado pelos vizinhos")
+                }
+                skip(.whole, "Está certo assim")
+            }
+            AdjustStepCard(number: 2, title: "O que o som acusa", state: state(.fix, current),
+                           summary: fixable.isEmpty ? "nenhum compasso" : "\(fixable.count) compassos") {
+                Text("Nestes, a guitarra e a bateria concordam que o mapa está fora. Dá para corrigir de uma vez, sem "
+                     + "ouvir um por um (⌘Z desfaz).")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                barList(fixable)
+                Button { model.fixDoubtfulBars() } label: {
+                    Text("Corrigir os \(fixable.count) pelo som").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(model.saving)
+                skip(.fix, "Prefiro ouvir um por um")
+            }
+            AdjustStepCard(number: 3, title: "Os duvidosos", state: state(.doubtful, current),
+                           summary: toHear.isEmpty ? "nenhum" : "\(toHear.count) para ouvir") {
+                Text("Aqui só uma prova acusa, ou o andamento salta: pode ser o mapa, pode ser a música. Ouça cada um "
+                     + "com o clique e decida: Certo, Cedo, Tarde ou Até o som.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                barList(toHear)
+                Button { model.startChecking(onlyDoubtful: true) } label: {
+                    Text("Ouvir os \(toHear.count), um por vez").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                skip(.doubtful, "Pular para a conferência")
+            }
+            let checked = model.checkedBars.count
+            AdjustStepCard(number: 4, title: "Conferir a música", state: state(.check, current),
+                           summary: "\(checked) de \(model.barCount) conferidos") {
+                Text("A passada final, do começo ao fim, de ouvido: Certo marca o compasso e prende o 1 dele; Cedo e "
+                     + "Tarde empurram o 1 e mostram o que mudou em volta. Os que concordam com o som são pulados.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ProgressView(value: Double(checked), total: Double(max(1, model.barCount))).tint(.green)
+                Button { model.startChecking() } label: {
+                    Text(model.nextBarToCheckPreview.map { "Conferir do c. \($0)" } ?? "Conferir").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Toggle("Pular os que concordam com o som", isOn: Binding(get: { model.checkSkipAgreeing },
+                                                                      set: { model.checkSkipAgreeing = $0 }))
+            }
+            if current == .done {
+                Label("Sincronizado: os compassos que faltam concordam com o som.", systemImage: "checkmark.seal.fill")
+                    .font(.caption).foregroundStyle(.green)
+                    .padding(.top, 2)
+            }
+        }
+    }
+
+    private func state(_ step: AdjustStep, _ current: AdjustStep) -> AdjustStepState {
+        guard model.adjustReady else { return .later }
+        if step < current { return model.adjustSkipped.contains(step) ? .skipped : .done }
+        return step == current ? .current : .later
+    }
+
+    private func wholeSummary(_ overall: AdjustReview.Overall?) -> String {
+        guard let overall else { return model.adjustReady ? "sem provas" : "ouvindo…" }
+        if overall.global { return "deslocado \(signed(overall.median))" }
+        return "no lugar (mediana \(signed(overall.median)))"
+    }
+
+    private func signed(_ seconds: Double) -> String {
+        let ms = Int((seconds * 1000).rounded())
+        return "\(ms > 0 ? "+" : ms < 0 ? "−" : "")\(abs(ms)) ms"
+    }
+
+    @ViewBuilder private func barList(_ bars: [BarReview]) -> some View {
+        ForEach(bars.prefix(6), id: \.bar) { item in
+            HStack(spacing: 6) {
+                Text("c. \(item.bar)").font(.caption.monospacedDigit()).frame(width: 42, alignment: .leading)
+                Text(describe(item)).font(.caption).lineLimit(1)
+                Spacer(minLength: 2)
+                dot(item.attacks).help("Os ataques da guitarra")
+                dot(item.detector).help("A batida da bateria")
+                Button("Ir") { if let range = model.barRange(item.bar) { model.setLoop(range, seekToStart: true) } }
+                    .buttonStyle(.borderless)
+            }
+        }
+        if bars.count > 6 { Text("… e mais \(bars.count - 6)").font(.caption).foregroundStyle(.secondary) }
+    }
+
+    private func skip(_ step: AdjustStep, _ label: String) -> some View {
+        Button(label) { model.skipAdjustStep(step) }
+            .buttonStyle(.link)
+            .font(.caption)
+    }
+
+    private func describe(_ item: BarReview) -> String {
+        if let attacks = item.attacks, abs(attacks) >= AdjustReview.threshold {
+            return "o som \(signed(abs(attacks)).dropFirst()) \(attacks > 0 ? "depois" : "antes")"
+        }
+        if let detector = item.detector, abs(detector) >= AdjustReview.threshold {
+            return "a batida \(signed(abs(detector)).dropFirst()) \(detector > 0 ? "depois" : "antes")"
+        }
+        return "o andamento salta (\(Int(item.bpm.rounded())) bpm)"
+    }
+
+    private func dot(_ offset: Double?) -> some View {
+        Circle()
+            .fill(offset == nil ? Color.gray.opacity(0.4) : abs(offset ?? 0) >= AdjustReview.threshold ? Color.red : Color.green)
+            .frame(width: 7, height: 7)
+    }
+}
+
+enum AdjustStepState { case done, skipped, current, later }
+
+/// Um passo do roteiro: o número (✓ feito, ↷ pulado, cheio o da vez), o título, o resumo e, no da vez, o conteúdo.
+struct AdjustStepCard<Content: View>: View {
+    let number: Int
+    let title: String
+    let state: AdjustStepState
+    let summary: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle().fill(fill)
+                    switch state {
+                    case .done: Image(systemName: "checkmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
+                    case .skipped: Image(systemName: "arrow.turn.down.right").font(.system(size: 8, weight: .bold)).foregroundStyle(.white)
+                    default: Text("\(number)").font(.system(size: 10, weight: .bold)).foregroundStyle(state == .current ? .white : .secondary)
                     }
                 }
-                if offsets.count > 12 { Text("… e mais \(offsets.count - 12)").font(.caption).foregroundStyle(.secondary) }
+                .frame(width: 18, height: 18)
+                Text(title).font(.callout.weight(state == .current ? .semibold : .regular))
+                    .foregroundStyle(state == .later ? .secondary : .primary)
+                Spacer(minLength: 4)
+                Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Button { model.syncAllToSound() } label: {
-                HStack(spacing: 4) { Text("Tudo pelo som"); KeyHint("⇧A") }.frame(maxWidth: .infinity)
-            }
-            .help("A música toda de uma vez: cada compasso vai para onde as notas dele soam, suavizado pelos vizinhos; as âncoras ficam")
+            if state == .current { content() }
+        }
+        .padding(state == .current ? 10 : 8)
+        .background(RoundedRectangle(cornerRadius: 8)
+            .fill(state == .current ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8)
+            .stroke(state == .current ? Color.accentColor.opacity(0.6) : Color.secondary.opacity(0.18), lineWidth: 1))
+    }
+
+    private var fill: Color {
+        switch state {
+        case .done: .green
+        case .skipped: .gray
+        case .current: .accentColor
+        case .later: .secondary.opacity(0.18)
         }
     }
 }
 
 enum AdjustGuide {
-    static let text = "Arraste uma batida na Fita até onde ela soa: ela vira âncora e as vizinhas acompanham. ⇧ + arraste na "
-        + "TAB: só a onda anda com o mouse. Duplo clique numa batida prende ou solta."
+    static let text = "Arraste uma batida na Fita até onde ela soa: ela vira âncora e as vizinhas acompanham (8 batidas ou "
+        + "até a próxima âncora). Segurando ⌥ ao soltar, só ela anda; ⇧, tudo à direita junto; ⌥⇧, a música inteira. "
+        + "Duplo clique numa batida prende ou solta."
 }

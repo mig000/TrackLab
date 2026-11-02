@@ -174,7 +174,10 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         resultado é gravado e devolvido."""
         found = song(song_id)
         current = tempo_map(song_id)
-        return found.save_tempo_map(tempomap.anchor_edit({**gesture, "tempoMap": current}))
+        edited = tempomap.anchor_edit({**gesture, "tempoMap": current})
+        moved = edited.pop("movedCount", None)
+        saved = found.save_tempo_map(edited)
+        return saved if moved is None else {**saved, "movedCount": moved}
 
     @app.put("/api/songs/{song_id}/tempo-map")
     def put_tempo_map(song_id: str, document: dict = Body(...)) -> dict:
@@ -379,6 +382,42 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
         result = {"sounds": sounds.detect(grid, meta["hop"], meta["low"], meta["perSemitone"]), "version": sounds.VERSION}
         cache.parent.mkdir(exist_ok=True)
         atomic_json(cache, result)
+        return result
+
+    beats_guard, beats_locks = threading.Lock(), {}
+
+    @app.get("/api/songs/{song_id}/beats")
+    def song_beats(song_id: str, stem: str | None = None, bpm: float | None = None) -> dict:
+        """O tempo ouvido para o Ajuste (media/beats.py): a força dos ataques (`envelope`, um byte por quadro, `rate`
+        quadros por segundo) e as batidas que o detector acha (`beats`, em segundos), com `bpm` (o do mapa) para ele
+        começar. Na faixa pedida da separação ativa; sem ela, a bateria, o baixo ou o original (`stem` diz qual).
+        Calculado uma vez por faixa e andamento e guardado em `peaks/`."""
+        from .media import beats
+
+        found = song(song_id)
+        manifest = found.manifest
+        files = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {})
+        chosen = next((name for name in (stem, "drums", "bass") if name and files.get(name)), None)
+        if chosen:
+            relative, name = files[chosen], f"{manifest['activeStems']}-{chosen}"
+        elif manifest.get("audio"):
+            relative, name, chosen = manifest["audio"]["file"], "source", "source"
+        else:
+            raise HTTPException(404, "Esta música não tem áudio.")
+        tempo = round(bpm) if bpm and 30 <= bpm <= 300 else None
+        cache = found.file(f"peaks/beats-{name}-b{beats.VERSION}-{tempo or 'auto'}.json")
+        with beats_guard:
+            lock = beats_locks.setdefault(str(cache), threading.Lock())
+        with lock:
+            if cache.is_file():
+                return read_json(cache)
+            result = {**beats.analyse(found.file(relative), tempo), "stem": chosen}
+            cache.parent.mkdir(exist_ok=True)
+            atomic_json(cache, result)
+            # O mesmo arquivo com outro andamento, ou de outra receita, não serve mais.
+            for stale in found.file("peaks").glob(f"beats-{name}-b*.json"):
+                if stale != cache:
+                    stale.unlink(missing_ok=True)
         return result
 
     @app.post("/api/songs/{song_id}/pitch")

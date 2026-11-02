@@ -171,6 +171,21 @@ final class Backend {
         var tick: Double?
         var seconds: Double?
         var taps: [Double]?
+        /// Até quantas batidas as vizinhas acompanham (o motor usa 8 sem ele).
+        var reach: Double?
+        /// "right": o lado direito inteiro anda junto.
+        var pull: String?
+        /// Para "moves": várias batidas, `[tique, segundo]`, levadas uma depois da outra como arrastos.
+        var moves: [[Double]]?
+        /// Para "follow": os ataques casados `[tique escrito, segundo ouvido]` e os trechos `[tique, tique]` que andam.
+        var pairs: [[Double]]?
+        var ranges: [[Double]]?
+    }
+
+    /// O tempo ouvido para o Ajuste: a força dos ataques e as batidas do detector, na faixa de ritmo (a bateria, o
+    /// baixo ou o original), com o andamento do mapa para o detector começar.
+    func beats(_ id: String, bpm: Double?) async throws -> HeardBeats {
+        try await get("songs/\(id)/beats", query: bpm.map { [URLQueryItem(name: "bpm", value: String(Int($0.rounded())))] } ?? [])
     }
 
     /// Aplica o gesto ao mapa gravado no pacote; o motor grava o resultado (o anterior vai para o histórico).
