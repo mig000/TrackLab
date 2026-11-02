@@ -29,6 +29,11 @@ extension SongModel {
             tabMessage = "A partitura ainda está carregando; tente de novo em seguida."
             return
         }
+        guard detail?.audio != nil else {
+            // Sem áudio a medida nunca chega, e o "Medindo…" ficava para sempre.
+            tabMessage = "Esta música não tem áudio para medir: busque o áudio em Faixas."
+            return
+        }
         guard pitchStem(track: track).measured else {
             tabMessage = "Esta pista não tem altura para medir."
             return

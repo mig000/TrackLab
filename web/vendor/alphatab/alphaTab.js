@@ -38671,7 +38671,10 @@
 			const isLooping = this.loopStart < this.loopEnd;
 			const tmpLoopStart = this.loopStart;
 			const tmpLoopEnd = this.loopEnd;
-			const tmpSampleEndDbl = region.end;
+			// TrackLab: a interpolação lê a amostra seguinte (input[pos + 1]); na última amostra do SoundFont, sem as
+			// 46 de silêncio que o SF2 põe depois de cada uma (o chimbal de pedal do GeneralUser GS), ela saía do array, o
+			// undefined virava NaN no filtro da voz e a pista calava dali até o fim (a bateria do Let It Be).
+			const tmpSampleEndDbl = Math.min(region.end, input.length - 1);
 			const tmpLoopEndDbl = tmpLoopEnd + 1;
 			let tmpSourceSamplePosition = this.sourceSamplePosition;
 			const tmpLowpass = new VoiceLowPass(this.lowPass);

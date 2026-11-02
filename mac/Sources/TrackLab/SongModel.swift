@@ -55,7 +55,11 @@ final class SongModel {
     private(set) var scoreMessage: String?
     /// A altura da pauta desenhada: a partitura não ganha mais que isso e o resto vai para a Fita.
     private(set) var scoreHeight: Double?
-    var notice: String?
+    /// A linha de estado mostra o aviso mais novo (`statusText`): um "Guardado" velho da edição escondia o erro de
+    /// buscar o áudio.
+    var notice: String? {
+        didSet { if notice != nil { tabMessage = nil; adjustMessage = nil } }
+    }
     /// A separação em curso (o id da tarefa, o que ela faz e a última mensagem).
     private(set) var stemJob: (job: String, request: StemRequest, message: String, progress: Double?)?
     /// A TAB sintetizada ficou para trás: o mapa de tempo mudou depois dela (o motor diz ao abrir; o Ajuste, depois).
@@ -156,7 +160,9 @@ final class SongModel {
     private(set) var tabBar: TabBarInfo?
     private(set) var canUndoTab = false
     private(set) var canRedoTab = false
-    var tabMessage: String?
+    var tabMessage: String? {
+        didSet { if tabMessage != nil { notice = nil } }
+    }
 
     /// O modo Ajuste: a Fita mostra as batidas para arrastar e U põe o 1 no toque.
     var adjusting = false {
@@ -2002,7 +2008,9 @@ final class SongModel {
                     await synthesize(quiet: true)
                 }
             } catch {
-                tabMessage = "Não consegui guardar a TAB: \(error.localizedDescription). Tento de novo ao sair da edição."
+                // As mensagens do motor já terminam em ponto.
+                let reason = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+                tabMessage = "Não consegui guardar a TAB: \(reason). Tento de novo ao sair da edição."
             }
         }
     }

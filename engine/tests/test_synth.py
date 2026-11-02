@@ -162,6 +162,16 @@ def test_the_reverb_keeps_the_dry_sound_and_adds_a_tail():
     assert np.abs(wet[100 + int(1.7 * rate):, 0]).max() < 1e-3
 
 
+def test_a_nan_from_the_synthesizer_does_not_spread(tmp_path):
+    # O chimbal do Let It Be saía NaN do TinySoundFont: pelo reverb a pista inteira, pelo ganho todas, e o FLAC falhava.
+    samples = np.zeros((48_000, 2), dtype="<f4")
+    samples[100:200] = np.nan
+    samples[300] = np.inf
+    samples.tofile(tmp_path / "t0.f32")
+    data = synth.reverb(synth._raw(tmp_path / "t0.f32"), 48_000)
+    assert np.isfinite(data).all()
+
+
 def test_the_soundfont_comes_from_the_sounds_folder(monkeypatch):
     monkeypatch.delenv("TRACKLAB_SOUNDFONT", raising=False)
     with pytest.raises(MediaError, match="SoundFont"):

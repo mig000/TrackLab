@@ -237,9 +237,15 @@ def _with_alphatab(gp, points, font, rate, scratch, progress, cancel):
         _check(cancel)
         _emit(progress, f"Ambiência de {track['name']} ({number + 1} de {len(tracks)})…",
               0.3 + 0.6 * number / len(tracks))
-        data = np.fromfile(scratch / track["file"], dtype="<f4").reshape(-1, 2)
-        raw[track["index"]] = reverb(data, rate)
+        raw[track["index"]] = reverb(_raw(scratch / track["file"]), rate)
     return tracks, raw
+
+
+def _raw(path: Path) -> np.ndarray:
+    """O float32 estéreo intercalado do node. Um NaN (o sintetizador lendo fora da amostra, como o chimbal do Let It Be
+    fazia) passava pelo reverb para a pista inteira e pelo ganho para todas as pistas, e o FLAC não gravava."""
+    data = np.fromfile(path, dtype="<f4").reshape(-1, 2)
+    return np.nan_to_num(data, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def reverb(data: np.ndarray, rate: int, seconds: float = REVERB_SECONDS, wet: float = REVERB_WET) -> np.ndarray:
