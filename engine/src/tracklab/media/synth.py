@@ -41,7 +41,8 @@ Progress = Callable[[str, str, float | None], None]
 STAGE = "synth"
 # v2: o bend no tempo da própria nota (como o Guitar Pro), o alto segurado pelas ligadas e o vibrato depois do bend.
 # v3: o vibrato começa onde o bend para de mudar (num bend que segura até o fim, como o de uma ligada, ele não soava).
-PROCEDURE = "synth.v3"
+# v4: cada pista com o programa dos canais dela (a bateria que dividia o canal 9 com outra pista saía muda) e sem NaN.
+PROCEDURE = "synth.v4"
 GAIN = 0.4                 # ganho do FluidSynth por pista: folga para os acordes e a bateria não estourarem
 LOUDNESS = 0.8             # todas as pistas juntas a 80 % do volume (RMS) do áudio do vídeo
 PEAK = 0.95

@@ -9,6 +9,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 const alphaTab = require(path.join(__dirname, "..", "vendor", "alphatab", "alphaTab.js"));
 
+// O alphaTab manda o programa uma vez por canal na música inteira: com várias pistas no canal 9 (maracas, bateria e
+// overdub do Let It Be), só a primeira o recebia, e as outras, sintetizadas sozinhas, tocavam no preset 0 do SoundFont
+// (a Marimba do GeneralUser GS, lida fora da amostra), mudas. Cada pista leva o dela, no tique 0, em cada canal que usa.
+function withPrograms(events, program) {
+  const programmed = new Set(events.filter((e) => e instanceof alphaTab.midi.ProgramChangeEvent).map((e) => e.channel));
+  const programs = [...new Set(events.map((e) => e.channel).filter((c) => c !== undefined && !programmed.has(c)))]
+    .map((channel) => new alphaTab.midi.ProgramChangeEvent(0, 0, channel, program));
+  return programs.concat(events);
+}
+
+module.exports = { withPrograms };
+if (require.main !== module) {
+  return; // carregado pelo teste
+}
+
 const [source, fontPath, pointsPath, folder, rateText] = process.argv.slice(2);
 if (!source || !fontPath || !pointsPath || !folder) {
   console.error("uso: node gp-synth.cjs <partitura.gp> <soundfont.sf2> <mapa.json> <pasta> [taxa]");
@@ -64,7 +79,8 @@ score.tracks.forEach((track, index) => {
   const midi = new alphaTab.midi.MidiFile();
   midi.format = alphaTab.midi.MidiFileFormat.SingleTrack;
   midi.division = whole.division;
-  const ordered = tempos.map(([tick, micros]) => new alphaTab.midi.TempoChangeEvent(tick, micros)).concat(events);
+  const ordered = tempos.map(([tick, micros]) => new alphaTab.midi.TempoChangeEvent(tick, micros))
+    .concat(withPrograms(events, track.playbackInfo.program));
   ordered.sort((a, b) => a.tick - b.tick);
   for (const event of ordered) {
     event.track = 0;

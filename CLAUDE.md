@@ -97,7 +97,7 @@ seguinte, depois de uma hora). `save_tempo_map` grava o mapa ajustado e guarda
   projeto (uma trilha por pista, com as articulações) e o andamento do GP é trocado pelo do mapa de tempo (um evento
   de andamento por ponto). Sem FluidSynth (o Homebrew não o instala mais no Intel: sem pacotes, e a compilação baixa do
   GitHub dentro da caixa de areia), quem toca é o TinySoundFont do próprio alphaTab em node (`web/tools/gp-synth.cjs`,
-  as sete pistas de White Room em ~6 s; o `vendor` não lê além da última amostra do SoundFont, que no GeneralUser GS dava NaN no chimbal do Let It Be e o FLAC não gravava, e o motor zera qualquer NaN que venha do node, `_raw`), com um reverb de convolução leve no motor (em blocos, overlap-add: 1,8 s por pista
+  as sete pistas de White Room em ~6 s; o `vendor` não lê além da última amostra do SoundFont, que no GeneralUser GS dava NaN no chimbal do Let It Be e o FLAC não gravava, e o motor zera qualquer NaN que venha do node, `_raw`; cada pista leva o programa dos canais dela, `withPrograms`: o alphaTab manda um por canal na música inteira, e as percussões que dividiam o canal 9 com outra pista, a bateria e o overdub do Let It Be e do Here Comes the Sun, tocavam no preset 0 e saíam mudas, `synth.v4`), com um reverb de convolução leve no motor (em blocos, overlap-add: 1,8 s por pista
 de 4 min, antes 3,9 s com uma FFT da pista inteira); o MIDI sai com
   `extendBendArrowsOnTiedNotes` desligado: o bend no tempo da própria nota, como o Guitar Pro toca (conferido no MIDI que
   ele exporta), e não espalhado pelas ligadas como a seta do desenho (`synth.v2`); numa nota com bend e vibrato, o bend

@@ -250,4 +250,19 @@ test("modo página: a batida que toca pelo tique", () => {
   assert.equal(core.beatIndexAt(ticks, 5000), 3);
 });
 
+test("TAB sintetizada: cada pista leva o programa dos canais que usa", () => {
+  // No Let It Be, maracas, overdub e bateria dividem o canal 9 e o alphaTab manda o programa só na primeira: as outras,
+  // sintetizadas sozinhas, tocavam no preset 0 do SoundFont e saíam mudas.
+  const alphaTab = require("../vendor/alphatab/alphaTab.js");
+  const { withPrograms } = require("../tools/gp-synth.cjs");
+  const midi = alphaTab.midi;
+  const second = [new midi.ControlChangeEvent(13, 0, 9, 7, 80), new midi.NoteOnEvent(13, 960, 9, 38, 100)];
+  const events = withPrograms(second, 0);
+  const programs = events.filter((e) => e instanceof midi.ProgramChangeEvent);
+  assert.deepEqual(programs.map((e) => [e.tick, e.channel, e.program]), [[0, 9, 0]]);
+  // A primeira, que já tem o programa, não ganha outro.
+  const first = [new midi.ProgramChangeEvent(12, 0, 9, 0), new midi.NoteOnEvent(12, 0, 9, 70, 100)];
+  assert.equal(withPrograms(first, 0).filter((e) => e instanceof midi.ProgramChangeEvent).length, 1);
+});
+
 console.log(`${passed} verificações passaram`);
