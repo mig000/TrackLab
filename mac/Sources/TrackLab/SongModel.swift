@@ -2357,10 +2357,18 @@ final class SongModel {
 
     /// A separação que toca agora (uma das guardadas): o áudio é recarregado no mesmo ponto, tocando se tocava, com
     /// a mesma mixagem. A anterior fica como o outro lado do A/B.
+    /// Uma troca pedida no meio de outra não se perde (antes era ignorada até o espectro da nova ficar pronto, alguns
+    /// segundos, e o segundo B não voltava): ela espera a vez em `pendingStems` e é feita assim que o áudio da
+    /// primeira estiver trocado; as ondas e o espectro são pedidos só para a que ficou.
     func useStems(_ key: String) async {
-        guard let detail, key != detail.activeStems, detail.stems[key] != nil, stemSwitching == false else { return }
+        guard let detail, detail.stems[key] != nil else { return }
+        if stemSwitching {
+            pendingStems = key
+            return
+        }
+        guard key != detail.activeStems else { return }
         stemSwitching = true
-        defer { stemSwitching = false }
+        switchingFrom = detail.activeStems
         do {
             try await Backend.shared.setActiveStems(id, key: key)
             let fresh = try await Backend.shared.song(id)
@@ -2371,18 +2379,36 @@ final class SongModel {
             engine.useStems = true
             if wasPlaying { engine.play() }
             compareKey = previous
-            await loadGuitarPeaks(fresh)
-            await loadSpectrum()
-            measureLater()
+            let names = [fresh.active?.label, previous.flatMap { fresh.stems[$0]?.label }]
+            if let now = names[0] { notice = "Tocando \(now)" + (names[1].map { " · B volta para \($0)" } ?? "") }
         } catch {
             notice = error.localizedDescription
         }
+        stemSwitching = false
+        switchingFrom = nil
+        if let next = pendingStems {
+            pendingStems = nil
+            if next != self.detail?.activeStems {
+                await useStems(next)
+                return
+            }
+        }
+        guard let current = self.detail else { return }
+        await loadGuitarPeaks(current)
+        await loadSpectrum()
+        measureLater()
     }
 
     @ObservationIgnored private var stemSwitching = false
+    @ObservationIgnored private var switchingFrom: String?
+    @ObservationIgnored private var pendingStems: String?
 
-    /// B: troca entre as duas separações do A/B.
+    /// B: troca entre as duas separações do A/B. No meio de uma troca, B de novo pede a volta (e mais um B a cancela).
     func toggleAB() {
+        if stemSwitching, let from = switchingFrom {
+            pendingStems = pendingStems == nil ? from : nil
+            return
+        }
         guard let compareKey else { return }
         Task { await useStems(compareKey) }
     }

@@ -103,7 +103,10 @@ final class StemEngine {
     /// O volume de cada take (pelo id da faixa, "take:<id>"): a pista dele no mixer; 0 cala.
     var takeGains: [String: Float] = [:] { didSet { applyMix() } }
 
-    @ObservationIgnored private var tracks: [String: Track] = [:]
+    @ObservationIgnored private var tracks: [String: Track] = [:] { didSet { trackIDs = tracks.keys.sorted() } }
+    /// As faixas carregadas, vistas pelas telas: `tracks` não é observado, e o mixer ficava com as faixas da
+    /// separação de antes depois de um A/B (3/11).
+    private(set) var trackIDs: [String] = []
     @ObservationIgnored private(set) var sources: [String: URL] = [:]
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var plan = PlaybackPlan(start: 0, loop: nil, duration: 0)
@@ -254,17 +257,17 @@ final class StemEngine {
         }
     }
 
-    var takeIDs: [String] { tracks.keys.filter { $0.hasPrefix(Self.takePrefix) }.sorted() }
+    var takeIDs: [String] { trackIDs.filter { $0.hasPrefix(Self.takePrefix) } }
 
     /// As faixas da separação carregadas (sem o original, a TAB sintetizada e os takes).
     var stemIDs: [String] {
-        tracks.keys.filter {
+        trackIDs.filter {
             $0 != Self.sourceID && $0 != Self.clickID && !$0.hasPrefix(SynthTrack.prefix) && !$0.hasPrefix(Self.takePrefix)
-        }.sorted()
+        }
     }
 
     /// As faixas da TAB sintetizada carregadas ("tab:1"…).
-    var synthIDs: [String] { tracks.keys.filter { $0.hasPrefix(SynthTrack.prefix) }.sorted() }
+    var synthIDs: [String] { trackIDs.filter { $0.hasPrefix(SynthTrack.prefix) } }
 
     // MARK: - Relógio
 
@@ -338,7 +341,6 @@ final class StemEngine {
         }
         guard !segments.isEmpty else { return }
         planLength = segments.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
-        for track in tracks.values { schedule(track, segments, fadeOut: end != nil) }
         do {
             if !engine.isRunning { try engine.start() }
             playbackError = nil
@@ -348,11 +350,37 @@ final class StemEngine {
             return
         }
         readLatency(force: true)
-        // Um início comum um pouco à frente, para todos os players estarem prontos no mesmo instante.
-        let lead = 0.05
-        let start = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead))
-        for track in tracks.values { track.player.play(at: start) }
-        anchorHost = CACurrentMediaTime() + lead
+        // Um início comum à frente, para todos os players começarem no mesmo quadro. Cada `play(at:)` espera um ciclo
+        // de áudio (~10,7 ms no iMac, 512 quadros) e um instante que já passou faz o player começar quando é chamado:
+        // com 50 ms fixos e as 11 faixas do Sultans (o original, a multitrack e a TAB sintetizada), cada uma começava
+        // ~11 ms depois da anterior, até 270 ms (medido em 3/11 pelo que cada player tocou de fato; a ordem das faixas
+        // muda a cada abertura, então às vezes as que soam ficavam longe umas das outras). A folga cresce com as
+        // faixas; se o laço passar dela mesmo assim, tudo é agendado de novo com a folga medida.
+        // Antes, cada arquivo é lido no ponto de onde vai tocar, todos ao mesmo tempo: o decodificador de FLAC da Apple
+        // não usa índice de busca e percorre o arquivo até o ponto pedido (24 ms por arquivo em 2:30, ~100 ms em 5:30,
+        // na primeira vez de cada arquivo aberto, e depois de um A/B todos são novos); o player fazia isso já tocando,
+        // um arquivo depois do outro, e as últimas faixas entravam centenas de ms depois das primeiras. Depois da
+        // primeira leitura o arquivo sabe onde está cada trecho, e as buscas seguintes são instantâneas.
+        Self.warm(Array(tracks.values), at: segments[0].lowerBound)
+        var lead = 0.08 + 0.012 * Double(tracks.count)
+        var startHost: UInt64 = 0
+        for attempt in 0..<3 {
+            for track in tracks.values { schedule(track, segments, fadeOut: end != nil) }
+            let began = CACurrentMediaTime()
+            startHost = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)
+            let start = AVAudioTime(hostTime: startHost)
+            for track in tracks.values { track.player.play(at: start) }
+            let spent = CACurrentMediaTime() - began
+            // O player precisa ser chamado uns 30 ms antes do instante (medido): com menos, entra atrasado.
+            guard spent > lead - 0.05 else { break }
+            Self.log("o play de \(tracks.count) faixas levou \(Int(spent * 1000)) ms, mais que a folga de "
+                     + "\(Int(lead * 1000)) ms" + (attempt < 2 ? ": agendando de novo" : ""))
+            guard attempt < 2 else { break }
+            for track in tracks.values { track.player.stop() }
+            lead = spent * 1.5 + 0.06
+        }
+        // O relógio parte do instante pedido (antes, de depois do laço: ficava atrás do som o tanto que o laço levou).
+        anchorHost = AVAudioTime.seconds(forHostTime: startHost)
         anchorElapsed = 0
         isPlaying = true
         transportVersion += 1
@@ -535,6 +563,32 @@ final class StemEngine {
         // Vinte minutos de loop agendados acabando: agenda mais, do ponto ouvido.
         if plan.loop != nil, played > planLength - 5 {
             restart(at: currentTime)
+        }
+    }
+
+    /// Lê um pedaço de cada arquivo no segundo dado, em paralelo (os players estão parados: ninguém mais lê deles).
+    private static func warm(_ list: [Track], at seconds: Double) {
+        nonisolated(unsafe) let files = list.map(\.file)
+        DispatchQueue.concurrentPerform(iterations: files.count) { index in
+            let file = files[index]
+            let frame = AVAudioFramePosition(seconds * file.processingFormat.sampleRate)
+            guard frame < file.length,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 64) else { return }
+            file.framePosition = max(0, frame)
+            try? file.read(into: buffer, frameCount: 64)
+        }
+    }
+
+    /// O que o motor de áudio quer lembrar depois (um play que passou da folga): `~/Library/Logs/TrackLab-audio.log`.
+    static func log(_ text: String) {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/TrackLab-audio.log")
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? Data(line.utf8).write(to: url)
         }
     }
 
