@@ -54,7 +54,7 @@ def test_import_makes_a_package_with_score_audio_and_tempo_map():
         xml = ET.fromstring(gp.read("Content/score.gpif"))
     assert len(xml.findall("./MasterBars/MasterBar")) == 3
     assert manifest["audio"]["sampleRate"] == 48_000 and manifest["audio"]["duration"] == pytest.approx(6.0, abs=0.01)
-    assert song.file("audio/source.flac").is_file()
+    assert song.file("audio/source.mp3").is_file()
     tempo = json.loads(song.file("score/tempo-map.json").read_text())
     assert map_of(tempo).seconds(3840) == pytest.approx(2.5)
     assert manifest["warnings"] == []
@@ -142,7 +142,7 @@ def test_audio_is_refused_for_a_score_edited_in_its_bars():
         songsterr.add_audio(found, source=FakeSource([guitar_track(3)], points=[0.0, 2.0, 4.0, 6.0]))
     again = package.find(without.manifest["id"])
     assert json.dumps(again.manifest, sort_keys=True) == before
-    assert not again.file("audio/source.flac").exists() and not again.file("score/tempo-map.json").exists()
+    assert not again.file("audio/source.mp3").exists() and not again.file("score/tempo-map.json").exists()
 
 
 def test_cancelling_while_the_audio_converts_publishes_nothing(monkeypatch):
@@ -171,7 +171,7 @@ def test_cancelling_while_the_audio_converts_publishes_nothing(monkeypatch):
                             cancel=cancel)
     found = package.find(without.manifest["id"])
     assert not found.manifest["audio"]
-    assert not found.file("audio/source.flac").exists() and not found.file("score/tempo-map.json").exists()
+    assert not found.file("audio/source.mp3").exists() and not found.file("score/tempo-map.json").exists()
 
 
 def test_a_failure_in_the_score_leaves_no_package():

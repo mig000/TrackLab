@@ -28,7 +28,7 @@ PROCEDURE = "multitrack.v2"   # v2: consenso dos trechos (RANSAC), velocidade at
 
 def assemble(source: Path, tracks: list[tuple[Path, str]], output: Path, *, progress: Progress | None = None,
              cancel=None, details: dict | None = None) -> dict:
-    """Grava `output/<faixa>.flac` (na taxa e no tamanho da fonte) a partir de `tracks` (arquivo, faixa); arquivos da
+    """Grava `output/<faixa>.mp3` (na taxa e no tamanho da fonte) a partir de `tracks` (arquivo, faixa); arquivos da
     mesma faixa se somam. `details` vai para o recibo (de onde veio a multitrack)."""
     source, output = Path(source), Path(output)
     if not tracks:
@@ -69,7 +69,7 @@ def assemble(source: Path, tracks: list[tuple[Path, str]], output: Path, *, prog
     files = {}
     for key, data in buckets.items():
         _check(cancel)
-        files[key] = _write_stem(output / f"{key}.flac", (data * gain).T, rate)   # (canais, quadros)
+        files[key] = _write_stem(output / f"{key}.mp3", (data * gain).T, rate)   # (canais, quadros)
     receipt = {"model": "multitrack", "version": PROCEDURE, "audioSHA256": sha256_file(source), "sampleRate": rate,
                "frames": frames, "duration": frames / rate, "device": None,
                "alignment": {key: found[key] for key in ("offset", "speed", "agreed", "windows", "strength", "gain")},

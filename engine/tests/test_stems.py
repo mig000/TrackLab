@@ -67,5 +67,5 @@ def test_mps_failure_falls_back_to_the_cpu(monkeypatch, tmp_path):
     receipt = demucs.separate(source, tmp_path / "out", device="mps")
     assert devices == ["mps", "cpu"] and receipt["device"] == "cpu"
     assert "ComplexFloat" in receipt["fallback"] and "mais detalhes" not in receipt["fallback"]
-    out, rate = soundfile.read(str(tmp_path / "out" / "guitar.flac"))
+    out, rate = soundfile.read(str(tmp_path / "out" / "guitar.mp3"))
     assert rate == 48_000 and np.abs(out).max() == pytest.approx(0.03, abs=1e-3)

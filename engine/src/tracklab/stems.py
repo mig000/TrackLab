@@ -33,6 +33,12 @@ MULTITRACK_STEMS = {"guitar": "guitar", "bass": "bass", "drums": "drums", "vocal
 SKIPPED = re.compile(r"crowd|preview|click|count.?in", re.IGNORECASE)
 
 
+def audio_id(audio: dict) -> str:
+    """O áudio do vídeo para as chaves das faixas: o SHA-256 dele, ou o do FLAC de antes numa música passada para MP3
+    (`audio.id`): a chave não muda, e uma separação já feita (o MVSEP gasta a cota do dia) não se repete."""
+    return audio.get("id") or audio["sha256"]
+
+
 def demucs_key(audio_sha: str, version: str) -> str:
     return f"demucs6s-{sha256_text(audio_sha + '|' + version)[:8]}"
 
@@ -51,7 +57,7 @@ def separate_song(package: SongPackage, *, progress: Progress | None = None, can
     """Separa o áudio do pacote com o Demucs 6s (GPU quando houver) e publica as seis faixas; devolve o registro."""
     audio = _audio(package)
     version = demucs.separator_version()
-    key = demucs_key(audio["sha256"], version)
+    key = demucs_key(audio_id(audio), version)
 
     def build(folder):
         receipt = (run or demucs.separate)(package.file(audio["file"]), folder, progress=progress, cancel=cancel,
@@ -74,7 +80,7 @@ def import_multitrack(package: SongPackage, entry: dict, *, folder: Path | None 
     if not base.is_dir():
         raise multitracks.MultitrackError(f"Não achei {entry['path']} na biblioteca (o HD externo está ligado?).")
     tracks = multitrack_tracks(entry, base)
-    key = multitrack_key(audio["sha256"], entry["path"])
+    key = multitrack_key(audio_id(audio), entry["path"])
 
     def build(output):
         receipt = multitrack_media.assemble(
@@ -99,7 +105,7 @@ def _import_mogg(package: SongPackage, entry: dict, audio: dict, *, folder: Path
         raise multitracks.MultitrackError("Um .mogg precisa das faixas do Demucs da música para reconhecer os canais: "
                                           "separe as faixas primeiro.")
     references = {name: package.file(relative) for name, relative in demucs["files"].items()}
-    key = multitrack_key(audio["sha256"], entry["path"])
+    key = multitrack_key(audio_id(audio), entry["path"])
 
     def build(output):
         receipt = mogg_media.assemble(
@@ -134,7 +140,7 @@ def separate_mvsep(package: SongPackage, *, key: str, model: int = 31, progress:
     audio = _audio(package)
     model = mvsep.check_model(model)
     api_key = mvsep.check_key(key)
-    stems_key = mvsep_key(audio["sha256"], model)
+    stems_key = mvsep_key(audio_id(audio), model)
 
     def build(output):
         extra = {"pause": pause} if pause is not None else {}

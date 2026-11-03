@@ -364,6 +364,15 @@ public struct SongDetail: Codable, Hashable, Sendable {
     public func url(_ relative: String) -> URL {
         URL(fileURLWithPath: folder, isDirectory: true).appending(path: relative)
     }
+
+    /// O arquivo de um take: o que existe entre o CAF gravado e o MP3 em que o motor o transforma depois (3/11), para
+    /// um take da lista de antes da troca ainda tocar.
+    public func takeURL(_ relative: String) -> URL {
+        let url = url(relative)
+        guard !FileManager.default.fileExists(atPath: url.path) else { return url }
+        let twin = url.deletingPathExtension().appendingPathExtension(url.pathExtension == "caf" ? "mp3" : "caf")
+        return FileManager.default.fileExists(atPath: twin.path) ? twin : url
+    }
 }
 
 public struct TempoPoint: Codable, Hashable, Sendable {
@@ -490,6 +499,16 @@ public struct Job: Codable, Identifiable, Hashable, Sendable {
 }
 
 /// O que `POST` de uma tarefa devolve: só a identidade e o estado.
+/// A biblioteca do motor (`GET library`): a pasta, quantas músicas, quanto ocupam e quanto sobra no disco.
+public struct LibraryInfo: Codable, Sendable, Equatable {
+    public let path: String
+    public let `default`: Bool
+    public let songs: Int
+    public let bytes: Int64
+    public let free: Int64
+    public let volume: String
+}
+
 public struct JobTicket: Codable, Sendable {
     public let id: String
     public let kind: String

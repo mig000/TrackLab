@@ -6,7 +6,7 @@
     score/tempo-map.json   tique ↔ segundo, o contrato do TabLab; os ajustes manuais mudam só este arquivo
     score/tempo-map-history/  as versões anteriores do mapa, uma por ajuste (as últimas `TEMPO_HISTORY`)
     score/tempo-map-original.json  o mapa como veio do Songsterr, guardado antes do primeiro ajuste
-    audio/source.flac      o áudio do vídeo vinculado, convertido uma vez
+    audio/source.mp3       o áudio do vídeo vinculado, convertido uma vez (MP3 320; antes de 3/11/2026, FLAC)
     stems/<chave>/         uma pasta por separação (provedor, modelo e hash do áudio na chave) com `receipt.json`
     peaks/                 caches da Fita, refazíveis
 
@@ -318,13 +318,32 @@ class SongPackage:
         self.update(record)
         return clean
 
-    def set_takes(self, takes) -> list[dict]:
-        """Os takes gravados (a lista inteira, como o app a tem); os arquivos dos que saíram dela são apagados."""
+    def set_takes(self, takes, *, compress: bool = True) -> list[dict]:
+        """Os takes gravados (a lista inteira, como o app a tem); os arquivos dos que saíram dela são apagados, e os
+        que ainda estão em CAF passam para MP3 em segundo plano (`compress_takes`)."""
         with _LOCK:
             clean = take_list.check(takes, self.path)
             self.update(lambda data: data.__setitem__("takes", clean))
             take_list.sweep(self.path, clean)
-            return clean
+        if compress and any(take["file"].endswith(".caf") for take in clean):
+            threading.Thread(target=self.compress_takes, daemon=True).start()
+        return clean
+
+    def compress_takes(self) -> list[str]:
+        """Os takes da lista ainda em CAF viram MP3; o manifesto passa a apontar para o MP3. Devolve os ids."""
+        done = []
+        for take in list(self.manifest.get("takes") or []):
+            new = take_list.compress(self.path, take)
+            if new is None:
+                continue
+            with _LOCK:
+                def record(data: dict, take_id=take["id"], file=new) -> None:
+                    for entry in data.get("takes") or []:
+                        if entry.get("id") == take_id:
+                            entry["file"] = file
+                self.update(record)
+            done.append(take["id"])
+        return done
 
     def set_status(self, status) -> str:
         """O estado de estudo da música (Quero aprender, Aprendendo, Polindo, No repertório, Arquivo)."""

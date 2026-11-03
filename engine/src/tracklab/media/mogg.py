@@ -216,7 +216,7 @@ def layout(channels: np.ndarray, kinds: list[str | None]) -> dict[str, tuple[lis
 
 def assemble(source: Path, mogg: Path, stems: dict[str, Path], output: Path, *, progress: Progress | None = None,
              cancel=None, details: dict | None = None) -> dict:
-    """Grava `output/<faixa>.flac` (na taxa e no tamanho do áudio do vídeo) a partir do .mogg: alinhado ao vídeo, cada
+    """Grava `output/<faixa>.mp3` (na taxa e no tamanho do áudio do vídeo) a partir do .mogg: alinhado ao vídeo, cada
     canal reconhecido contra as faixas do Demucs (`stems`: nome → arquivo, no tempo do vídeo)."""
     source, mogg, output = Path(source), Path(mogg), Path(output)
     started = time.monotonic()
@@ -255,7 +255,7 @@ def assemble(source: Path, mogg: Path, stems: dict[str, Path], output: Path, *, 
             _check(cancel)
             _emit(progress, f"Montando as faixas ({step + 1} de {len(plan)})…", 0.55 + 0.4 * step / len(plan))
             data = align.place(mix(ogg, rate, left, right, speed=found["speed"]), full_lag, frames)
-            files[key] = _write_stem(output / f"{key}.flac", (data * found["gain"]).T, rate)
+            files[key] = _write_stem(output / f"{key}.mp3", (data * found["gain"]).T, rate)
     finally:
         ogg.unlink(missing_ok=True)
     receipt = {"model": "multitrack", "version": PROCEDURE, "audioSHA256": sha256_file(source), "sampleRate": rate,

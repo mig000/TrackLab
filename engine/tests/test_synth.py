@@ -89,7 +89,7 @@ def test_each_track_lands_on_the_video_audio_and_goes_stale_with_a_new_map(tmp_p
     fresh.rmdir()
     assert result["reused"] is False and result["soundfont"] == "Teste.sf2" and list(result["tracks"]) == ["0"]
     audio, got = soundfile.read(str(song.file(result["tracks"]["0"]["file"])), dtype="float32")
-    assert got == rate and len(audio) == 20 * rate
+    assert got == rate and abs(len(audio) - 20 * rate) <= 1152
     # O tique 0 cai a 1,5 s no vídeo: antes disso, silêncio.
     assert np.abs(audio[:int(1.49 * rate)]).max() < 1e-4 and np.abs(audio[int(1.6 * rate):int(5 * rate)]).max() > 0.01
     assert stems.synth_state(song)["stale"] is False
@@ -146,8 +146,8 @@ def test_alphatab_synthesizes_without_anything_installed(tmp_path):
     receipt = synth.synthesize(FIXTURE, points, source, tmp_path / "out",
                                font=Path(__file__).parent / "fixtures" / "sonivox.sf2", engine="alphatab")
     assert receipt["engine"] == "alphatab" and receipt["tracks"]
-    audio, got = soundfile.read(str(tmp_path / "out" / f"t{next(iter(receipt['tracks']))}.flac"), dtype="float32")
-    assert got == rate and len(audio) == 25 * rate
+    audio, got = soundfile.read(str(tmp_path / "out" / f"t{next(iter(receipt['tracks']))}.mp3"), dtype="float32")
+    assert got == rate and abs(len(audio) - 25 * rate) <= 1152
     loud = np.flatnonzero(np.abs(audio[:, 0]) > 0.01)
     # A primeira nota soa no tique 0, que o mapa põe aos 3 s do vídeo; antes, silêncio.
     assert loud[0] / rate == pytest.approx(3.0, abs=0.05)

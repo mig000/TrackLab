@@ -14,6 +14,18 @@ https://claude.ai/artifact/EomP8enfZv8mW3S46N5ycf.
   Mel-RoFormer dá resultado errado no MPS, o SW morre), o Demucs 6s dá o mesmo resultado na GPU e na CPU.
 - A Fita (guitarra em âmbar sobre a silhueta da banda) é a visão padrão da onda; o Espectro fica no Ajuste.
 - Gravação de takes, Helix e AU entram (Fase 5).
+- Áudio e biblioteca (3/11): todo áudio que o TrackLab grava é MP3 a 320 kbps (`media/encode.py`; antes FLAC de 24
+  bits, 6,6 GB em 16 músicas), também a multitrack importada (alinhada e somada por instrumento, como antes: tocar o
+  Ogg direto não dá, a busca do macOS nele erra até 1.024 amostras) e os takes (gravados em CAF e passados a MP3 pelo
+  motor depois, `compress_takes`; o app acha o take pelo que existe, `takeURL`). Medido: o MP3 do ffmpeg cai amostra a
+  amostra no AVAudioFile, no soundfile e no ffmpeg (o atraso do codificador vai no cabeçalho LAME; no fim às vezes
+  sobram umas amostras, até um quadro de MP3 é aceito) e a busca no app leva 3 a 6 ms. As chaves das separações saem
+  de `audio.id` (o SHA-256 do FLAC de antes numa música migrada) ou do SHA-256 do áudio. A biblioteca (as pastas
+  `.tracklab`) fica num disco escolhido em TrackLab › Ajustes › Biblioteca (`library.py`, `~/TrackLab/config.json` →
+  `library`, `GET`/`PUT library`; mover copia cada música, confere arquivo por arquivo e só então apaga a original);
+  o resto de `~/TrackLab` (modelos, SoundFonts, índice das multitracks) fica. `tracklab mp3` passa as músicas de antes
+  para MP3, com o app fechado (os FLAC vão para uma pasta na Lixeira); rodado em 3/11: 6,88 GB de FLAC em 269 arquivos viraram 2,37 GB de MP3 em 3,5 min, e o Sultans tocou e fez o A/B em MP3. O disco das multitracks ("HD Externo WD") fica
+  sempre ligado.
 
 ## Motor (`engine/`)
 Python 3.11–3.12 via uv. `uv sync --extra separate --group dev`, `uv run pytest`.

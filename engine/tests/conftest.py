@@ -28,3 +28,15 @@ def tone(path, seconds=3.0, rate=48_000):
     wave = 0.3 * np.sin(2 * math.pi * 220 * t)
     soundfile.write(str(path), np.stack([wave, wave], axis=1), rate)
     return path
+
+
+def sounds_like(got, expected, tolerance=0.1):
+    """O áudio gravado em MP3 (com perda) confere com o esperado: no mesmo lugar e com o erro, em relação à energia do
+    esperado, abaixo de `tolerance`. O fim pode ter até um quadro de MP3 a mais (o ffmpeg arredonda o enchimento)."""
+    import numpy as np
+    got, expected = np.asarray(got, dtype="float64"), np.asarray(expected, dtype="float64")
+    assert abs(len(got) - len(expected)) <= 1152, (len(got), len(expected))
+    n = min(len(got), len(expected))
+    error = float(np.sqrt(np.sum((got[:n] - expected[:n]) ** 2) / max(np.sum(expected[:n] ** 2), 1e-12)))
+    assert error < tolerance, error
+    return True

@@ -218,7 +218,7 @@ def add_audio(song: SongPackage, *, source: Source | None = None, progress: Prog
         manifest = {"warnings": [], "origin": dict(origin)}
         file = staticmethod(song.file)
 
-    written = [p for p in ("audio/source.flac", "score/tempo-map.json") if not song.file(p).exists()]
+    written = [p for p in ("audio/source.mp3", "score/tempo-map.json") if not song.file(p).exists()]
     try:
         _add_audio(Target, source, ident, revisions, effective, say, cancel)
         _check(cancel)
@@ -279,10 +279,10 @@ def _add_audio(draft: Draft, source: Source, ident: int, revisions: list[int], b
     with tempfile.TemporaryDirectory(prefix="tracklab-audio-") as temp:
         downloaded, video_meta = source.download(video, Path(temp))
         say("Convertendo o áudio…", 0.8)
-        info = to_source(downloaded, draft.file("audio/source.flac"), cancel=cancel)
+        info = to_source(downloaded, draft.file("audio/source.mp3"), cancel=cancel)
     _check(cancel)
     atomic_json(draft.file("score/tempo-map.json"), tempo)
-    draft.manifest["audio"] = {"file": "audio/source.flac", "sha256": info.sha256, "duration": info.duration,
+    draft.manifest["audio"] = {"file": "audio/source.mp3", "sha256": info.sha256, "duration": info.duration,
                                "sampleRate": info.sample_rate, "channels": info.channels}
     draft.manifest["tempoMap"] = {"file": "score/tempo-map.json", "source": "songsterr", "points": len(tempo["points"])}
     draft.manifest["origin"].update({"videoId": video, "video": video_meta})

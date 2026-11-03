@@ -1,7 +1,8 @@
-"""Conversão única para a fonte canônica: FLAC 24 bits, mono ou estéreo, a 44,1 ou 48 kHz.
+"""Conversão única para a fonte canônica: MP3 a 320 kbps (`encode`), mono ou estéreo, a 44,1 ou 48 kHz.
 
-Toda etapa seguinte decodifica as mesmas amostras; decodificadores de mp3 divergem no atraso do
-codificador, o que deslocaria todos os tempos. A taxa só muda quando não é 44,1 nem 48 kHz.
+Toda etapa seguinte decodifica as mesmas amostras. O atraso do codificador, que costuma deslocar um MP3, vai no
+cabeçalho LAME que o ffmpeg grava, e os três leitores do TrackLab o descontam (conferido em 3/11/2026; até então a fonte
+era FLAC de 24 bits). A taxa só muda quando não é 44,1 nem 48 kHz.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING
 import soundfile
 
 from tracklab.errors import MediaError
+from tracklab.media import encode
 from tracklab.media.probe import media_input, probe, tool
 from tracklab.util import new_id, sha256_file
 
@@ -47,8 +49,9 @@ def channel_count(path: Path) -> int:
 
 def to_source(src: Path, dst: Path, *, channels: list[int] | None = None,
               progress: Progress | None = None, cancel: Cancel | None = None) -> SourceInfo:
-    """Primeira faixa de áudio de `src` (ou os canais escolhidos) como FLAC canônico em `dst`, gravado de forma atômica."""
-    src, dst = Path(src), Path(dst)
+    """Primeira faixa de áudio de `src` (ou os canais escolhidos) como o MP3 canônico em `dst` (o sufixo vira .mp3),
+    gravado de forma atômica."""
+    src, dst = Path(src), Path(dst).with_suffix(encode.SUFFIX)
     info = probe(src)
     if not info.has_audio:
         raise MediaError(f"{src.name} não tem áudio para converter.")
@@ -57,7 +60,7 @@ def to_source(src: Path, dst: Path, *, channels: list[int] | None = None,
     picked = _picked_channels(channels, info.channels)
     rate = info.sample_rate if info.sample_rate in KEPT_RATES else DEFAULT_RATE
     dst.parent.mkdir(parents=True, exist_ok=True)
-    temp = dst.with_name(f".{dst.name}.{new_id()}.tmp")
+    temp = dst.with_name(f".{dst.stem}.{new_id()}{encode.SUFFIX}")
     try:
         _run_ffmpeg(_command(src, temp, picked, rate), info.duration, progress, cancel)
         _check_output(temp)
@@ -86,20 +89,13 @@ def _picked_channels(channels: list[int] | None, total: int) -> list[int] | None
     return picked
 
 
-FLAC_BLOCK = 4096
-
-
 def _command(src: Path, temp: Path, picked: list[int] | None, rate: int) -> list[str]:
     command = [tool("ffmpeg"), "-nostdin", "-v", "error", "-y", *media_input(src), "-map", "0:a:0", "-vn", "-sn", "-dn"]
     if picked is not None:
         layout = "mono" if len(picked) == 1 else "stereo"
         routes = "|".join(f"c{out}=c{index}" for out, index in enumerate(picked))
         command += ["-af", f"pan={layout}|{routes}"]
-    # s32 no codificador FLAC do ffmpeg grava 24 bits: sem perda para qualquer entrada comum.
-    # Blocos fixos de 4096: vindo de MP3 (quadros de 1152), o ffmpeg 9 grava blocos de tamanho variável, que o
-    # decodificador FLAC da Apple não lê (o app tocava silêncio).
-    command += ["-ar", str(rate), "-c:a", "flac", "-sample_fmt", "s32", "-frame_size", str(FLAC_BLOCK), "-f", "flac",
-                "-progress", "pipe:1", "-nostats", str(temp)]
+    command += ["-ar", str(rate), *encode.codec_args(), "-progress", "pipe:1", "-nostats", str(temp)]
     return command
 
 
@@ -157,23 +153,5 @@ def _stop(process: subprocess.Popen) -> None:
 
 
 def _check_output(temp: Path) -> None:
-    """Confere o FLAC antes de colocá-lo no lugar: nunca um arquivo vazio ou ilegível como fonte."""
-    try:
-        written = soundfile.info(str(temp))
-    except RuntimeError as exc:   # soundfile.LibsndfileError herda de RuntimeError
-        raise MediaError(f"A conversão produziu um FLAC ilegível: {exc}") from exc
-    if written.frames <= 0:
-        raise MediaError("A conversão não produziu nenhuma amostra de áudio.")
-    smallest, largest = flac_block_sizes(temp)
-    if smallest != largest:
-        raise MediaError(f"A conversão produziu um FLAC com blocos de tamanho variável ({smallest}–{largest} "
-                         "amostras), que o app não consegue tocar.")
-
-
-def flac_block_sizes(path: Path) -> tuple[int, int]:
-    """O menor e o maior bloco do STREAMINFO de um FLAC (o último bloco não conta): iguais em blocos fixos."""
-    with open(path, "rb") as handle:
-        head = handle.read(12)
-    if len(head) < 12 or head[:4] != b"fLaC" or head[4] & 0x7F != 0:
-        raise MediaError("A conversão produziu um FLAC sem STREAMINFO.")
-    return int.from_bytes(head[8:10], "big"), int.from_bytes(head[10:12], "big")
+    """Confere o MP3 antes de colocá-lo no lugar: nunca um arquivo vazio ou ilegível como fonte."""
+    encode.check(temp)

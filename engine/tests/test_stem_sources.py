@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import soundfile
 
-from conftest import guitar_track
+from conftest import guitar_track, sounds_like
 from test_songsterr import FakeSource
 from test_stems import fake_run
 from tracklab import multitracks, songsterr, stems
@@ -178,8 +178,8 @@ def test_the_mvsep_guitar_with_the_rest_from_demucs(song):
     read = {name: soundfile.read(str(song.file(path)), dtype="float32")[0] for name, path in result["files"].items()}
     # MVSEP: metade do original; o resto (a outra metade) passa pelo Demucs falso, que devolve metade dele em cada
     # faixa; a guitarra leva também o que o Demucs achou de guitarra no resto.
-    assert np.allclose(read["guitar"], video * 0.5 + video * 0.25, atol=2e-3)
-    assert np.allclose(read["drums"], video * 0.25, atol=2e-3)
+    assert sounds_like(read["guitar"], video * 0.5 + video * 0.25)
+    assert sounds_like(read["drums"], video * 0.25)
     assert mvsep.usage()["usedToday"] == 1 and mvsep.usage()["left"] == mvsep.DAILY_LIMIT - 1
     again = stems.separate_mvsep(song, key=KEY, model=31, session=server, demucs_run=fake_run([]))
     assert again["reused"] is True and len(server.posts) == 1          # nenhuma conversão gasta duas vezes
@@ -220,7 +220,7 @@ def test_the_six_tracks_of_the_sw_come_straight_from_mvsep(song):
     assert server.posts[0][1]["sep_type"] == "63" and "add_opt1" not in server.posts[0][1]
     video, _ = soundfile.read(str(song.file(song.manifest["audio"]["file"])), dtype="float32")
     guitar, _ = soundfile.read(str(song.file(result["files"]["guitar"])), dtype="float32")
-    assert np.allclose(guitar, video * 0.5, atol=2e-3)
+    assert sounds_like(guitar, video * 0.5)
     assert mvsep.usage()["usedToday"] == 1
 
 

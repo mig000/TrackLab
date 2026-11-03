@@ -81,6 +81,9 @@ struct TrackLabApp: App {
 
 extension Notification.Name {
     static let importSong = Notification.Name("TrackLab.importSong")
+    /// A biblioteca vai mudar de pasta (a música aberta fecha antes) ou mudou (a lista é relida).
+    static let libraryWillMove = Notification.Name("TrackLab.libraryWillMove")
+    static let libraryMoved = Notification.Name("TrackLab.libraryMoved")
     static let undoTempo = Notification.Name("TrackLab.undoTempo")
     static let zoomIn = Notification.Name("TrackLab.zoomIn")
     static let zoomOut = Notification.Name("TrackLab.zoomOut")
@@ -209,6 +212,12 @@ struct RootView: View {
             }
         }
         .onChange(of: library.selection, initial: true) { _, id in open(id) }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryWillMove)) { _ in
+            library.selection = LibraryModel.today
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .libraryMoved)) { _ in
+            Task { await library.refresh() }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { importing = true } label: { Label("Do Songsterr", systemImage: "plus") }

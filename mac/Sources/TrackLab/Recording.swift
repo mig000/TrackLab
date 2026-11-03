@@ -91,7 +91,7 @@ extension SongModel {
     func applyTakes() {
         guard let detail else { return }
         let list = studio.takes.filter(\.active).map { take in
-            (id: StemEngine.takePrefix + take.id, url: detail.url(take.file),
+            (id: StemEngine.takePrefix + take.id, url: detail.takeURL(take.file),
              slot: StemEngine.TakeSlot(start: take.start, length: take.length, rate: take.rate, cents: take.cents))
         }
         engine.setTakes(list)
@@ -112,7 +112,7 @@ extension SongModel {
     private func computePeaks(for takes: [Take]) {
         guard let detail else { return }
         for take in takes where studio.peaks[take.id] == nil {
-            let url = detail.url(take.file)
+            let url = detail.takeURL(take.file)
             let rate = take.rate
             let id = take.id
             Task.detached(priority: .utility) {
@@ -394,7 +394,7 @@ extension SongModel {
 
     func revealTake(_ id: String) {
         guard let detail, let take = studio.takes.first(where: { $0.id == id }) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([detail.url(take.file)])
+        NSWorkspace.shared.activateFileViewerSelecting([detail.takeURL(take.file)])
     }
 
     /// Exporta o take num WAV de 24 bits (como foi gravado: na velocidade e no tom do estudo daquela hora).
@@ -404,7 +404,7 @@ extension SongModel {
         panel.allowedContentTypes = [.wav]
         panel.nameFieldStringValue = "\(detail.title ?? "Música") – \(take.name).wav"
         guard panel.runModal() == .OK, let target = panel.url else { return }
-        let source = detail.url(take.file)
+        let source = detail.takeURL(take.file)
         Task.detached(priority: .userInitiated) {
             let result: String
             do {

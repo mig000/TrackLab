@@ -59,7 +59,7 @@ def test_the_channels_are_recognized_and_land_on_the_video(tmp_path):
     assert set(receipt["stems"]) == {"drums", "bass", "guitar"}
     assert receipt["alignment"]["offset"] == pytest.approx(1.0, abs=0.01)
     # A guitarra montada cai sobre a guitarra do vídeo.
-    built, _ = soundfile.read(str(tmp_path / "out" / "guitar.flac"))
+    built, _ = soundfile.read(str(tmp_path / "out" / "guitar.mp3"))
     expected = late(guitar)
     n = min(len(built), len(expected))
     assert np.corrcoef(built[:n, 0], expected[:n])[0, 1] > 0.9

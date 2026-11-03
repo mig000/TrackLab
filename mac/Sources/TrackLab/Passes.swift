@@ -286,7 +286,7 @@ extension SongModel {
     func hearStudyPass() {
         guard let pass = studyPass, let detail else { return }
         passPlayer?.stop()
-        passPlayer = try? AVAudioPlayer(contentsOf: detail.url(pass.file))
+        passPlayer = try? AVAudioPlayer(contentsOf: detail.takeURL(pass.file))
         if engine.isPlaying { engine.pause() }
         passPlayer?.play()
     }

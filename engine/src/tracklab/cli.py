@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     sep.add_argument("song")
     sep.add_argument("--device", choices=("mps", "cpu"))
     commands.add_parser("list", help="listar o repertório")
+    commands.add_parser("mp3", help="passar as músicas de antes (FLAC e CAF) para MP3; com o app fechado")
     serve = commands.add_parser("serve", help="servir a API em 127.0.0.1")
     serve.add_argument("--port", type=int, default=8780, help="0 deixa o sistema escolher; a porta sai no stdout")
     serve.add_argument("--parent-pid", type=int, help="encerrar quando este processo (o app) terminar")
@@ -46,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "list":
             for item in package.packages():
                 print(json.dumps(item.summary(), ensure_ascii=False))
+        elif args.command == "mp3":
+            from . import migrate
+            migrate.all_to_mp3()
         elif args.command == "serve":
             _serve(args.port, args.parent_pid)
     except TrackLabError as error:

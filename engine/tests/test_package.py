@@ -100,3 +100,57 @@ def test_a_broken_guitar_pro_is_refused_and_the_score_stays(scratch_home):
         with pytest.raises(PackageError, match="Guitar Pro 7"):
             song.save_score(bad)
         assert song.file("score/edited.gp").read_bytes() == kept and song.manifest == manifest
+
+
+def test_takes_become_mp3_and_the_manifest_follows(tmp_path):
+    import numpy as np
+    import soundfile
+
+    from tracklab import package
+
+    draft = package.Draft("Música", "Artista", {"kind": "teste"})
+    song = draft.publish()
+    folder = song.path / "takes"
+    folder.mkdir(exist_ok=True)
+    rate = 48000
+    tone = (0.3 * np.sin(np.arange(rate * 2) / rate * 2 * np.pi * 330)).astype("float32")
+    soundfile.write(str(folder / "t1.caf"), np.stack([tone, tone], axis=1), rate, format="CAF", subtype="FLOAT")
+    listed = song.set_takes([{"id": "t1", "lane": 1, "start": 1.0, "length": 2.0}], compress=False)
+    assert listed[0]["file"] == "takes/t1.caf"
+    assert song.compress_takes() == ["t1"]
+    assert not (folder / "t1.caf").exists() and (folder / "t1.mp3").is_file()
+    assert package.find(song.manifest["id"]).manifest["takes"][0]["file"] == "takes/t1.mp3"
+    again = song.set_takes([{"id": "t1", "lane": 2, "start": 1.0, "length": 2.0}], compress=False)
+    assert again[0]["file"] == "takes/t1.mp3" and again[0]["lane"] == 2
+
+
+def test_an_old_song_moves_to_mp3_and_keeps_its_stem_keys(tmp_path):
+    import json
+
+    import numpy as np
+    import soundfile
+
+    from tracklab import migrate, package, stems
+
+    draft = package.Draft("Música", "Artista", {"kind": "teste"})
+    rate = 48000
+    tone = (0.3 * np.sin(np.arange(rate * 3) / rate * 2 * np.pi * 220)).astype("float32")
+    soundfile.write(str(draft.file("audio/source.flac")), np.stack([tone, tone], axis=1), rate, format="FLAC")
+    draft.manifest["audio"] = {"file": "audio/source.flac", "sha256": "velho"}
+    song = draft.publish()
+    folder = song.path / "stems" / "demucs6s-abc"
+    folder.mkdir(parents=True)
+    soundfile.write(str(folder / "guitar.flac"), np.stack([tone, tone], axis=1), rate, format="FLAC")
+    (folder / "receipt.json").write_text(json.dumps({"stems": {"guitar": {"file": "guitar.flac"}}}))
+    song.update(lambda data: data.__setitem__("stems", {"demucs6s-abc": {"files": {"guitar": "stems/demucs6s-abc/guitar.flac"}}}))
+    key_before = stems.demucs_key(stems.audio_id(song.manifest["audio"]), "v")
+    report = migrate.song_to_mp3(song, tmp_path / "Lixeira", say=lambda _: None)
+    manifest = package.SongPackage(song.path).manifest
+    assert report["files"] == 2
+    assert manifest["audio"]["file"] == "audio/source.mp3" and manifest["audio"]["id"] == "velho"
+    assert manifest["stems"]["demucs6s-abc"]["files"]["guitar"] == "stems/demucs6s-abc/guitar.mp3"
+    assert json.loads((folder / "receipt.json").read_text())["stems"]["guitar"]["file"] == "guitar.mp3"
+    assert stems.demucs_key(stems.audio_id(manifest["audio"]), "v") == key_before
+    assert not list(song.path.rglob("*.flac")) and (tmp_path / "Lixeira" / song.path.name / "audio" / "source.flac").is_file()
+    got, _ = soundfile.read(str(song.path / "audio" / "source.mp3"), dtype="float32")
+    assert abs(len(got) - len(tone)) <= 1152

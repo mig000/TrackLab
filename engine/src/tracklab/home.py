@@ -13,10 +13,10 @@ def home() -> Path:
 
 
 def songs() -> Path:
-    """O repertório: um pacote `.tracklab` por música."""
-    folder = home() / "Repertorio"
-    folder.mkdir(parents=True, exist_ok=True)
-    return folder
+    """O repertório: um pacote `.tracklab` por música, na pasta da biblioteca (`library.folder`: a escolhida no
+    config.json, ou `~/TrackLab/Repertorio`)."""
+    from . import library
+    return library.folder()
 
 
 def models() -> Path:

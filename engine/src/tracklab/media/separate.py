@@ -13,7 +13,8 @@ import soundfile
 
 from ..errors import MediaError
 from ..models import CATALOG
-from ..util import atomic_json, new_id, now_iso, sha256_file
+from ..util import atomic_json, now_iso, sha256_file
+from .encode import write_mp3
 
 Progress = Callable[[str, str, float | None], None]
 
@@ -45,7 +46,7 @@ def default_device() -> str:
 
 def separate(source: Path, output: Path, *, model: str = MODEL, progress: Progress | None = None,
              cancel=None, device: str | None = None) -> dict:
-    """Separa `source` em `output/<stem>.flac` (mesma taxa e mesmo número de quadros da fonte) e grava `receipt.json`."""
+    """Separa `source` em `output/<stem>.mp3` (mesma taxa e mesmo número de quadros da fonte) e grava `receipt.json`."""
     source, output = Path(source), Path(output)
     version = separator_version(model)
     if device is not None and device not in DEVICES:
@@ -75,7 +76,7 @@ def separate(source: Path, output: Path, *, model: str = MODEL, progress: Progre
     output.mkdir(parents=True, exist_ok=True)
     files = {}
     for stem in STEMS:
-        files[stem] = _write_stem(output / f"{stem}.flac", stems[stem], rate)
+        files[stem] = _write_stem(output / f"{stem}.mp3", stems[stem], rate)
     receipt = {"model": model, "version": version, "demucs": metadata.version("demucs"), "audioSHA256": audio_sha,
                "modelSHA256": CATALOG[model].sha256,
                "sampleRate": rate, "frames": int(mix.shape[1]), "duration": mix.shape[1] / rate, "device": device,
@@ -168,15 +169,10 @@ def _blocks(length: int, member) -> int:
 
 
 def _write_stem(path: Path, stem: np.ndarray, rate: int) -> dict:
-    """Grava um stem em FLAC de 24 bits de forma atômica; o que passar do fundo de escala é cortado e contado."""
+    """Grava um stem (canais, quadros) em MP3 (`encode`) de forma atômica; o que passar do fundo de escala é cortado e
+    contado."""
     clipped = int(np.count_nonzero(np.abs(stem) > 1.0))
-    data = np.clip(stem, -1.0, 1.0).T
-    temp = path.with_name(f".{path.stem}.{new_id()}.flac")
-    try:
-        soundfile.write(str(temp), data, rate, subtype="PCM_24", format="FLAC")
-        temp.replace(path)
-    finally:
-        temp.unlink(missing_ok=True)
+    path = write_mp3(path, np.clip(stem, -1.0, 1.0).T, rate)
     return {"file": path.name, "sha256": sha256_file(path), "peak": float(np.max(np.abs(stem))) if stem.size else 0.0,
             "clippedSamples": clipped}
 

@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from . import __version__, home, multitracks, package, songsterr, stems, tempomap
+from . import __version__, home, library, multitracks, package, songsterr, stems, tempomap
 from .errors import JobCancelled, PackageError, TrackLabError
 from .jobs import JobManager
 from .media import mvsep
@@ -51,6 +51,24 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
     def info() -> dict:
         return {"version": __version__, "home": str(home.home()), "songs": str(home.songs()),
                 "machine": platform.machine(), "device": _device()}
+
+    @app.get("/api/library")
+    def library_info() -> dict:
+        """A pasta da biblioteca, quantas músicas, quanto ocupam e quanto sobra no disco."""
+        return library.info()
+
+    @app.put("/api/library")
+    def library_change(body: dict = Body(...)) -> dict:
+        """Outra pasta para a biblioteca: `move` leva as músicas para lá (na fila, conferindo cada cópia antes de
+        apagar a original); sem ele, passa a usar a pasta como está (outra biblioteca já pronta)."""
+        path = body.get("path")
+        if not isinstance(path, str) or not path:
+            raise HTTPException(400, "Diga a pasta.")
+        if not body.get("move"):
+            return {"library": library.use(path)}
+        library.check_target(path)
+        return _job(jobs.submit("biblioteca", lambda progress, cancel: library.move(path, progress=progress,
+                                                                                    cancel=cancel)))
 
     @app.get("/api/songsterr/search")
     def search(q: str) -> dict:
@@ -438,7 +456,11 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
             if not (isinstance(take, str) and take.startswith("takes/") and ".." not in take and "/" not in take[6:]):
                 raise HTTPException(400, "O arquivo (file) é um take do pacote: takes/<nome>.")
             if not found.file(take).is_file():
-                raise HTTPException(404, f"Não achei {take} no pacote.")
+                # Um take já passado para MP3 (ou ainda em CAF): o mesmo nome com o outro sufixo.
+                twin = take.rsplit(".", 1)[0] + (".mp3" if take.endswith(".caf") else ".caf")
+                if not found.file(twin).is_file():
+                    raise HTTPException(404, f"Não achei {take} no pacote.")
+                take = twin
             relative = take
         else:
             if stem is not None and stem not in files:

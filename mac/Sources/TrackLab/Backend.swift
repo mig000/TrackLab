@@ -402,6 +402,19 @@ final class Backend {
 
     func mvsepUsage() async throws -> MVSEPUsage { try await get("mvsep") }
 
+    /// A pasta da biblioteca, quantas músicas, quanto ocupam e quanto sobra no disco.
+    func library() async throws -> LibraryInfo { try await get("library") }
+
+    /// Leva as músicas para outra pasta (na fila; cada cópia conferida antes de apagar a original).
+    func moveLibrary(to path: String) async throws -> JobTicket {
+        try await send("PUT", "library", body: MoveLibrary(path: path, move: true))
+    }
+
+    private struct MoveLibrary: Encodable {
+        let path: String
+        let move: Bool
+    }
+
     /// A guitarra do MVSEP (`model` 31 ou 101), na fila; a chave vai só no cabeçalho deste pedido.
     func separateMVSEP(_ id: String, model: Int, key: String) async throws -> JobTicket {
         struct Body: Encodable { let model: Int }

@@ -156,7 +156,7 @@ def render(midi: Path, font: Path, target: Path, rate: int) -> None:
 
 def synthesize(gp: Path, points: list[dict], source: Path, output: Path, *, progress: Progress | None = None,
                cancel=None, font: Path | None = None, engine: str | None = None) -> dict:
-    """Grava `output/t<pista>.flac` para cada pista com notas, no tamanho e na taxa de `source` (o áudio do vídeo).
+    """Grava `output/t<pista>.mp3` para cada pista com notas, no tamanho e na taxa de `source` (o áudio do vídeo).
     `engine`: "fluidsynth" ou "alphatab"; sem ele, o FluidSynth se estiver instalado."""
     started = time.monotonic()
     font = Path(font or soundfont())
@@ -177,7 +177,7 @@ def synthesize(gp: Path, points: list[dict], source: Path, output: Path, *, prog
     files = {}
     for index, data in rendered.items():
         track = next(t for t in tracks if t["index"] == index)
-        stem = _write_stem(output / f"t{index}.flac", (data * gain).T, rate)
+        stem = _write_stem(output / f"t{index}.mp3", (data * gain).T, rate)
         files[str(index)] = {**stem, "name": track["name"], "program": track["program"],
                              "percussion": track["percussion"]}
     receipt = {"version": PROCEDURE, "engine": engine, "soundfont": font.name, "sampleRate": rate, "frames": frames,

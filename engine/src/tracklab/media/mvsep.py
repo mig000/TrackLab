@@ -110,7 +110,7 @@ def check_model(model) -> int:
 
 def separate(source: Path, output: Path, *, key: str, model: int = 31, progress: Progress | None = None,
              cancel=None, session=None, demucs_run=None, pause=time.sleep) -> dict:
-    """Separa `source` no MVSEP e grava `output/<faixa>.flac`: as faixas do MVSEP e, nos modelos só de guitarra, o
+    """Separa `source` no MVSEP e grava `output/<faixa>.mp3`: as faixas do MVSEP e, nos modelos só de guitarra, o
     resto pelo Demucs local."""
     source, output = Path(source), Path(output)
     key, model = check_key(key), check_model(model)
@@ -163,7 +163,7 @@ def separate(source: Path, output: Path, *, key: str, model: int = 31, progress:
         rest = None if spec.get("complete") else _rest(source, downloaded, model, rate, frames, output, progress,
                                                           cancel, demucs_run)
         outputs = rest["outputs"] if rest else downloaded
-        stems = {name: demucs._write_stem(output / f"{name}.flac", data.T, rate) for name, data in outputs.items()}
+        stems = {name: demucs._write_stem(output / f"{name}.mp3", data.T, rate) for name, data in outputs.items()}
     except JobCancelled:
         if job_hash:
             try:
