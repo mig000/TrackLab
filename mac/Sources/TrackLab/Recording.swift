@@ -189,6 +189,9 @@ extension SongModel {
             engine.play()
         }
         guard let clock = engine.clock else { return }
+        // A volta do Estudar que estivesse entrando sai: a entrada grava um arquivo por vez.
+        discardStudyPass()
+        recordPass = 0
         do {
             try input.startRecording()
         } catch {
@@ -286,6 +289,8 @@ extension SongModel {
             applyTakes()
             saveTakes()
             computePeaks(for: made)
+            // A nota de cada volta: a melhor passa a soar, e o Gravar pergunta como foram antes dos números.
+            Task { await scoreTakes(made, batch: true) }
             let bars = passes.first.flatMap { pass in grid.bar(at: pass.start + 0.01) }.map { " (c. \($0))" } ?? ""
             notice = made.count == 1
                 ? "\(made[0].name) na Guitarra \(session.lane)\(bars). B compara com o anterior."
@@ -293,7 +298,7 @@ extension SongModel {
         }
     }
 
-    nonisolated private static func copy(_ file: AVAudioFile, from frame: Int, frames: Int, to url: URL) throws {
+    nonisolated static func copy(_ file: AVAudioFile, from frame: Int, frames: Int, to url: URL) throws {
         let format = file.processingFormat
         let out = try AVAudioFile(forWriting: url, settings: file.fileFormat.settings, commonFormat: .pcmFormatFloat32,
                                   interleaved: false)

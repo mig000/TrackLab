@@ -8,6 +8,7 @@ import TrackLabCore
 struct AdjustOverview: View {
     let model: SongModel
     let span: Double
+    var height = 92.0
 
     var body: some View {
         GeometryReader { geometry in
@@ -20,7 +21,7 @@ struct AdjustOverview: View {
                 model.seek(to: value.location.x / max(1, geometry.size.width) * duration, at: model.playheadAt)
             })
         }
-        .frame(height: 92)
+        .frame(height: height)
         .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
         .help("A música inteira: em cima o andamento de cada compasso pelo mapa (um pico é um ponto fora do lugar); "
               + "embaixo, quanto o som chega depois (para cima) ou antes (para baixo) do mapa. Um clique leva a música até ali.")
@@ -37,8 +38,9 @@ struct AdjustOverview: View {
         // O andamento: uma linha, em volta da mediana (±8 %).
         let tempos = review.map(\.bpm).filter { $0 > 0 }.sorted()
         let median = tempos.isEmpty ? 120 : tempos[tempos.count / 2]
-        let curveTop = 12.0
-        let curveBottom = 46.0
+        // Duas faixas na altura que há: o andamento em cima (55 %), o som contra o mapa embaixo.
+        let curveTop = 14.0
+        let curveBottom = max(46, size.height * 0.55 - 6)
         func y(_ bpm: Double) -> Double {
             let fraction = max(-1, min(1, (bpm / median - 1) / 0.08))
             return (curveTop + curveBottom) / 2 - fraction * (curveBottom - curveTop) / 2
@@ -56,7 +58,8 @@ struct AdjustOverview: View {
                      at: CGPoint(x: 4, y: 2), anchor: .topLeading)
 
         // O som contra o mapa, por compasso.
-        let baseline = 70.0
+        let barArea = max(24, size.height - curveBottom - 22)
+        let baseline = curveBottom + 12 + barArea / 2
         context.fill(Path(CGRect(x: 0, y: baseline, width: width, height: 0.5)), with: .color(.secondary.opacity(0.3)))
         var later = Path()
         var doubt = Path()
@@ -64,7 +67,7 @@ struct AdjustOverview: View {
             let next = index + 1 < review.count ? review[index + 1].start : bar.start + 2
             let barWidth = max(1.5, x(next) - x(bar.start) - 1)
             if let offset = bar.attacks ?? bar.detector {
-                let h = min(16, abs(offset) / 0.1 * 16)
+                let h = min(barArea / 2, abs(offset) / 0.1 * barArea / 2)
                 let rect = CGRect(x: x(bar.start), y: offset > 0 ? baseline - h : baseline, width: barWidth, height: max(1, h))
                 if bar.doubtful { doubt.addRect(rect) } else { later.addRect(rect) }
             } else if bar.doubtful {
@@ -74,7 +77,7 @@ struct AdjustOverview: View {
         context.fill(later, with: .color(blue.opacity(0.7)))
         context.fill(doubt, with: .color(red))
         context.draw(CanvasLabel.image("o som contra o mapa", size: 9, weight: .semibold, color: .secondaryLabelColor, dark: false),
-                     at: CGPoint(x: 4, y: 50), anchor: .topLeading)
+                     at: CGPoint(x: 4, y: curveBottom + 2), anchor: .topLeading)
 
         // Os conferidos, embaixo.
         var checked = Path()
@@ -173,7 +176,12 @@ struct AdjustCheckSheet: View {
             }
             BarGrid(model: model, review: review, current: bar)
             HStack {
-                Button("Pular este") { model.skipCheckingBar() }.keyboardShortcut(.downArrow, modifiers: [])
+                Button { model.previousCheckingBar() } label: { HStack(spacing: 4) { Text("Anterior"); KeyHint("↑") } }
+                    .keyboardShortcut(.upArrow, modifiers: [])
+                    .disabled(bar <= 1)
+                Button { model.skipCheckingBar() } label: { HStack(spacing: 4) { Text("Pular para o próximo"); KeyHint("↓") } }
+                    .keyboardShortcut(.downArrow, modifiers: [])
+                Text("ou um clique num compasso da grade").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Parar") { model.stopChecking() }.keyboardShortcut(.cancelAction)
             }

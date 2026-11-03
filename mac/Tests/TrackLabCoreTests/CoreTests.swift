@@ -404,6 +404,21 @@ private func grid(bars: Int = 3) -> TempoGrid {
     #expect(!bent.approached && !bent.slidesOut && bent.bend.count == 3)
     let linked = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, 3]]).first)
     #expect(linked.approached && linked.slidesOut && linked.bend.isEmpty)
+    // As técnicas e o dedo (para o braço): 64 PM, 128 morta, 256 fantasma, 512 harmônico natural, 1024 outro, 2048
+    // tapping, 4096 let ring, o dedo × 8192 (1 o polegar).
+    let markedLinks = Double(1 + 64 + 512 + 4096 + 3 * 8192 as Int)
+    let marked = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, markedLinks]]).first)
+    #expect(marked.approached && marked.palmMute && marked.naturalHarmonic && marked.harmonic && marked.letRing)
+    #expect(!marked.dead && !marked.ghost && !marked.tapped && marked.finger == 2)
+    let otherLinks = Double(128 + 256 + 1024 + 2048 as Int)
+    let other = try #require(ScoreNote.list([[0, 960, 64, 2, 5, 0, 0, otherLinks]]).first)
+    #expect(other.dead && other.ghost && other.harmonic && !other.naturalHarmonic && other.tapped)
+    #expect(other.finger == nil && !other.approached)
+    // A posição da mão: da casa mais baixa a pelo menos três acima; troca quando o começo anda duas casas ou mais.
+    #expect(HandPosition.span([0, 0]) == nil)
+    #expect(HandPosition.span([7, 5, 0, 9]) == 5...9)
+    #expect(HandPosition.span([12]) == 12...15)
+    #expect(HandPosition.shifts(from: 5...8, to: 7...10) && !HandPosition.shifts(from: 5...8, to: 6...9))
     // O slide escrito na faixa: para a seguinte da corda, até a altura dela, no fim; de fora, 3 semitons.
     let slid = ScoreNote.list([[0, 480, 67, 3, 12, 0, 0, 2], [0, 960, 76, 1, 12], [480, 480, 69, 3, 14, 0, 0, 1],
                                [960, 960, 64, 2, 5, 0, 0, 23]]) // 23 = de baixo (16) + para cima (4) + sai (2) + chega (1)
@@ -1140,4 +1155,99 @@ private func soundCurve(_ start: Double, _ end: Double, _ f: (Double) -> Double)
     #expect((change?.bars[0].bpmAfter ?? 0) < 120 && (change?.bars[1].bpmAfter ?? 0) < 120)
     #expect((change?.bars[2].bpmAfter ?? 0) > 120 && (change?.bars[3].bpmAfter ?? 0) > 120)
     #expect(change?.beats.filter(\.downbeat).count == 5)
+}
+
+@Test func aNotaDaVolta() {
+    // Quatro notas de 0,4 s a partir de 10 s; a volta foi gravada a 50 % desde 9,9 s (o arquivo anda metade).
+    func note(_ k: Int, pitch: Double = 64, bar: Int = 1, bend: Bool = false) -> PassNote {
+        PassNote(key: "n\(k)", start: 10 + Double(k) * 0.4, end: 10.4 + Double(k) * 0.4, pitch: pitch, bar: bar, bend: bend)
+    }
+    let notes = [note(0), note(1), note(2, bar: 2), note(3, pitch: 66, bar: 2, bend: true), note(4, bar: 2)]
+    func curve(_ k: Int, attackLate: Double, value: Double?) -> PitchCurve {
+        let fileStart = (notes[k].start - 9.9) / 0.5
+        return PitchCurve(from: fileStart, hop: 0.008, values: Array(repeating: value, count: 100),
+                          attack: fileStart + attackLate / 0.5)
+    }
+    let curves = ["n0": curve(0, attackLate: 0.01, value: 64.1),     // no tempo
+                  "n1": curve(1, attackLate: 0.06, value: 64.0),     // 60 ms tarde
+                  "n2": curve(2, attackLate: 0, value: 65.0),        // um semitom acima
+                  "n3": curve(3, attackLate: 0, value: 64.0),        // bend escrito: a altura não se julga
+                  "n4": PitchCurve(from: 0, hop: 0.008, values: Array(repeating: nil, count: 100), attack: nil)]
+    let score = PassScore.evaluate(notes: notes, curves: curves, start: 9.9, rate: 0.5)
+    #expect(score.results.map(\.verdict) == [.ok, .late, .wrongPitch, .ok, .missed])
+    #expect(abs((score.results[1].offset ?? 0) - 0.06) < 1e-6)
+    #expect(!score.clean && score.good == 2)
+    #expect(score.byBar[1] == 0.5)
+    // O pior compasso primeiro: o 2, com outra altura, sem som e o bend que passou.
+    #expect(score.troubles.first?.bar == 2)
+    let clean = PassScore.evaluate(notes: Array(notes.prefix(1)), curves: curves, start: 9.9, rate: 0.5)
+    #expect(clean.clean && clean.medianOffset.map { abs($0 - 0.01) < 1e-6 } == true)
+}
+
+@Test func aEscadaEOsSeteDias() {
+    var section = StudySection(name: "Solo", from: 0, to: 3840, goal: 100, best: 80)
+    #expect(section.ladder(current: 85) == [70, 75, 80, 85, 90, 95, 100])
+    #expect(section.ladder(current: 60) == [60, 65, 70, 75, 80, 85, 90, 95, 100])
+    section.goal = 92
+    #expect(section.ladder(current: 70).suffix(2) == [90, 92])
+    let utc = TimeZone(identifier: "UTC")!
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = utc
+    let now = ISO8601DateFormatter().date(from: "2026-11-02T20:00:00Z")!
+    section.history = [
+        .init(at: "2026-10-20T10:00:00+00:00", rate: 70, clean: true),   // fora dos 7 dias
+        .init(at: "2026-10-31T10:00:00+00:00", rate: 75, clean: false),
+        .init(at: "2026-10-31T10:05:00+00:00", rate: 75, clean: true),
+        .init(at: "2026-11-02T09:00:00+00:00", rate: 80, clean: true),
+        .init(at: "2026-11-02T09:01:00+00:00", rate: 85, clean: true),
+    ]
+    let days = section.lastDays(7, now: now, calendar: calendar)
+    #expect(days.count == 7)
+    #expect(days.map(\.passes) == [0, 0, 0, 0, 2, 0, 2])
+    #expect(days.map(\.clean) == [0, 0, 0, 0, 1, 0, 2])
+    #expect(days.last?.top == 85)
+    // O histórico vem do motor e não volta para ele.
+    let json = String(data: try! JSONEncoder().encode(section), encoding: .utf8)!
+    #expect(!json.contains("history"))
+    let decoded = try! JSONDecoder().decode(StudySection.self, from: Data(#"{"name":"A","from":0,"to":10,"history":[{"at":"2026-11-02T09:00:00+00:00","rate":80,"clean":true}]}"#.utf8))
+    #expect(decoded.history.count == 1)
+}
+
+@Test func asAlturasDasCamadasPorModo() {
+    func sum(_ l: LaneLayout, lanes: Int = 0) -> Double { l.tab + l.overview + l.fretboard + l.takes(lanes: lanes) + l.wave + l.lens }
+    // O iMac: ~1.050 pt para as camadas. Estudar com o braço e a Onda: a Onda não passa de um terço, o braço cresce.
+    let study = LaneLayout.make(height: 1050, mode: .study, tabNatural: 230, tabChosen: nil, wave: true, lens: false,
+                                waveChosen: 150, fretboard: true, takeLanes: 0)
+    #expect(abs(sum(study) - 1050) < 0.01)
+    #expect(study.wave <= 1050 * 0.34)
+    #expect(study.fretboard >= 200)
+    #expect(study.tab >= 230)
+    // Gravar com uma pista: os takes ganham altura, a Onda fica no teto.
+    let record = LaneLayout.make(height: 1050, mode: .record, tabNatural: 230, tabChosen: nil, wave: true, lens: false,
+                                 waveChosen: 150, fretboard: false, takeLanes: 1)
+    #expect(abs(sum(record, lanes: 1) - 1050) < 0.01)
+    #expect(record.takeRow >= 140)
+    #expect(record.wave <= 1050 * 0.34)
+    // Editar com a Lente: a Onda na do divisor, a Lente com o resto.
+    let edit = LaneLayout.make(height: 1050, mode: .edit, tabNatural: 230, tabChosen: nil, wave: true, lens: true,
+                               waveChosen: 150, fretboard: false, takeLanes: 0)
+    #expect(edit.tab == 230 && edit.wave == 150 && abs(edit.lens - 670) < 0.01)
+    // Ajustar: a música inteira em cima e a Fita.
+    let adjust = LaneLayout.make(height: 1050, mode: .adjust, tabNatural: 230, tabChosen: nil, wave: true, lens: false,
+                                 waveChosen: 150, fretboard: false, takeLanes: 0)
+    #expect(adjust.tab == 0 && adjust.overview == 168 && abs(adjust.wave - 882) < 0.01)
+    // Uma janela baixa: a TAB cede até o mínimo e o resto encolhe sem passar da altura.
+    let small = LaneLayout.make(height: 420, mode: .record, tabNatural: 230, tabChosen: nil, wave: true, lens: false,
+                                waveChosen: 150, fretboard: false, takeLanes: 3)
+    #expect(sum(small, lanes: 3) <= 420.01)
+    #expect(small.tab >= LaneLayout.tabMinimum)
+    // Sem camadas, a TAB fica com tudo; a altura escolhida no divisor vale.
+    #expect(LaneLayout.make(height: 800, mode: .study, tabNatural: 230, tabChosen: nil, wave: false, lens: false,
+                            waveChosen: 150, fretboard: false, takeLanes: 0).tab == 800)
+    // A altura escolhida no divisor é o mínimo da TAB: a sobra não vai à Onda (ela esticava). O braço para na proporção.
+    let chosen = LaneLayout.make(height: 1050, mode: .study, tabNatural: 230, tabChosen: 300, wave: true, lens: false,
+                                 waveChosen: 150, fretboard: true, takeLanes: 0, fretboardMax: 180)
+    #expect(chosen.tab >= 300 && chosen.wave <= 1050 * 0.34 && chosen.fretboard == 180)
+    #expect(LaneLayout.make(height: 600, mode: .study, tabNatural: 230, tabChosen: 300, wave: true, lens: false,
+                            waveChosen: 150, fretboard: true, takeLanes: 0).tab == 300)
 }

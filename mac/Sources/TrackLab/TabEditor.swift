@@ -89,7 +89,19 @@ struct TabEditPanel: View {
                     .help("As teclas da edição (⌘/)")
                     .accessibilityLabel("Teclas")
             }
+            Picker("Edição", selection: Binding(get: { model.reviewing }, set: { $0 ? model.startReview() : (model.reviewing = false) })) {
+                Text("Escrever").tag(false)
+                Text("Revisar").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 10)
+            .padding(.top, 8)
+            .help("Escrever: a nota e as ferramentas. Revisar: as suspeitas uma por vez (⏎ aceita o som, ⌫ está certa, → pula)")
             ScrollView(.vertical) {
+                if model.reviewing {
+                    ReviewPanel(model: model).padding(10)
+                } else {
                 VStack(alignment: .leading, spacing: 10) {
                     noteCard(selection)
                     ReadingCards(model: model)
@@ -118,6 +130,7 @@ struct TabEditPanel: View {
                     }
                 }
                 .padding(10)
+                }
             }
             Divider()
             footer
@@ -530,6 +543,16 @@ struct TabEditKeys: NSViewRepresentable {
                 }
             }
             guard model.editingTab else { return false }
+            // Revisar: ⏎ aceita o som, ⌫ diz que a escrita está certa, → pula, ← volta (sem ⌥ nem ⇧).
+            if model.reviewing, !flags.contains(.option), !flags.contains(.shift) {
+                switch event.keyCode {
+                case 36, 76: model.reviewAccept(); return true
+                case 51, 117: model.reviewDismiss(); return true
+                case 124: model.nextSuspect(1); return true
+                case 123: model.nextSuspect(-1); return true
+                default: break
+                }
+            }
             let option = flags.contains(.option)
             switch event.keyCode {
             case 126: model.tabEdit(option ? "transpose" : "string", 1); return true      // ↑

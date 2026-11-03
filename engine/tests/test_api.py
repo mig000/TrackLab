@@ -310,6 +310,28 @@ def test_two_spectrum_requests_at_once_share_one_computation(client, monkeypatch
     assert not list(Path(package.find(song_id).file("peaks")).glob("*partial*"))
 
 
+def test_the_pitch_of_a_take_is_measured_in_its_own_file(client):
+    import soundfile
+
+    job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
+    song_id = job["result"]["song"]["id"]
+    folder = Path(package.find(song_id).file("takes"))
+    folder.mkdir(exist_ok=True)
+    rate = 44_100
+    t = np.arange(int(rate * 1.5)) / rate
+    tone = np.where(t >= 0.5, 0.3 * np.sin(2 * np.pi * 440 * t), 0.0).astype(np.float32)   # Lá 4 a partir de 0,5 s
+    soundfile.write(str(folder / "volta-x.wav"), tone, rate)
+    answer = client.post(f"/api/songs/{song_id}/pitch",
+                         json={"file": "takes/volta-x.wav", "notes": [{"key": "a", "start": 0.5, "end": 1.2, "pitch": 69}]})
+    curve = answer.json()["curves"]["a"]
+    values = [v for v in curve["values"] if v is not None]
+    assert len(values) > 40 and abs(np.median(values) - 69) < 0.1
+    assert curve["attack"] == pytest.approx(0.5, abs=0.02)
+    for bad in ("../manifest.json", "takes/../manifest.json", "audio/source.flac"):
+        assert client.post(f"/api/songs/{song_id}/pitch", json={"file": bad, "notes": []}).status_code == 400
+    assert client.post(f"/api/songs/{song_id}/pitch", json={"file": "takes/nada.wav", "notes": []}).status_code == 404
+
+
 def test_the_beats_come_from_the_drums_and_are_kept_per_tempo(client):
     job = wait(client, client.post("/api/songs/import", json={"url": "27"}).json()["id"])
     song_id = job["result"]["song"]["id"]

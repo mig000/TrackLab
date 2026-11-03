@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import CoreGraphics
 import Foundation
 import Observation
@@ -23,13 +24,23 @@ final class SongModel {
     private(set) var detail: SongDetail?
     private(set) var grid = TempoGrid(points: []) {
         // As batidas mudaram: os acordes pelo som são presos a elas de novo (Chords.swift).
-        didSet { if grid != oldValue { hearChords() } }
+        didSet {
+            if grid != oldValue {
+                gridVersion += 1
+                hearChords()
+            }
+        }
     }
+    /// Muda quando o mapa muda (as contas guardadas que dependem dele, como o brilho das notas na Lente).
+    @ObservationIgnored private(set) var gridVersion = 0
     private(set) var sourcePeaks: Peaks?
     private(set) var guitarPeaks: Peaks?
     /// A maior amplitude do original (ou da guitarra, sem ele): a borda da faixa da Onda.
     var waveLoudest: Float { loudestCache ?? 1 }
     @ObservationIgnored private var loudestCache: Float?
+    /// O mais alto da guitarra separada (a pista do disco no Gravar).
+    var guitarLoudest: Float { guitarLoudestCache ?? 0 }
+    @ObservationIgnored private var guitarLoudestCache: Float?
     /// As pistas da partitura como a página as leu.
     private(set) var scoreTracks: [ScoreBridge.PageTrack] = []
     var scoreTrack = 0 {
@@ -122,6 +133,8 @@ final class SongModel {
                     await InputEngine.shared.restoreChain()
                     InputEngine.shared.start()
                 }
+                // Os takes de antes ganham a nota (uma vez por abertura).
+                Task { await scoreTakes(studio.takes.filter { takeScores[$0.id] == nil }, batch: false) }
             } else if studio.recording {
                 finishRecording()
             }
@@ -129,6 +142,27 @@ final class SongModel {
     }
     /// Os takes da música e a gravação em curso.
     let studio = TakeStudio()
+
+    // As voltas (Passes.swift): a nota de cada take e de cada volta do Estudar, o Eco e o que se ouve depois de gravar.
+    /// A nota de cada take (pelo id), dada ao gravar e, para os de antes, ao entrar no Gravar.
+    var takeScores: [String: PassScore] = [:]
+    /// Os takes da última gravação: o Gravar mostra a melhor e pergunta como foram antes dos números.
+    var takeBatch: [String] = []
+    var takeRating: String?
+    var bandListen: BandListen = .you
+    var bandPass = 0
+    /// As voltas da gravação em curso (o contador do Gravar).
+    var recordPass = 0
+    var eco = false
+    var ecoPass = 0
+    @ObservationIgnored var ecoBefore: [String: StemMix]?
+    @ObservationIgnored var ecoUseStems: Bool?
+    /// A última volta do Estudar (gravada com a guitarra ligada) e as notas das últimas.
+    var studyPass: StudyPass?
+    var studyHistory: [(rate: Int, share: Double, clean: Bool)] = []
+    @ObservationIgnored var passWatcher: Task<Void, Never>?
+    @ObservationIgnored var studySession: (clock: StemEngine.Clock, cents: Int, offset: Double)?
+    @ObservationIgnored var passPlayer: AVAudioPlayer?
 
     /// O inspetor à direita (⌥⌘I): o que ele mostra segue o modo (o trecho, o mixer e as faixas; a nota; a sincronização).
     var showInspector = UserDefaults.standard.object(forKey: "showInspector") as? Bool ?? true {
@@ -303,6 +337,41 @@ final class SongModel {
     @ObservationIgnored var chordsTask: Task<Void, Never>?
     @ObservationIgnored var chordsSave: Task<Void, Never>?
     @ObservationIgnored var chordsRevision = 0
+    /// A Lente no Estudar e no Gravar: escondida por padrão (o estudo é a TAB e o braço; a gravação, o ouvido); ⌥⌘2
+    /// a traz de volta só naquele modo. No Editar ela segue `lensVisible`.
+    var lensInStudy = UserDefaults.standard.bool(forKey: "lens.study") {
+        didSet { UserDefaults.standard.set(lensInStudy, forKey: "lens.study") }
+    }
+    var lensInRecord = UserDefaults.standard.bool(forKey: "lens.record") {
+        didSet { UserDefaults.standard.set(lensInRecord, forKey: "lens.record") }
+    }
+    /// O braço da guitarra sob a TAB no Estudar.
+    var fretboardVisible = UserDefaults.standard.object(forKey: "fretboardVisible") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(fretboardVisible, forKey: "fretboardVisible") }
+    }
+
+    /// A Lente à vista no modo de agora.
+    var lensShown: Bool {
+        switch mode {
+        case .adjust: false
+        case .edit: lensVisible
+        case .study: lensVisible && lensInStudy
+        case .record: lensVisible && lensInRecord
+        }
+    }
+
+    /// ⌥⌘2: no Editar liga e desliga a Lente; no Estudar e no Gravar, só a daquele modo.
+    func toggleLens() {
+        switch mode {
+        case .adjust: return
+        case .edit: lensVisible.toggle()
+        case .study:
+            if lensShown { lensInStudy = false } else { lensInStudy = true; lensVisible = true }
+        case .record:
+            if lensShown { lensInRecord = false } else { lensInRecord = true; lensVisible = true }
+        }
+    }
+
     var lensVisible = UserDefaults.standard.bool(forKey: "lensVisible") {
         didSet {
             UserDefaults.standard.set(lensVisible, forKey: "lensVisible")
@@ -313,6 +382,21 @@ final class SongModel {
     /// O espectro da guitarra separada (ou do original) e a imagem dele, feitos uma vez por música.
     private(set) var spectrum: Spectrum?
     @ObservationIgnored private(set) var spectrumImage: CGImage?
+    /// A mesma imagem em âmbar: onde a TAB tem nota, a Lente mostra esta (a Tinta, `SpectrumPalette`).
+    @ObservationIgnored private(set) var spectrumWarm: CGImage?
+    /// O que a Lente mostra: as notas da TAB por cima (as barras) e o espectro; uma das duas fica sempre ligada.
+    var lensBars = UserDefaults.standard.object(forKey: "lensBars") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(lensBars, forKey: "lensBars")
+            if !lensBars, !lensSpectrum { lensSpectrum = true }
+        }
+    }
+    var lensSpectrum = UserDefaults.standard.object(forKey: "lensSpectrum") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(lensSpectrum, forKey: "lensSpectrum")
+            if !lensSpectrum, !lensBars { lensBars = true }
+        }
+    }
     private(set) var spectrumMessage: String?
     /// Z: a janela de alturas do espectro em volta da nota que toca (de 2 semitons abaixo a 6 acima, para ver o bend).
     var pitchZoom = false
@@ -401,7 +485,7 @@ final class SongModel {
     /// As seções marcadas no Guitar Pro (Intro, Verse 1…), para criar trechos de uma vez.
     private(set) var markers: [(tick: Double, name: String)] = []
     private(set) var streak = 0
-    private(set) var trainingMessage: String?
+    var trainingMessage: String?
     @ObservationIgnored private var trainer = SpeedTrainer()
     /// Avisa a lista (a barra lateral e o Para hoje) quando o estado, os trechos ou o treino mudam.
     @ObservationIgnored var onStudyChange: (() -> Void)?
@@ -507,6 +591,7 @@ final class SongModel {
     /// falar com o app (antes, trocar de música até 1,5 s depois de uma mudança perdia a mudança).
     func close() {
         if studio.recording { finishRecording() }
+        stopPasses()
         engine.stop()
         let previous = Self.closing
         Self.closing = Task {
@@ -539,8 +624,8 @@ final class SongModel {
         guard phase == .ready, detail != nil else { return }
         var mix = pendingMix
         // No Ajuste, o que se ouve é emprestado (o clique, a bateria sozinha): guarda a escuta de antes dele.
-        for (key, entry) in listenBefore?.mix ?? engine.mix { mix[key] = entry }
-        let value = SongListening(track: scoreTrack, others: scoreOthers, useStems: listenBefore?.useStems ?? engine.useStems,
+        for (key, entry) in ecoBefore ?? listenBefore?.mix ?? engine.mix { mix[key] = entry }
+        let value = SongListening(track: scoreTrack, others: scoreOthers, useStems: ecoUseStems ?? listenBefore?.useStems ?? engine.useStems,
                                   audioOn: engine.audioOn, tabOn: engine.tabOn, mix: mix)
         if let data = try? JSONEncoder().encode(value) { UserDefaults.standard.set(data, forKey: listeningKey) }
     }
@@ -564,6 +649,8 @@ final class SongModel {
             }
             try loadAudio(detail, keepMix: false)
             loadTakes(detail)
+            loadDismissed()
+            startPassWatcher()
             loadScore(detail)
             // Com mais de uma separação guardada, o A/B já abre pronto: a seguinte na escada.
             if compareKey == nil, let active = detail.activeStems {
@@ -572,6 +659,10 @@ final class SongModel {
                     ?? keys.first { $0 != active }
             }
             phase = .ready
+            if let wanted = ProcessInfo.processInfo.environment["TRACKLAB_MODE"],
+               let chosen = StudioMode.allCases.first(where: { $0.label.lowercased().hasPrefix(wanted.lowercased()) }) {
+                mode = chosen
+            }
             Task { await loadSources() }
             // A TAB sintetizada é feita em segundo plano ao abrir (ou refeita, se o mapa, a partitura ou a versão da
             // síntese mudou depois dela).
@@ -581,6 +672,8 @@ final class SongModel {
             }
             if let start = startSection, let section = sections.first(where: { $0.id == start }) { activate(section) }
             startSection = nil
+            // `TRACKLAB_AT=<segundos>`: abre já naquele ponto (para fotografar uma tela de longe).
+            if let at = ProcessInfo.processInfo.environment["TRACKLAB_AT"].flatMap(Double.init) { seek(to: at, at: 0.4) }
             await loadPeaks(detail)
         } catch {
             phase = .failed(error.localizedDescription)
@@ -667,6 +760,7 @@ final class SongModel {
         guitarPeaks = detail.active?.files[Stem.guitar.rawValue] != nil
             ? try? await Backend.shared.peaks(id, stem: Stem.guitar.rawValue) : nil
         if sourcePeaks == nil { loudestCache = guitarPeaks.map(\.loudest) }
+        guitarLoudestCache = guitarPeaks?.loudest
     }
 
     /// A multitrack que casa com a música e a cota do MVSEP, para o menu de faixas melhores.
@@ -911,7 +1005,8 @@ final class SongModel {
         guard key != spectrumKey else { return }
         spectrumKey = key
         if let kept = spectra[key] {
-            spectrumImage = kept.image
+            spectrumImage = kept.images.ink
+            spectrumWarm = kept.images.warm
             spectrum = kept.spectrum
             await loadSounds(stem: stem)
             return
@@ -922,11 +1017,12 @@ final class SongModel {
                 spectrumMessage = "Esta música não tem áudio para o espectro."
                 return
             }
-            let image = await SpectrumPalette.image(found, paper: paper)
+            let images = await SpectrumPalette.images(found, paper: paper)
             guard spectrumKey == key else { return }
             if spectra.count >= 2 { spectra.removeAll() }
-            if let image { spectra[key] = (found, image) }
-            spectrumImage = image
+            if let images { spectra[key] = (found, images) }
+            spectrumImage = images?.ink
+            spectrumWarm = images?.warm
             spectrum = found
             spectrumMessage = nil
         } catch {
@@ -954,11 +1050,42 @@ final class SongModel {
     }
 
     @ObservationIgnored private var spectrumKey: String?
-    /// A Lente no papel (a aparência clara): a imagem do espectro é feita de novo com a paleta de tinta.
+    /// A Lente no papel (a aparência clara): a imagem do espectro é feita de novo com a paleta clara.
     @ObservationIgnored var paper = false {
         didSet { if paper != oldValue { Task { await loadSpectrum() } } }
     }
-    @ObservationIgnored private var spectra: [String: (spectrum: Spectrum, image: CGImage)] = [:]
+    @ObservationIgnored private var spectra: [String: (spectrum: Spectrum, images: SpectrumPalette.Images)] = [:]
+    @ObservationIgnored private var glowCache: (key: String, glow: LensGlow)?
+
+    /// Por onde a âmbar acende na Lente: a linha de cada nota da pista principal pelo som (a mesma da faixa), nas
+    /// coordenadas da imagem do espectro (x em quadros, y em pixels contados de baixo). Refeita só quando as notas, as
+    /// curvas, a afinação ou o mapa mudam.
+    func lensGlow() -> LensGlow? {
+        guard let spectrum, let image = spectrumImage else { return nil }
+        let rowScale = Double(image.height) / Double(spectrum.rows)
+        let key = "\(notesVersion)/\(scoreTrack)/\(pitchCurvesVersion)/\(tuning)/\(gridVersion)/\(image.width)x\(image.height)"
+        if let glowCache, glowCache.key == key { return glowCache.glow }
+        let notes = scoreNotes.indices.contains(scoreTrack) ? scoreNotes[scoreTrack] : []
+        var lines: [[CGPoint]] = []
+        lines.reserveCapacity(notes.count)
+        for note in notes {
+            let s0 = grid.seconds(at: note.tick)
+            let s1 = grid.seconds(at: note.tick + note.duration)
+            guard s1 > s0 else { continue }
+            let sound = soundNotes[curveKey(note, track: scoreTrack)]
+            let steps = max(2, min(80, Int(((s1 - s0) / 0.025).rounded(.up))))
+            lines.append((0...steps).map { i in
+                let t = s0 + (s1 - s0) * Double(i) / Double(steps)
+                // A altura como soa (a afinação da gravação de volta: o espectro está na altura da gravação).
+                let pitch = Double(note.pitch) + FitaView.offset(note, sound: sound, at: t, start: s0, end: s1) + tuning
+                return CGPoint(x: t / spectrum.hop, y: spectrum.row(pitch: pitch) * rowScale + 0.5)
+            })
+        }
+        let glow = LensGlow(version: (glowCache?.glow.version ?? 0) + 1, lines: lines,
+                            semitone: spectrum.perSemitone * rowScale)
+        glowCache = (key, glow)
+        return glow
+    }
 
     // MARK: - Metrônomo e afinação
 
@@ -1214,12 +1341,35 @@ final class SongModel {
                 if let index = sections.firstIndex(where: { $0.id == sectionID }) {
                     sections[index].best = saved.best
                     sections[index].practiced = saved.practiced
+                    sections[index].history = saved.history
                 }
                 onStudyChange?()
             } catch {
                 trainingMessage = error.localizedDescription
             }
         }
+    }
+
+    /// Uma passada que não foi limpa, contada pelo som (o espelho do Estudar): entra no histórico, a sequência zera.
+    func markMissed(rate: Int) {
+        guard let section = activeSection, let sectionID = section.id else { return }
+        trainer = SpeedTrainer()
+        streak = 0
+        Task {
+            if let saved = try? await Backend.shared.practice(id, section: sectionID, rate: rate, clean: false),
+               let index = sections.firstIndex(where: { $0.id == sectionID }) {
+                sections[index].practiced = saved.practiced
+                sections[index].history = saved.history
+                onStudyChange?()
+            }
+        }
+    }
+
+    /// O trecho seguinte na música (o que começa depois do ativo), para "Depois deste".
+    var nextSection: StudySection? {
+        guard let section = activeSection else { return nil }
+        return sections.filter { $0.from >= section.to - 1 && $0.id != section.id }.min { $0.from < $1.from }
+            ?? sections.filter { $0.from > section.from && $0.id != section.id }.min { $0.from < $1.from }
     }
 
     // MARK: - Ajuste
@@ -1545,6 +1695,15 @@ final class SongModel {
         didSet { UserDefaults.standard.set(suspectKinds.map(\.rawValue).sorted(), forKey: "suspectKinds2") }
     }
 
+    /// O Revisar do Editar (Review.swift): a fila das suspeitas uma por vez.
+    var reviewing = false
+    /// Quantas foram aceitas ou dispensadas nesta abertura.
+    var reviewed = 0
+    /// As suspeitas dispensadas ("está certa"), guardadas por música.
+    var dismissedSuspects: Set<String> = []
+    /// O som sem nota em que a revisão parou (o cursor de inserção está nele).
+    var reviewSoundAt: Double?
+
     /// Todas as suspeitas da pista, de todos os tipos, em ordem de tempo (o filtro escolhe as que aparecem).
     func allSuspects(track: Int) -> [Suspect] {
         guard scoreNotes.indices.contains(track) else { return [] }
@@ -1577,6 +1736,7 @@ final class SongModel {
     /// As suspeitas que aparecem: as dos tipos ligados (numa nota, só os motivos desses tipos).
     func suspects(track: Int) -> [Suspect] {
         allSuspects(track: track).compactMap { suspect in
+            if !dismissedSuspects.isEmpty, dismissedSuspects.contains(suspectKey(suspect, track: track)) { return nil }
             guard suspect.note != nil else { return suspectKinds.contains(.unwritten) ? suspect : nil }
             let reasons = suspect.reasons.filter { suspectKinds.contains($0.kind) }
             guard let first = reasons.first else { return nil }
@@ -1627,6 +1787,7 @@ final class SongModel {
         }
         let suspect = list[index]
         let counter = "Suspeita \(index + 1) de \(list.count)\(measuring ? "…" : ""): "
+        reviewSoundAt = suspect.note == nil ? suspect.seconds : nil
         if let note = suspect.note {
             selectNote(note, track: track)
             engine.seek(to: suspect.seconds)

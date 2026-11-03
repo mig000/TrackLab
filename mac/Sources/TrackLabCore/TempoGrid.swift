@@ -183,10 +183,13 @@ public struct ScoreNote: Hashable, Sendable {
     /// fora, 0 sem).
     public let slideIn: Double
     public let slideOut: Double
+    /// As técnicas e o dedo, para o braço (os bits da página a partir de 64; `palmMute`, `dead`…).
+    public let marks: Int
 
     public init(tick: Double, duration: Double, pitch: Int, string: Int, fret: Int, vibrato: Int = 0,
                 bend: [BendPoint] = [], trill: Int? = nil, approached: Bool = false, slidesOut: Bool = false,
-                slideIn: Double = 0, slideOut: Double = 0) {
+                slideIn: Double = 0, slideOut: Double = 0, marks: Int = 0) {
+        self.marks = marks
         self.tick = tick
         self.duration = duration
         self.pitch = pitch
@@ -221,7 +224,8 @@ public struct ScoreNote: Hashable, Sendable {
             let slideOut = links & 4 != 0 ? outsideSlide : links & 8 != 0 ? -outsideSlide : 0
             return ScoreNote(tick: item[0], duration: item[1], pitch: Int(item[2]), string: Int(item[3]),
                              fret: Int(item[4]), vibrato: item.count > 5 ? Int(item[5]) : 0, bend: bend, trill: trill,
-                             approached: links & 1 != 0, slidesOut: links & 2 != 0, slideIn: slideIn, slideOut: slideOut)
+                             approached: links & 1 != 0, slidesOut: links & 2 != 0, slideIn: slideIn, slideOut: slideOut,
+                             marks: links & ~63)
         }
         return notes.enumerated().map { index, note in
             guard note.slidesOut, note.slideOut == 0 else { return note }
@@ -231,8 +235,22 @@ public struct ScoreNote: Hashable, Sendable {
             return ScoreNote(tick: note.tick, duration: note.duration, pitch: note.pitch, string: note.string,
                              fret: note.fret, vibrato: note.vibrato, bend: note.bend, trill: note.trill,
                              approached: note.approached, slidesOut: true, slideIn: note.slideIn,
-                             slideOut: Double(next.pitch - note.pitch))
+                             slideOut: Double(next.pitch - note.pitch), marks: note.marks)
         }
+    }
+
+    public var palmMute: Bool { marks & 64 != 0 }
+    public var dead: Bool { marks & 128 != 0 }
+    public var ghost: Bool { marks & 256 != 0 }
+    public var naturalHarmonic: Bool { marks & 512 != 0 }
+    /// Harmônico de qualquer tipo (natural, artificial, pinch, tap…).
+    public var harmonic: Bool { marks & (512 | 1024) != 0 }
+    public var tapped: Bool { marks & 2048 != 0 }
+    public var letRing: Bool { marks & 4096 != 0 }
+    /// O dedo da mão esquerda: 0 o polegar, 1 a 4 do indicador ao mínimo; nil sem.
+    public var finger: Int? {
+        let value = marks / 8192
+        return value >= 1 && value <= 5 ? value - 1 : nil
     }
 
     /// Quantos semitons acima da altura a nota está num instante, pela escrita (como `shapeAt` da Lente do
@@ -550,5 +568,20 @@ public struct PitchCurve: Codable, Hashable, Sendable {
         self.hop = hop
         self.values = values
         self.attack = attack
+    }
+}
+
+/// A posição da mão no braço, pelas casas das notas de um trecho (o braço do Estudar a sombreia e avisa a troca).
+public enum HandPosition {
+    /// Da casa mais baixa a pelo menos três acima (a mão cobre quatro); nil só com cordas soltas.
+    public static func span(_ frets: [Int]) -> ClosedRange<Int>? {
+        let fretted = frets.filter { $0 > 0 }
+        guard let low = fretted.min(), let high = fretted.max() else { return nil }
+        return low...max(high, low + 3)
+    }
+
+    /// A mão troca de posição: o começo anda duas casas ou mais.
+    public static func shifts(from: ClosedRange<Int>, to: ClosedRange<Int>) -> Bool {
+        abs(to.lowerBound - from.lowerBound) >= 2
     }
 }

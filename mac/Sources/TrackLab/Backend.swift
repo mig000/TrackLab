@@ -340,6 +340,19 @@ final class Backend {
         return answer.curves
     }
 
+    /// A curva de cada nota pedida medida num take (ou numa volta do Estudar) do pacote: `file` é `takes/<nome>`, e os
+    /// tempos das notas são os do arquivo.
+    func takeCurves(_ id: String, file: String, notes: [(key: String, start: Double, end: Double, pitch: Double)]) async throws
+        -> [String: PitchCurve] {
+        struct Note: Encodable { let key: String; let start: Double; let end: Double; let pitch: Double }
+        struct Body: Encodable { let notes: [Note]; let file: String }
+        struct Answer: Decodable { let curves: [String: PitchCurve] }
+        let answer: Answer = try await send("POST", "songs/\(id)/pitch",
+                                            body: Body(notes: notes.map { Note(key: $0.key, start: $0.start, end: $0.end, pitch: $0.pitch) },
+                                                       file: file))
+        return answer.curves
+    }
+
     /// As notas de um trecho do som (a seleção no espectro): de `from` a `to` segundos, com altura de `low` a `high` (MIDI,
     /// sem a afinação da gravação descontada), na faixa `stem` da separação ativa.
     func transcribe(_ id: String, from: Double, to: Double, low: Double, high: Double, stem: String?) async throws -> [HeardNote] {

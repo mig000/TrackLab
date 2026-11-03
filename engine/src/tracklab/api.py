@@ -424,16 +424,26 @@ def create_app(jobs: JobManager | None = None, *, source: songsterr.Source | Non
     def song_pitch(song_id: str, body: dict = Body(...)) -> dict:
         """A curva de altura do som em cada nota pedida (`notes`: [{key, start, end, pitch}], até 200, cada uma até
         8 s), na faixa `stem` da separação ativa (a guitarra se não vier; o baixo para a pista do baixo, a base para a
-        guitarra base…), ou no original sem separação: `{curves: {key: {from, hop, values}}}`."""
+        guitarra base…), ou no original sem separação, ou num take (`file`, `takes/<nome>`, com os tempos nos segundos
+        dele): `{curves: {key: {from, hop, values, attack}}}`."""
         from .media import pitch as pitch_media
 
         found = song(song_id)
         manifest = found.manifest
         files = manifest.get("stems", {}).get(manifest.get("activeStems") or "", {}).get("files", {})
         stem = body.get("stem")
-        if stem is not None and stem not in files:
-            raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
-        relative = files.get(stem or "guitar") or (manifest.get("audio") or {}).get("file")
+        take = body.get("file")
+        if take is not None:
+            # Um take gravado (ou uma volta do Estudar): a nota da volta mede o som dele, nos segundos do arquivo.
+            if not (isinstance(take, str) and take.startswith("takes/") and ".." not in take and "/" not in take[6:]):
+                raise HTTPException(400, "O arquivo (file) é um take do pacote: takes/<nome>.")
+            if not found.file(take).is_file():
+                raise HTTPException(404, f"Não achei {take} no pacote.")
+            relative = take
+        else:
+            if stem is not None and stem not in files:
+                raise HTTPException(404, f"Não há a faixa {stem} na separação ativa.")
+            relative = files.get(stem or "guitar") or (manifest.get("audio") or {}).get("file")
         if not relative:
             raise HTTPException(404, "Esta música não tem áudio.")
         notes = body.get("notes")

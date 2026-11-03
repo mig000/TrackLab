@@ -208,7 +208,7 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .onChange(of: library.selection) { _, id in open(id) }
+        .onChange(of: library.selection, initial: true) { _, id in open(id) }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { importing = true } label: { Label("Do Songsterr", systemImage: "plus") }

@@ -871,7 +871,27 @@ test("as notas para a Lente dizem como chegam e saem: ligado, slide da anterior,
   assert.equal(links(slid) & 12, 0);
   const plain = all.filter((n) => !n.isTieDestination && !n.isHammerPullDestination && !n.slideOrigin && !n.slideInType
     && !n.slideOutType);
-  assert.ok(plain.length > 30 && plain.every((n) => links(n) === 0));
+  assert.ok(plain.length > 30 && plain.every((n) => (links(n) & 63) === 0));
+  // As técnicas e o dedo, para o braço do app.
+  const flag = (pick, bit) => {
+    const found = all.find((n) => !n.isTieDestination && pick(n));
+    if (found) assert.equal(links(found) & bit, bit);
+  };
+  flag((n) => n.isPalmMute, 64);
+  flag((n) => n.isDead, 128);
+  flag((n) => n.isGhost, 256);
+  flag((n) => n.harmonicType === 1, 512);
+  flag((n) => n.harmonicType > 1, 1024);
+  flag((n) => n.isLetRing, 4096);
+});
+test("o dedo da mão esquerda vai nas ligações (× 8192)", () => {
+  const core = require("../score-core.js");
+  const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, "fixtures", "combinacoes.gp")));
+  const score = alphaTab.importer.ScoreLoader.loadScoreFromBytes(bytes, new alphaTab.Settings());
+  const note = edit.notesOf(score.tracks[0].staves[0]).find((n) => !n.isTieDestination);
+  note.leftHandFinger = alphaTab.model.Fingers.MiddleFinger;
+  const found = core.trackNotes(score)[0].find((n) => n[0] === note.beat.absolutePlaybackStart && n[4] === note.fret);
+  assert.equal(Math.floor(found[7] / 8192), 3);
 });
 
 test("o encaixe numa nota ligada põe o vibrato nas partes em que o som vibra", () => {

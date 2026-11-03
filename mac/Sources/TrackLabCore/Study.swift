@@ -79,6 +79,21 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
     public var start: Double?
     public var seconds: Double?
     public var bpm: Double?
+    /// As passadas guardadas pelo motor (as últimas): a hora, a velocidade e se foi limpa. Só se lê: o motor nunca o
+    /// recebe do app (o treino vem do `practice`).
+    public var history: [Practice] = []
+
+    public struct Practice: Codable, Hashable, Sendable {
+        public let at: String
+        public let rate: Int
+        public let clean: Bool
+
+        public init(at: String, rate: Int, clean: Bool) {
+            self.at = at
+            self.rate = rate
+            self.clean = clean
+        }
+    }
 
     public init(id: String? = nil, name: String, from: Double, to: Double, goal: Int = 100, best: Int? = nil,
                 practiced: String? = nil, kind: SectionKind = .trecho, tags: [String] = [], favorite: Bool = false,
@@ -122,6 +137,40 @@ public struct StudySection: Codable, Identifiable, Hashable, Sendable {
         start = try c.decodeIfPresent(Double.self, forKey: .start)
         seconds = try c.decodeIfPresent(Double.self, forKey: .seconds)
         bpm = try c.decodeIfPresent(Double.self, forKey: .bpm)
+        let extra = try decoder.container(keyedBy: HistoryKey.self)
+        history = (try? extra.decodeIfPresent([Practice].self, forKey: .history)) ?? []
+    }
+
+    private enum HistoryKey: String, CodingKey { case history }
+
+    /// A escada de velocidades do trecho: de 5 em 5 % do começo (o mais lento entre 70 % e a velocidade de agora) até
+    /// a meta.
+    public func ladder(current: Int) -> [Int] {
+        let low = max(Self.slowest, min(70, current, best ?? 70))
+        let first = low - low % SpeedTrainer.step
+        return Array(stride(from: first, through: goal, by: SpeedTrainer.step)).filter { $0 >= Self.slowest }
+            + (goal % SpeedTrainer.step == 0 ? [] : [goal])
+    }
+
+    /// Os últimos `days` dias (o mais antigo primeiro), cada um com as passadas, as limpas e a maior velocidade limpa.
+    public func lastDays(_ days: Int, now: Date = Date(), calendar: Calendar = .current) -> [PracticeDay] {
+        let today = calendar.startOfDay(for: now)
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
+        var result = (0..<days).reversed().compactMap { back in
+            calendar.date(byAdding: .day, value: -back, to: today).map { PracticeDay(day: $0) }
+        }
+        for practice in history {
+            guard let date = parser.date(from: practice.at) ?? plain.date(from: practice.at),
+                  let index = result.firstIndex(where: { calendar.isDate($0.day, inSameDayAs: date) }) else { continue }
+            result[index].passes += 1
+            if practice.clean {
+                result[index].clean += 1
+                result[index].top = max(result[index].top ?? 0, practice.rate)
+            }
+        }
+        return result
     }
 
     /// O trecho ainda sem recorde começa a 70 %; depois, no recorde.
@@ -443,5 +492,20 @@ public enum SongParts {
             let sum = family.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
             return palette[sum % palette.count]
         }
+    }
+}
+
+/// Um dia de estudo de um trecho: quantas passadas, quantas limpas e a maior velocidade limpa.
+public struct PracticeDay: Hashable, Sendable {
+    public let day: Date
+    public var passes = 0
+    public var clean = 0
+    public var top: Int?
+
+    public init(day: Date, passes: Int = 0, clean: Int = 0, top: Int? = nil) {
+        self.day = day
+        self.passes = passes
+        self.clean = clean
+        self.top = top
     }
 }

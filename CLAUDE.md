@@ -396,7 +396,41 @@ mediana a 15 ms ou mais e 60 % deles do mesmo lado, a música toda está desloca
 os N" sem ouvir); 3, os duvidosos (uma prova só ou o andamento saltando; a conferência só deles); 4, conferir a música (a
 conferência do começo ao fim, pulando os que concordam). O passo feito ganha ✓, o pulado (o link de cada passo) ↷, e o da
 vez fica aberto com o porquê e o botão; a mensagem de cada ação diz o passo seguinte; as ferramentas (Desfazer, Metade,
-Dobro, ±10 ms, Recomeçar) ficam embaixo. Ajuste (⌘J,
+Dobro, ±10 ms, Recomeçar) ficam embaixo. As outras telas da proposta (2/11, ainda não testadas no app pelo Miguel):
+a nota da volta (`TrackLabCore/Pass.swift`, `Passes.swift`, `PassViews.swift`): uma volta gravada (um take ou uma volta do
+Estudar) vai ao `POST songs/{id}/pitch` com `file` (`takes/<nome>`, os tempos nos segundos do arquivo, a velocidade e o
+tom do estudo descontados) e `PassScore.evaluate` compara cada nota da pista principal que começa nela: não soou (menos
+de um quinto do corpo com altura e sem ataque), outra altura (a mediana a mais de 0,4 semitom; acorde e bend não se
+julgam), cedo ou tarde (o ataque a mais de 35 ms); limpa com 90 % boas e nenhuma em outra altura; os dois compassos com
+mais erro viram "lugares a treinar" com "Loop aqui". Uma vigia de 20 ms (`startPassWatcher`) acha as voltas do loop (o
+tempo cai no mesmo `transportVersion`). Gravar: a Lente sai (⌥⌘2 a traz só nesse modo, `lensInRecord`; no Estudar,
+`lensInStudy`; o Editar segue `lensVisible`), a camada dos takes ganha a pista 0, "O disco" (a guitarra separada pintada
+onde passa de um oitavo do mais alto dela, ou onde a TAB tem nota), o contador "Volta N" e o afinador apagado gravando;
+ao parar, cada take ganha a nota (os de antes, ao entrar no Gravar), a melhor volta passa a soar, e "Depois das voltas"
+(`TakeReviewGroup`) pergunta como foram antes de mostrar a nota de cada uma, os lugares, o histograma dos ataques
+(`TimingHistogram`, −80 a +80 ms) e o que ouvir (`BandListen`: você na banda, sem a guitarra do disco; o disco; alternar a
+cada volta); o take mostra a nota e uma faixa por compasso (verde, âmbar, vermelho). Estudar: sem a Lente, o braço sob a
+TAB (`FretboardView`, ⌥⌘4: as notas que soam cheias, as do próximo 1,2 s contornadas, as do próximo ataque em azul; 3/11: a que soa anda pela corda no slide, com o rastro, e sai dela no bend e no vibrato, a corda dobrada até o dedo, o alto do bend escrito ao lado e um halo que pulsa no vibrato (na casa, a corda vai para o lado do bend; dobrada, solta um pouco e volta ao alto, maior que o do som para se ver; o vibrato escrito numa ligada vale na cadeia inteira), o trinado saltando entre as duas casas com a outra contornada e "tr", e o ligado num arco com H ou P da casa de antes, apagando em 0,4 s; as que vêm mostram o slide numa seta tracejada pela corda, o bend numa seta para o lado com a altura e o vibrato numa onda, na ponta da seta quando há bend; o trinado com a outra casa tracejada e "tr"; o ligado num arco H ou P desde a casa da nota de antes; e, pelas ligações que a página manda além das de slide, `ScoreNote.marks`: PM embaixo e a bolinha mais apagada, X na morta (cinza), a fantasma entre parênteses, o harmônico num losango com "H.A." no artificial, o tapping em rosa com T, o let ring aceso apagando até 1,5 s depois do fim ou até outra nota da corda, e o dedo da mão esquerda num selo; a nota que soa tem um anel que se fecha até o fim dela; os acordes, três notas ou mais juntas, ligados por uma linha, e a pestana onde duas ou mais dividem a casa mais baixa; a posição da mão, `HandPosition`, sombreada pelas notas de 0,6 s atrás a 0,4 s adiante, e a próxima tracejada em azul com uma seta e a casa quando as notas dos próximos 2,5 s pedem outra, a partir de duas casas); no
+Trecho, a escada de 5 em 5 % até a meta (`StudySection.ladder`), os últimos 7 dias pelo histórico do motor (`lastDays`,
+`history` só lido), "Depois deste" e o Eco (pergunta e resposta: a guitarra do disco numa volta, calada na seguinte;
+a mixagem de antes volta ao desligar e é a que a música guarda); "A volta" (`MirrorGroup`): com a guitarra ligada e um
+loop, cada volta é gravada (`takes/volta-*.caf`, só a última fica, e o motor a apaga um minuto depois de uma lista de
+takes nova) e ganha a nota; limpa vale o Limpo (a escada sobe), suja entra no histórico e zera a sequência
+(`markMissed`); tocando, só as últimas em pontos; parado, "como foi?" antes dos números, e "Ouvir a volta". Editar:
+Escrever | Revisar no topo do inspetor; o Revisar (`Review.swift`) leva às suspeitas uma por vez (a Lente liga para
+medir): ⏎ aceita o som (o F; num som sem nota, a nota na casa sugerida do cursor), ⌫ "está certa" (a suspeita sai da
+fila, guardada por música em `dispensadas.<id>`, pela pista, tique e corda; "Mostrar de novo"), → pula, ← volta; com os
+cartões das leituras e o filtro por tipo. As alturas das camadas (`TrackLabCore/LaneLayout.swift`, 2/11: na tela do iMac
+o braço e os takes ficavam em tiras fixas de 110 e 70 pt e a Onda, com todo o resto, esticava a 550–700 pt): a TAB na
+altura da pauta (até metade), o braço e as pistas dos takes numa fração do resto (o disco perto de metade de uma pista),
+a Onda até um terço da altura quando é referência; a sobra vai metade à TAB e metade ao braço e aos takes até o teto
+deles, e o que ainda sobra à TAB; com a Lente, a Onda na altura do divisor e a Lente com o resto; no Ajustar, a música
+inteira em cima (16 % da altura, de 92 a 170 pt) e a Fita com o resto; numa janela baixa a TAB cede até 120 pt antes do
+braço e dos takes. A altura escolhida no divisor da TAB é o mínimo dela (a sobra ia para a
+Onda); o braço para na proporção de um braço de verdade (as cordas a 36 % da largura de uma casa); no Ajustar, a música
+inteira divide a altura entre o andamento e o som contra o mapa, e o pente da Fita fica com 30 % dela (a força dos
+ataques até 300 pt embaixo). Para ver as telas de longe (a janela noutra Space não recebe cliques), `TRACKLAB_OPEN=<título
+ou id>` e `TRACKLAB_MODE=<ajustar|editar|estudar|gravar>` abrem a música e o modo ao ligar (`open --env … build/TrackLab.app`). Ajuste (⌘J,
 Fase 2): arrastar uma batida na Fita a leva até onde ela soa (vira âncora no motor; as vizinhas acompanham até 8
 batidas ou até a próxima âncora), duplo clique prende ou solta, U leva o 1 mais perto até o toque, T bate junto
 (um toque por batida tocando; o trecho é regravado quando os toques param ou o loop volta), ⇧ + arrastar na TAB
@@ -410,9 +444,17 @@ tela e pausam (`ScrollCatcher`: um monitor local de rolagem, sem pegar cliques).
 trackpad sobre a TAB ou a Fita, pelo `ScrollCatcher`) muda a Fita e a TAB juntas; os avisos de escala para a página
 são um por vez, como os do relógio. A Fita mostra a onda ou o espectro da guitarra separada, como a Lente do TabLab
 (`SpectrumPalette`: gama 1,35, o topo da escala pelo trecho, ±2 s, e a base 150 passos abaixo; 2 pixels por linha,
-interpolados; desde 1/11 a Lente é sempre escura, também na aparência clara, e a paleta tem um piso: o terço de baixo
-é o fundo, sem a névoa do ruído e do vazamento, e daí um azul frio que para num azul claro, sem branco, para as faixas
-âmbar e os pontos da altura ficarem sempre mais vivos; as faixas cheias com um contorno fino), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
+interpolados; a paleta tem um piso: o terço de baixo é o fundo, sem a névoa do ruído e do vazamento). Desde 3/11 é a
+Tinta (a proposta https://claude.ai/artifact/9QDMVURizRJY3XWVWzddXP, como o RipX; de 1/11 a 3/11 a Lente foi sempre
+escura): segue a aparência, o espectro em violeta (do quase branco ao índigo no papel, do quase preto ao lilás no
+escuro) e, onde a pista principal tem nota, a energia do som acende em âmbar: duas imagens do mesmo espectro
+(`SpectrumPalette.Images`), a âmbar por cima com uma máscara por ladrilho feita das linhas das notas pelo som
+(`SongModel.lensGlow`, `LensGlow`, nas coordenadas da imagem, refeita só quando notas, curvas, afinação ou mapa mudam;
+miolo de 0,9 semitom e borda de 1,7 pela metade). Por cima, a escrita em contorno (sem o som: onde o âmbar foge do
+contorno, a TAB discorda) com a casa num selo na ponta (vermelho na suspeita) e os pontos da altura só na escolhida.
+Duas chaves no canto e no menu Visão: Barras (⌥⌘B, `lensBars`; desligadas, só o espectro com as notas acesas) e
+Espectro (⌥⌘S, `lensSpectrum`; desligado, as faixas que seguem o som com os pontos, como antes); uma fica sempre
+ligada. A nota escolhida (`spotlight`, 3/11): um véu da cor do fundo sobre o resto, com uma janela em volta dela, a escrita em contorno forte, a curva do som numa linha, a guia até a tecla acesa no teclado, a régua da duração e um cartão (nome, casa, corda, duração e o `soundSummary`); ouvindo-a, a parte tocada acende e uma linha corre por ela; um clique fora de uma nota tira a escolha (`clear`). `TRACKLAB_AT=<segundos>` abre a música naquele ponto (para as fotos de longe), com o teclado à esquerda, a janela de alturas das notas do trecho (das duas pistas, ao menos
 18 semitons, deslizando tocando: `PitchWindow`), as linhas de compasso e batida por cima e as notas da pista em âmbar e
 da segunda em azul como faixas que seguem a escrita (o bend sobe pelos pontos, o vibrato ondula; `ScoreNote.shape`; o
 slide desliza no fim da nota até a altura da seguinte da corda, ou 3 semitons para fora, e o de fora entra 3 semitons
@@ -670,7 +712,7 @@ na grade (`placeCaret`, pelas âncoras): no meio de uma nota longa, a nota nova 
 continua ligado com o que a parte dele tinha, o vibrato e o resto do bend, menos na corda da nova, e a nova ataca ali); no meio de uma pausa, a nova vai até a próxima nota ou o
 fim do compasso; o cursor guarda o tique (`caret[6]`) e é desenhado no x dele. Ouvir uma nota: o clique numa nota (na
 TAB, na edição, ou numa faixa da Lente) toca o trecho dela no som gravado, só a faixa onde a pista soa
-(`StemEngine.audition`: sem o loop, que tocaria o começo dele no resto de uma nota que o atravessa; a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
+(`StemEngine.audition`: só o trecho da nota é agendado, com 15 ms de fade no fim; antes a parada esperava a latência da saída mais 80 ms e o som passava ~0,2 s da nota; sem o loop, que tocaria o começo dele no resto de uma nota que o atravessa; a mixagem fica de lado enquanto toca, a tela fica parada, `auditionView` e o `hold` da página,
 e a agulha volta ao começo; tocando, não interrompe; o
 seek do clique vai antes da escolha, senão calaria a nota; um clique noutra nota enquanto uma toca encerra a primeira
 parada, sem virar o estudo tocando até o fim); o botão direito numa nota da TAB (também fora da edição),

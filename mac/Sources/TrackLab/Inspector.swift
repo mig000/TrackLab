@@ -95,6 +95,7 @@ struct StudyInspector: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 TrechoGroup(model: model)
+                MirrorGroup(model: model)
                 ChordsGroup(model: model)
                 GuitarGroup(model: model)
                 MixerGroup(model: model)
@@ -134,8 +135,7 @@ private struct TrechoGroup: View {
                     .help("Três limpos seguidos sobem 5 %")
                 }
                 .font(.caption.monospacedDigit())
-                ProgressView(value: Double(min(section.best ?? 0, section.goal)), total: Double(max(section.goal, 1)))
-                    .tint(.orange)
+                SpeedLadder(section: section, current: Int((model.engine.rate * 100).rounded()))
                 Button { model.markClean() } label: {
                     HStack(spacing: 4) { Text("Limpo!"); KeyHint("⏎") }.frame(maxWidth: .infinity)
                 }
@@ -146,10 +146,42 @@ private struct TrechoGroup: View {
                 Text(model.trainingMessage ?? "Velocidade \(Int((model.engine.rate * 100).rounded())) %"
                      + (section.practiced.map { " · tocado \($0)" } ?? ""))
                     .font(.caption).foregroundStyle(model.trainingMessage == nil ? Color.secondary : Color.green).lineLimit(2)
-                Button("Soltar o trecho") { model.deactivateSection() }
+                SevenDays(section: section)
+                HStack(spacing: 6) {
+                    Button("Soltar o trecho") { model.deactivateSection() }
+                    Spacer(minLength: 4)
+                    if let next = model.nextSection {
+                        Button { model.activate(next) } label: {
+                            Label("Depois deste: \(next.name)", systemImage: "arrow.right").lineLimit(1)
+                        }
+                        .help("O trecho seguinte da música, no recorde dele")
+                    }
+                }
+                EcoToggle(model: model)
             } else {
                 Text("Clique numa chave do mapa, ou marque um loop (arraste na Fita, ou L) e guarde com “+ Trecho do loop”.")
                     .font(.caption).foregroundStyle(.secondary)
+                EcoToggle(model: model)
+            }
+        }
+    }
+}
+
+/// O Eco: pergunta e resposta no loop (a guitarra do disco numa volta, você sozinho na seguinte).
+struct EcoToggle: View {
+    let model: SongModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: Binding(get: { model.eco }, set: { model.setEco($0) })) {
+                Text("Eco: pergunta e resposta").font(.caption)
+            }
+            .toggleStyle(.switch)
+            .help("No loop, uma volta com a guitarra do disco (a pergunta) e a seguinte sem ela (a sua resposta)")
+            if model.eco {
+                Text(model.ecoPass % 2 == 0 ? "Sua vez: a guitarra do disco cala." : "Ouça: a guitarra do disco toca.")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(model.ecoPass % 2 == 0 ? Color.orange : Color.secondary)
             }
         }
     }

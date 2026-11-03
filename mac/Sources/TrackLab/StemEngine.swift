@@ -327,13 +327,18 @@ final class StemEngine {
 
     /// `looping` false: toca solto mesmo com um loop marcado (a nota clicada, que atravessa o fim do loop, tocaria o
     /// começo dele no resto).
-    private func startPlayers(looping: Bool = true) {
+    /// `end`: só até ali, com um fade curto no fim (a nota clicada; antes a parada esperava a latência da saída e o
+    /// som passava ~0,2 s do fim da nota).
+    private func startPlayers(looping: Bool = true, end: Double? = nil) {
         guard loaded, !tracks.isEmpty, !isPlaying else { return }
         plan = PlaybackPlan(start: anchorTime, loop: looping ? loop : nil, duration: duration)
-        let segments = plan.segments
+        var segments = plan.segments
+        if let end {
+            segments = segments.compactMap { $0.lowerBound < end ? $0.lowerBound...min($0.upperBound, end) : nil }
+        }
         guard !segments.isEmpty else { return }
         planLength = segments.reduce(0) { $0 + ($1.upperBound - $1.lowerBound) }
-        for track in tracks.values { schedule(track, segments) }
+        for track in tracks.values { schedule(track, segments, fadeOut: end != nil) }
         do {
             if !engine.isRunning { try engine.start() }
             playbackError = nil
@@ -385,12 +390,13 @@ final class StemEngine {
         auditioning = solo
         auditionActive = true
         applyMix()
-        startPlayers(looping: false)
+        startPlayers(looping: false, end: to)
         guard isPlaying else {
             endAudition()
             return
         }
-        let wait = (to - from) / Double(max(rate, 0.1)) + latency + 0.08
+        // Só o trecho da nota está agendado: a parada vem depois de o último quadro sair (o início comum e a latência).
+        let wait = (to - from) / Double(max(rate, 0.1)) + 0.05 + latency + 0.05
         auditionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(wait))
             guard let self, !Task.isCancelled, self.auditioning != nil else { return }
@@ -532,7 +538,7 @@ final class StemEngine {
         }
     }
 
-    private func schedule(_ track: Track, _ segments: [ClosedRange<Double>]) {
+    private func schedule(_ track: Track, _ segments: [ClosedRange<Double>], fadeOut: Bool = false) {
         track.player.stop()
         let file = track.file
         if let take = track.take {
@@ -540,11 +546,30 @@ final class StemEngine {
             return
         }
         let rate = file.processingFormat.sampleRate
-        for segment in segments {
+        for (index, segment) in segments.enumerated() {
             let first = AVAudioFramePosition((segment.lowerBound * rate).rounded())
-            let last = min(file.length, AVAudioFramePosition((segment.upperBound * rate).rounded()))
+            var last = min(file.length, AVAudioFramePosition((segment.upperBound * rate).rounded()))
             guard last > first else { continue }
-            track.player.scheduleSegment(file, startingFrame: first, frameCount: AVAudioFrameCount(last - first), at: nil)
+            // O fim cortado no meio do som estala: os últimos 15 ms descem a zero.
+            var tail: AVAudioPCMBuffer?
+            if fadeOut, index == segments.count - 1 {
+                let count = min(AVAudioFramePosition(0.015 * rate), last - first)
+                if count > 0, let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(count)) {
+                    file.framePosition = last - count
+                    if (try? file.read(into: buffer, frameCount: AVAudioFrameCount(count))) != nil, let channels = buffer.floatChannelData {
+                        let frames = Int(buffer.frameLength)
+                        for channel in 0..<Int(buffer.format.channelCount) {
+                            for k in 0..<frames { channels[channel][k] *= Float(frames - k) / Float(frames) }
+                        }
+                        tail = buffer
+                        last -= AVAudioFramePosition(frames)
+                    }
+                }
+            }
+            if last > first {
+                track.player.scheduleSegment(file, startingFrame: first, frameCount: AVAudioFrameCount(last - first), at: nil)
+            }
+            if let tail { track.player.scheduleBuffer(tail, completionHandler: nil) }
         }
     }
 

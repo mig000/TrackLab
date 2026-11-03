@@ -25,11 +25,10 @@ struct FitaView: View {
     @Local private var marquee: (from: (seconds: Double, pitch: Double), to: (seconds: Double, pitch: Double))?
     @Environment(\.colorScheme) private var scheme
 
-    /// A aparência clara (papel) vale para a Onda; a Lente é sempre escura (1/11: o espectro em tinta sobre o claro
-    /// tinha pouco contraste com as faixas âmbar).
-    private var paper: Bool { scheme == .light && !lens }
-    /// O fundo da Lente: o mesmo da base da paleta do espectro, para a imagem e a borda se emendarem.
-    static let lensBackground = Color(red: 11 / 255, green: 13 / 255, blue: 18 / 255)
+    /// A aparência clara (papel) vale para a Onda e para a Lente. De 1/11 a 3/11 a Lente foi sempre escura (o espectro
+    /// em tinta cinza sobre o claro tinha pouco contraste com as faixas âmbar); com a Tinta, o som das notas acende em
+    /// âmbar sobre o violeta, e ela segue a aparência.
+    private var paper: Bool { scheme == .light }
     /// A cor das linhas e marcas por cima do espectro: branca no escuro, preta no papel.
     private var ink: Color { paper ? .black : .white }
 
@@ -52,12 +51,12 @@ struct FitaView: View {
             }
         }
         // A Onda no papel tem o fundo da página (branco), no escuro o de baixo da página; a Lente, o dela.
-        .background(lens ? Self.lensBackground
+        .background(lens ? SpectrumPalette.ground(paper: paper)
                     : paper ? Color(red: 0.98, green: 0.973, blue: 0.953) : Color(nsColor: .underPageBackgroundColor))
         .onChange(of: scheme, initial: true) { if lens { model.paper = paper } }
         .clipShape(RoundedRectangle(cornerRadius: 6))
         // O canto da Lente: a afinação da gravação, as corrigidas, as suspeitas (o selo abre o filtro) e o Z.
-        .overlay(alignment: .topTrailing) { if lens { LensBadges(model: model).environment(\.colorScheme, .dark) } }
+        .overlay(alignment: .topTrailing) { if lens { LensBadges(model: model) } }
     }
 
     private func tape(size: CGSize, now: Double) -> some View {
@@ -71,10 +70,12 @@ struct FitaView: View {
         return ZStack(alignment: .topLeading) {
             if let pitches {
                 // As notas estão na afinação da gravação descontada: o espectro desce o mesmo tanto.
-                SpectrumLayerView(image: model.spectrumImage, start: start - model.soundShift, span: span,
+                SpectrumLayerView(image: model.spectrumImage, warm: model.spectrumWarm, glow: model.lensGlow(),
+                                  start: start - model.soundShift, span: span,
                                   pitches: (pitches.lowerBound + model.tuning)...(pitches.upperBound + model.tuning),
                                   spectrum: model.spectrum)
                     .padding(.top, stripHeight)
+                    .opacity(model.lensSpectrum ? 1 : 0)
             }
             Canvas { context, size in
                 draw(in: &context, size: size, start: start, now: now, pitches: pitches)
@@ -216,6 +217,8 @@ struct FitaView: View {
                     return
                 }
                 if abs(value.translation.width) <= 3 {
+                    // Fora de uma nota, na Lente: a escolha sai (a edição continua ligada).
+                    if lens, model.tabSelection != nil { model.tabEdit("clear") }
                     seek(at: value.location.x, width: width, start: start)
                     return
                 }
@@ -348,11 +351,15 @@ struct FitaView: View {
         func x(_ t: Double) -> Double { (t - start) / span * width }
         func sx(_ t: Double) -> Double { (t - soundStart) / span * width }
         let end = start + span
+        // O pente com uma parte da altura (as linhas ligando o escrito ao ouvido ficam legíveis na tela grande), a força
+        // dos ataques com outra (até 200 pt) e, embaixo, a onda com o resto (2/11: o Miguel queria ver o som também).
         let combTop = 18.0
-        let combBottom = 64.0
-        let tick = 13.0
-        let base = height - 4
+        let combBottom = combTop + min(max(height * 0.3, 46), 220)
+        let tick = min(max((combBottom - combTop) * 0.28, 13), 30)
         let top = combBottom + 22
+        let below = height - 4 - top
+        let base = top + min(max(below * 0.4, 50), 200, max(0, below))
+        drawAdjustWave(in: &context, width: width, top: base + 12, bottom: height - 4, start: start, soundStart: soundStart)
         let blue = Color(red: 0.25, green: 0.5, blue: 0.95)
         let red = Color(red: 0.9, green: 0.22, blue: 0.17)
 
@@ -446,6 +453,27 @@ struct FitaView: View {
         }
     }
 
+    /// A onda embaixo do Ajuste, como a Fita dos outros modos: a banda inteira (o original, nas cores das partes) atrás
+    /// e a guitarra em âmbar na frente, no tempo do som, com as batidas do mapa por cima (as linhas da Fita). A bateria
+    /// já está na força dos ataques, logo acima (2/11: o Miguel achou a banda inteira mais útil que a bateria de novo).
+    private func drawAdjustWave(in context: inout GraphicsContext, width: Double, top: Double, bottom: Double,
+                                start: Double, soundStart: Double) {
+        guard bottom - top >= 40 else { return }
+        let middle = (top + bottom) / 2
+        let half = (bottom - top) / 2 - 2
+        if let peaks = model.sourcePeaks {
+            fillSource(wave(peaks, start: soundStart, width: width, step: 2, middle: middle, half: half),
+                       in: &context, start: start, width: width, height: bottom)
+        }
+        if let peaks = model.guitarPeaks {
+            context.fill(wave(peaks, start: soundStart, width: width, step: 2, middle: middle, half: half),
+                         with: .color(.orange.opacity(0.85)))
+        }
+        context.draw(CanvasLabel.image(model.guitarPeaks != nil ? "a banda · a guitarra em âmbar" : "a banda", size: 9,
+                                       weight: .semibold, color: .secondaryLabelColor, dark: !paper),
+                     at: CGPoint(x: 6, y: top + 2), anchor: .topLeading)
+    }
+
     static func stemName(_ stem: String) -> String {
         switch stem {
         case Stem.drums.rawValue: "a bateria"
@@ -506,14 +534,22 @@ struct FitaView: View {
         }
         context.fill(barLines, with: .color(ink.opacity(paper ? 0.35 : 0.22)))
 
-        // As notas como na Lente: faixas que seguem o som (o vibrato e o bend copiados da curva quando ela os tem; senão
-        // a escrita), com o traço do ataque na ponta e, por cima, os pontos laranja da altura que soa. Cada pista num
-        // caminho só para as faixas e outro para os pontos (centenas de pontos a cada quadro, um por um, custavam caro).
+        // As notas. Com o espectro (a Tinta, 3/11): o som da nota já acende em âmbar na imagem, e por cima vai só a
+        // escrita, um contorno com a casa num selo na ponta (e a curva da nota escolhida). Sem o espectro, como na Lente
+        // do TabLab: faixas que seguem o som (o vibrato e o bend copiados da curva quando ela os tem; senão a escrita),
+        // com o traço do ataque na ponta e, por cima, os pontos da altura que soa. Cada pista num caminho só para as
+        // faixas e outro para os pontos (centenas de pontos a cada quadro, um por um, custavam caro). Sem as barras,
+        // nada disso (só o espectro), mas as curvas continuam pedidas.
         let semitone = height / (highPitch - lowPitch)
         let thick = Self.bandWidth(semitone: semitone)
+        let tinta = model.lensSpectrum
+        let barsShown = model.lensBars
+        let bandHalf = tinta ? max(thick / 2, min(semitone * 0.42, 12)) : thick / 2
         let selection = model.tabSelection
         // As notas suspeitas dos tipos ligados no filtro (uma vez por quadro, não por nota).
         let flagged = model.suspectNotes(track: model.scoreTrack)
+        // A nota escolhida, para o destaque desenhado depois de todas as pistas (`spotlight`).
+        var spot: Spot?
         func bands(_ notes: [ScoreNote], track: Int, rgb: (Double, Double, Double)) {
             let color = Color(red: rgb.0 / 255, green: rgb.1 / 255, blue: rgb.2 / 255)
             var visible: [ScoreNote] = []
@@ -524,12 +560,15 @@ struct FitaView: View {
             var corrected = Path()
             var timing = Path()
             var chosen: (shape: Path, line: Path?)?
+            // Os selos da casa (na Tinta, só a pista principal): onde, a casa, suspeita.
+            var heads: [(x: Double, y: Double, fret: Int, suspect: Bool)] = []
             for note in notes {
                 let s0 = model.grid.seconds(at: note.tick)
                 guard s0 < gridStart + span else { continue }
                 let s1 = model.grid.seconds(at: note.tick + note.duration)
                 guard s1 > gridStart else { continue }
                 visible.append(note)
+                guard barsShown else { continue }
                 let sound = model.soundNotes[model.curveKey(note, track: track)]
                 let isChosen = selection?.matches(note, track: track) == true
                 let lift = grabbed.map { $0.track == track && $0.note == note ? Double($0.semitones) : 0 } ?? 0
@@ -539,13 +578,15 @@ struct FitaView: View {
                 let steps = max(2, Int(((x1 - x0) / (teeth ? 1 : 3)).rounded(.up)))
                 let centers = (0...steps).map { i -> CGPoint in
                     let x = x0 + (x1 - x0) * Double(i) / Double(steps)
-                    let offset = Self.offset(note, sound: sound, at: gridStart + x / width * span, start: s0, end: s1)
+                    // Na Tinta, o contorno é a escrita: o som é a âmbar do espectro, e onde um foge do outro a TAB
+                    // discorda.
+                    let offset = Self.offset(note, sound: tinta ? nil : sound, at: gridStart + x / width * span, start: s0, end: s1)
                     return CGPoint(x: x, y: y(Double(note.pitch) + lift + offset))
                 }
                 var band = Path()
-                band.move(to: CGPoint(x: centers[0].x, y: centers[0].y - thick / 2))
-                for point in centers.dropFirst() { band.addLine(to: CGPoint(x: point.x, y: point.y - thick / 2)) }
-                for point in centers.reversed() { band.addLine(to: CGPoint(x: point.x, y: point.y + thick / 2)) }
+                band.move(to: CGPoint(x: centers[0].x, y: centers[0].y - bandHalf))
+                for point in centers.dropFirst() { band.addLine(to: CGPoint(x: point.x, y: point.y - bandHalf)) }
+                for point in centers.reversed() { band.addLine(to: CGPoint(x: point.x, y: point.y + bandHalf)) }
                 band.closeSubpath()
                 if lift != 0 {
                     // Onde estava: o contorno tracejado, apagado; o rótulo com a altura nova.
@@ -572,7 +613,10 @@ struct FitaView: View {
                 // Suspeita (o som discorda da escrita): contorno vermelho e um ponto sobre o ataque.
                 if sound != nil, track == model.scoreTrack, flagged.contains(note) {
                     suspect.addPath(band)
-                    suspect.addEllipse(in: CGRect(x: x0 - 3, y: Double(centers[0].y) - thick / 2 - 9, width: 6, height: 6))
+                    // Na Tinta, o selo da casa já fica vermelho.
+                    if !tinta {
+                        suspect.addEllipse(in: CGRect(x: x0 - 3, y: Double(centers[0].y) - thick / 2 - 9, width: 6, height: 6))
+                    }
                 }
                 // Onde a nota soa de fato, quando passa de 30 ms da escrita: um traço branco no ataque medido, ligado
                 // ao começo escrito (o mapa de tempo está fora ali; o Ajuste acerta).
@@ -582,14 +626,18 @@ struct FitaView: View {
                     timing.addRect(CGRect(x: x - 0.75, y: top, width: 1.5, height: thick + 6))
                     timing.addRect(CGRect(x: min(x, x0), y: Double(centers[0].y) - 0.5, width: abs(x - x0), height: 1))
                 }
-                // O ataque: um traço mais forte na ponta.
-                attacks.addRect(CGRect(x: x0.rounded() - 1, y: Double(centers[0].y) - thick / 2 - 2, width: 2.5, height: thick + 4))
+                // O ataque: um traço mais forte na ponta; na Tinta, a casa num selo em cima da ponta (a pista principal).
+                if !tinta {
+                    attacks.addRect(CGRect(x: x0.rounded() - 1, y: Double(centers[0].y) - thick / 2 - 2, width: 2.5, height: thick + 4))
+                } else if track == model.scoreTrack {
+                    heads.append((x0, Double(centers[0].y) - bandHalf, note.fret, sound != nil && flagged.contains(note)))
+                }
                 // De perto, a curva da nota escolhida é uma linha (dá para ver onde o bend chega); senão, pontos a
                 // cada 3,5 px.
                 var line: Path?
                 if let sound {
                     let curve = sound.curve
-                    if isChosen, semitone >= 20 {
+                    if isChosen, semitone >= 20 || tinta {
                         var path = Path()
                         var open = false
                         for (k, value) in curve.values.enumerated() {
@@ -605,7 +653,8 @@ struct FitaView: View {
                     } else {
                         let r = isChosen ? 1.6 : 1.1
                         var lastX = -Double.infinity
-                        for (k, value) in curve.values.enumerated() {
+                        // Na Tinta, os pontos só na escolhida (o som das outras já está na âmbar).
+                        for (k, value) in curve.values.enumerated() where isChosen || !tinta {
                             guard let value else { continue }
                             let x = gx(curve.from + Double(k) * curve.hop)
                             guard x - lastX >= 3.5 else { continue }
@@ -616,11 +665,22 @@ struct FitaView: View {
                     }
                 }
                 if isChosen || lift != 0 { chosen = (band, line) } else { shapes.addPath(band) }
+                if isChosen, lift == 0, slide == 0 {
+                    spot = Spot(shape: band, line: line, color: color, note: note, start: s0, end: s1,
+                                fret: track == model.scoreTrack && tinta && semitone >= 9)
+                }
             }
-            // Faixas cheias e um contorno fino: sobre o espectro escuro a nota se lê pela cor, sem a moldura grossa.
-            context.fill(shapes, with: .color(color.opacity(paper ? 0.2 : 0.3)))
-            context.stroke(shapes, with: .color(color.opacity(paper ? 0.85 : 0.7)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
-            if let chosen {
+            if tinta {
+                // Só o contorno da escrita: na pista principal, um marrom no papel (o âmbar é do som).
+                let edge = track == model.scoreTrack && paper ? Color(red: 0.48, green: 0.35, blue: 0.12) : color
+                context.fill(shapes, with: .color(color.opacity(0.05)))
+                context.stroke(shapes, with: .color(edge.opacity(paper ? 0.5 : 0.6)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+            } else {
+                // Faixas cheias e um contorno fino: a nota se lê pela cor, sem a moldura grossa.
+                context.fill(shapes, with: .color(color.opacity(paper ? 0.2 : 0.3)))
+                context.stroke(shapes, with: .color(color.opacity(paper ? 0.85 : 0.7)), style: StrokeStyle(lineWidth: 1, lineJoin: .round))
+            }
+            if let chosen, !tinta {
                 var glow = context
                 glow.addFilter(.shadow(color: color.opacity(0.55), radius: 5))
                 glow.fill(chosen.shape, with: .color(color.opacity(0.3)))
@@ -636,11 +696,23 @@ struct FitaView: View {
             // laranja de antes sumia dentro da faixa).
             let orange = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 0.95, blue: 0.86)
             context.fill(dots, with: .color(orange.opacity(paper ? 0.55 : 0.8)))
-            if let line = chosen?.line {
+            if let line = chosen?.line, !tinta {
                 if semitone >= 20 {
                     context.stroke(line, with: .color(orange.opacity(0.95)), lineWidth: 1.8)
                 } else {
                     context.fill(line, with: .color(orange.opacity(0.95)))
+                }
+            }
+            // Os selos da casa: índigo no papel, lilás no escuro, vermelho na suspeita; só com espaço para eles.
+            if semitone >= 9 {
+                let fill = paper ? Color(red: 0.16, green: 0.14, blue: 0.31).opacity(0.8) : Color(red: 0.36, green: 0.31, blue: 0.62)
+                for head in heads {
+                    let wide = head.fret >= 10 ? 16.0 : 11.0
+                    let rect = CGRect(x: head.x - 1, y: head.y - 13, width: wide, height: 11.5)
+                    context.fill(Path(roundedRect: rect, cornerRadius: 3),
+                                 with: .color(head.suspect ? Color(red: 0.85, green: 0.23, blue: 0.34) : fill))
+                    context.draw(CanvasLabel.image("\(head.fret)", size: 8.5, weight: .bold, monospaced: true, color: .white, dark: true),
+                                 at: CGPoint(x: rect.midX, y: rect.midY), anchor: .center)
                 }
             }
             if !visible.isEmpty { model.askCurves(visible, track: track) }
@@ -651,6 +723,7 @@ struct FitaView: View {
         }
         // A principal em âmbar (mais escuro no papel, para ler sobre o claro).
         bands(main, track: model.scoreTrack, rgb: paper ? (196, 118, 10) : (245, 181, 68))
+        if let spot { spotlight(spot, in: &context, width: width, height: height, semitone: semitone, gx: gx, y: y) }
         // A seleção no espectro: o retângulo que se arrasta (⌥) e o trecho reconhecido, com as notas achadas tracejadas em
         // verde, como ficariam (o cartão "Reconhecido" na coluna as escreve).
         let teal = ReadingTile.teal
@@ -693,7 +766,7 @@ struct FitaView: View {
         }
         // O som forte sem nota escrita (suspeita): um contorno vermelho na altura dele, do ataque a 120 ms depois.
         var unwritten = Path()
-        for sound in model.unwrittenSounds(track: model.scoreTrack) {
+        for sound in model.unwrittenSounds(track: model.scoreTrack) where barsShown {
             let x = gx(sound.seconds)
             guard x > -20, x < width + 20, Double(sound.pitch) >= lowPitch - 1, Double(sound.pitch) <= highPitch + 1 else { continue }
             let rect = CGRect(x: x, y: y(Double(sound.pitch)) - thick / 2, width: max(8, 0.12 / span * width), height: thick)
@@ -740,7 +813,8 @@ struct FitaView: View {
 
         // O teclado à esquerda (o da Lente): as teclas brancas e pretas de cada semitom, os Dós e os Mis com nome.
         let gutter = Self.keyboardWidth
-        context.fill(Path(CGRect(x: 0, y: 0, width: gutter, height: height)), with: .color(Color(red: 0.06, green: 0.07, blue: 0.09)))
+        context.fill(Path(CGRect(x: 0, y: 0, width: gutter, height: height)),
+                     with: .color(paper ? Color(red: 0.93, green: 0.93, blue: 0.95) : Color(red: 0.06, green: 0.07, blue: 0.09)))
         let names = ["C", "C♯", "D", "E♭", "E", "F", "F♯", "G", "A♭", "A", "B♭", "B"]
         var whiteKeys = Path()
         var blackKeys = Path()
@@ -758,13 +832,126 @@ struct FitaView: View {
                 rules.addRect(CGRect(x: gutter, y: y1.rounded(), width: width - gutter, height: 1))
             }
         }
-        context.fill(whiteKeys, with: .color(paper ? Color(white: 0.97) : Color(red: 0.13, green: 0.15, blue: 0.19)))
-        context.fill(blackKeys, with: .color(paper ? Color(white: 0.25) : Color(red: 0.04, green: 0.05, blue: 0.07)))
+        context.fill(whiteKeys, with: .color(paper ? Color(white: 1) : Color(red: 0.13, green: 0.15, blue: 0.19)))
+        context.fill(blackKeys, with: .color(paper ? Color(red: 0.72, green: 0.71, blue: 0.78) : Color(red: 0.04, green: 0.05, blue: 0.07)))
         context.fill(rules, with: .color(ink.opacity(0.04)))
         for (name, isC, at) in keyNames {
             context.draw(CanvasLabel.image(name, size: 9, monospaced: true,
                                            color: NSColor(white: paper ? (isC ? 0.25 : 0.45) : (isC ? 0.65 : 0.45), alpha: 1),
                                            dark: !paper), at: at, anchor: .leading)
+        }
+        // A tecla da nota escolhida acesa, com o nome.
+        if let spot, Double(spot.note.pitch) > lowPitch, Double(spot.note.pitch) < highPitch {
+            let y0 = y(Double(spot.note.pitch) + 0.5)
+            let y1 = y(Double(spot.note.pitch) - 0.5)
+            let key = CGRect(x: 2, y: y0 + 0.5, width: gutter - 4, height: max(2, y1 - y0 - 1))
+            context.fill(Path(roundedRect: key, cornerRadius: 2), with: .color(spot.color))
+            if semitone >= 9 {
+                context.draw(CanvasLabel.image(SongModel.pitchName(spot.note.pitch).replacingOccurrences(of: " ", with: ""),
+                                               size: 8.5, weight: .bold, color: .white, dark: true),
+                             at: CGPoint(x: key.midX, y: key.midY), anchor: .center)
+            }
+        }
+    }
+
+    /// A nota escolhida na Lente (3/11): o resto do espectro e das notas fica sob um véu da cor do fundo, com uma janela
+    /// em volta dela; a escrita em contorno forte, a curva do som numa linha, uma guia até o teclado, a duração numa
+    /// régua embaixo e um cartão com o nome, a casa e o que o som fez. Ouvindo a nota (o clique), a parte já tocada
+    /// acende e uma linha corre por ela.
+    private struct Spot {
+        let shape: Path
+        let line: Path?
+        let color: Color
+        let note: ScoreNote
+        let start: Double
+        let end: Double
+        /// Se o selo da casa está em cima da ponta (a janela abre para ele).
+        let fret: Bool
+    }
+
+    private func spotlight(_ spot: Spot, in context: inout GraphicsContext, width: Double, height: Double, semitone: Double,
+                           gx: (Double) -> Double, y: (Double) -> Double) {
+        let ground = SpectrumPalette.ground(paper: paper)
+        let ink = paper ? Color(red: 0.16, green: 0.14, blue: 0.31) : Color.white
+        let gutter = Self.keyboardWidth
+        let bounds = spot.shape.boundingRect
+        var hole = bounds.insetBy(dx: -10, dy: -max(7, semitone * 0.5))
+        if spot.fret {
+            hole.origin.y -= 14
+            hole.size.height += 14
+        }
+        // O véu em dois degraus, para a borda da janela não ser seca.
+        let area = CGRect(x: gutter, y: 0, width: width - gutter, height: height)
+        for (grow, alpha) in [(12.0, paper ? 0.3 : 0.28), (0.0, paper ? 0.28 : 0.24)] {
+            let window = hole.insetBy(dx: -grow, dy: -grow)
+            var veil = Path(area)
+            veil.addPath(Path(roundedRect: window, cornerRadius: min(window.height / 2, 10 + grow)))
+            context.fill(veil, with: .color(ground.opacity(alpha)), style: FillStyle(eoFill: true))
+        }
+        // A guia da altura escrita até o teclado.
+        let pitchY = y(Double(spot.note.pitch))
+        if hole.minX > gutter + 4 {
+            var guide = Path()
+            guide.move(to: CGPoint(x: gutter, y: pitchY))
+            guide.addLine(to: CGPoint(x: hole.minX - 2, y: pitchY))
+            context.stroke(guide, with: .color(spot.color.opacity(0.7)), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+        }
+        // Ouvindo: a parte já tocada acende, e uma linha corre por ela.
+        let engine = model.engine
+        if engine.auditionActive, engine.currentTime > spot.start, engine.currentTime < spot.end + 0.05 {
+            let x = min(gx(engine.currentTime), bounds.maxX)
+            var played = context
+            played.clip(to: Path(CGRect(x: bounds.minX - 2, y: hole.minY, width: x - bounds.minX + 2, height: hole.height)))
+            played.fill(spot.shape, with: .color(spot.color.opacity(0.45)))
+            context.fill(Path(CGRect(x: x - 0.75, y: hole.minY + 4, width: 1.5, height: hole.height - 8)), with: .color(ink.opacity(0.8)))
+        } else {
+            context.fill(spot.shape, with: .color(spot.color.opacity(paper ? 0.14 : 0.18)))
+        }
+        // A escrita, forte.
+        var glow = context
+        glow.addFilter(.shadow(color: spot.color.opacity(0.6), radius: 4))
+        glow.stroke(spot.shape, with: .color(ink), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+        // A curva do som: uma linha com borda clara, que se lê sobre o âmbar e o violeta.
+        if let line = spot.line, model.lensSpectrum {
+            let curve = paper ? Color(red: 0.86, green: 0.36, blue: 0.08) : Color(red: 1, green: 0.95, blue: 0.86)
+            context.stroke(line, with: .color(paper ? .white : Color.black.opacity(0.6)),
+                           style: StrokeStyle(lineWidth: 3.8, lineCap: .round, lineJoin: .round))
+            context.stroke(line, with: .color(curve), style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+        }
+        // A régua da duração embaixo.
+        let rule = hole.maxY - 4
+        var ruler = Path()
+        ruler.move(to: CGPoint(x: bounds.minX, y: rule - 3))
+        ruler.addLine(to: CGPoint(x: bounds.minX, y: rule))
+        ruler.addLine(to: CGPoint(x: bounds.maxX, y: rule))
+        ruler.addLine(to: CGPoint(x: bounds.maxX, y: rule - 3))
+        context.stroke(ruler, with: .color(ink.opacity(0.45)), lineWidth: 1)
+        // O cartão: em cima da janela, ou embaixo se não cabe.
+        let note = spot.note
+        let title = "\(SongModel.pitchName(note.pitch)) · casa \(note.fret) · corda \(note.string)"
+            + String(format: " · %.2f s", spot.end - spot.start).replacingOccurrences(of: ".", with: ",")
+        let first = context.resolve(CanvasLabel.image(title, size: 11, weight: .semibold, color: paper ? NSColor(white: 0.12, alpha: 1)
+                                                      : NSColor(white: 0.95, alpha: 1), dark: !paper))
+        let summary = model.soundSummary
+        let second = summary.map {
+            context.resolve(CanvasLabel.image($0, size: 10, color: paper ? NSColor(white: 0.38, alpha: 1) : NSColor(white: 0.7, alpha: 1),
+                                              dark: !paper))
+        }
+        let cardWidth = max(first.size.width, second?.size.width ?? 0) + 16
+        let cardHeight = first.size.height + (second.map { $0.size.height + 2 } ?? 0) + 10
+        let above = hole.minY - cardHeight - 6 >= 2
+        let card = CGRect(x: min(max(gutter + 4, hole.minX), width - cardWidth - 4),
+                          y: above ? hole.minY - cardHeight - 6 : min(hole.maxY + 6, height - cardHeight - 2),
+                          width: cardWidth, height: cardHeight)
+        var shadowed = context
+        shadowed.addFilter(.shadow(color: .black.opacity(paper ? 0.18 : 0.5), radius: 6, y: 2))
+        shadowed.fill(Path(roundedRect: card, cornerRadius: 7),
+                      with: .color(paper ? Color(white: 1) : Color(red: 0.13, green: 0.13, blue: 0.18)))
+        context.fill(Path(roundedRect: CGRect(x: card.minX, y: card.minY, width: 3, height: card.height), cornerRadius: 1.5),
+                     with: .color(spot.color))
+        context.draw(first, at: CGPoint(x: card.minX + 9, y: card.minY + 5), anchor: .topLeading)
+        if let second {
+            context.draw(second, at: CGPoint(x: card.minX + 9, y: card.minY + 7 + first.size.height), anchor: .topLeading)
         }
     }
 
@@ -958,6 +1145,15 @@ struct LensBadges: View {
             .popover(isPresented: $filtering, arrowEdge: .bottom) {
                 SuspectFilter(model: model).padding(12).frame(width: 260).controlSize(.small)
             }
+            // O que a Lente mostra: as barras das notas e o espectro (uma das duas fica ligada).
+            Toggle("Barras", isOn: Binding(get: { model.lensBars }, set: { model.lensBars = $0 }))
+                .toggleStyle(.button)
+                .controlSize(.mini)
+                .help("As notas da TAB por cima do espectro (⌥⌘B); desligadas, só o som, com as notas acesas em âmbar")
+            Toggle("Espectro", isOn: Binding(get: { model.lensSpectrum }, set: { model.lensSpectrum = $0 }))
+                .toggleStyle(.button)
+                .controlSize(.mini)
+                .help("O espectro da faixa (⌥⌘S); desligado, as notas viram faixas que seguem o som, com os pontos da altura")
             Toggle(isOn: Binding(get: { model.pitchZoom }, set: { model.pitchZoom = $0 })) {
                 Image(systemName: "arrow.up.and.down.square")
             }

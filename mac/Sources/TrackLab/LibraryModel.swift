@@ -167,8 +167,26 @@ final class LibraryModel {
                 ($0.artist ?? "", $0.displayTitle) < ($1.artist ?? "", $1.displayTitle)
             }
             loadError = nil
+            openFromEnvironment()
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    /// `TRACKLAB_OPEN=<título ou id>` abre a música ao ligar o app (e `TRACKLAB_MODE`, ajustar, editar, estudar ou
+    /// gravar, o modo dela): para conferir as telas de longe, com a janela noutra Space, onde os cliques não chegam.
+    @ObservationIgnored private var openedFromEnvironment = false
+
+    private func openFromEnvironment() {
+        guard !openedFromEnvironment, let wanted = ProcessInfo.processInfo.environment["TRACKLAB_OPEN"], !wanted.isEmpty else {
+            return
+        }
+        openedFromEnvironment = true
+        let key = LibrarySearch.words(wanted)
+        if let song = songs.first(where: { $0.id == wanted })
+            ?? songs.first(where: { LibrarySearch.words($0.displayTitle) == key })
+            ?? songs.first(where: { LibrarySearch.matches($0, wanted) }) {
+            selection = song.id
         }
     }
 

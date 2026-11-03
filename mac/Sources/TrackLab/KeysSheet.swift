@@ -8,7 +8,7 @@ struct KeysSheet: View {
         ("Espaço", "toca e pausa"), ("← →", "5 segundos"), ("Home", "o começo (do loop)"), ("L", "loop no compasso"),
         ("K", "metrônomo"), ("⏎", "Limpo! no trecho ativo"), ("X", "áudio ⇄ TAB sintetizada"), ("B", "A/B das faixas"),
         ("Z", "a Lente em volta da nota que toca"), ("Tab ⇧Tab", "a suspeita seguinte / anterior"),
-        ("⌘+ ⌘−", "zoom (pinça também)"), ("⌥⌘1 ⌥⌘2", "Onda, Lente"), ("⌥⌘I", "o inspetor"), ("⌘E ⌘J", "Editar, Ajustar"),
+        ("⌘+ ⌘−", "zoom (pinça também)"), ("⌥⌘1 ⌥⌘2 ⌥⌘4", "Onda, Lente, braço"), ("⌥⌘I", "o inspetor"), ("⌘E ⌘J", "Editar, Ajustar"),
         ("⌥⌘R", "reconhecer um trecho no espectro"), ("⌥ + arrastar na Lente", "o mesmo, pelo retângulo"),
     ]
     static let edit: [(String, String)] = [
@@ -20,6 +20,8 @@ struct KeysSheet: View {
         ("G A R P", "fantasma, acento, let ring, palhetada"), ("F ⇧F", "encaixa no som, corrige a pista"),
         ("⌥1–⌥4", "a leitura do cartão"), ("O", "ouve as notas escolhidas"), ("⌘C ⌘X ⌘V", "copia, recorta, cola"),
         ("Esc", "solta a nota; de novo, sai da edição"), ("botão direito", "o menu da nota ou do compasso"),
+        ("Revisar: ⏎", "aceita o que o som diz e vai à próxima"), ("Revisar: ⌫", "a escrita está certa (sai da fila)"),
+        ("Revisar: → ←", "pula, volta"),
     ]
     static let record: [(String, String)] = [
         ("⌘R", "o modo Gravar"), ("R", "grava e para (com loop, um take por volta)"), ("B", "compara com o take anterior"),

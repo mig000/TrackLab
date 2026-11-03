@@ -28,7 +28,10 @@ struct SongView: View {
     }
 
     /// Alguma camada embaixo da TAB (sem nenhuma, a TAB fica com a altura toda).
-    private var lanes: Bool { model.waveVisible || model.lensVisible }
+    private var lanes: Bool { model.waveVisible || model.lensShown || showFretboard }
+
+    /// O braço no Estudar, sob a TAB (fora das páginas).
+    private var showFretboard: Bool { model.mode == .study && model.fretboardVisible && !model.scorePage }
 
     private var study: some View {
         VStack(spacing: 0) {
@@ -59,7 +62,7 @@ struct SongView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleWave)) { _ in model.waveVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .togglePage)) { _ in model.scorePage.toggle() }
-        .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.lensVisible.toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleLens)) { _ in model.toggleLens() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleChords)) { _ in model.chordsVisible.toggle() }
         .onReceive(NotificationCenter.default.publisher(for: .toggleEdit)) { _ in model.mode = model.mode == .edit ? .study : .edit }
         .onReceive(NotificationCenter.default.publisher(for: .toggleAdjust)) { _ in model.mode = model.mode == .adjust ? .study : .adjust }
@@ -82,11 +85,53 @@ struct SongView: View {
     }
 
     /// A TAB e as camadas embaixo dela (a Onda e a Lente), uma sobre a outra; cada uma com os controles dela no canto.
+    /// As alturas saem de `LaneLayout`, pelo modo e pela altura da janela: cada modo dá a parte dele a quem trabalha
+    /// nele, e a Onda tem teto quando é só referência (antes ela levava todo o resto e esticava na tela grande).
     private var lanesColumn: some View {
+        GeometryReader { proxy in
+            lanesStack(layout(for: proxy.size))
+        }
+    }
+
+    /// O que as camadas ocupam além delas mesmas (as margens, os divisores, a barra de acordes).
+    private func fixedHeight() -> Double {
+        if model.adjusting { return 12 + 8 }
+        var fixed = 0.0
+        if lanes { fixed += 9 } else { fixed += 1 }
+        if showChords { fixed += ChordLane.height + 2 }
+        if showFretboard { fixed += 4 }
+        if model.mode == .record { fixed += 4 }
+        if model.waveVisible { fixed += 8 }
+        if model.waveVisible, model.lensShown { fixed += 9 }
+        if model.lensShown { fixed += 8 }
+        return fixed
+    }
+
+    private var showChords: Bool {
+        model.chordsVisible && !model.scorePage && !model.chordSpans.isEmpty && !model.adjusting
+    }
+
+    private func layout(for size: CGSize) -> LaneLayout {
+        let height = size.height
+        let mode: LaneLayout.Mode = switch model.mode {
+        case .study: .study
+        case .edit: .edit
+        case .adjust: .adjust
+        case .record: .record
+        }
+        return LaneLayout.make(height: height - fixedHeight(), mode: mode,
+                               tabNatural: model.scorePage ? nil : model.scoreHeight.map { $0 + 16 },
+                               tabChosen: tabHeight > 0 ? tabHeight : nil, wave: model.waveVisible, lens: model.lensShown,
+                               waveChosen: waveHeight, fretboard: showFretboard,
+                               takeLanes: model.mode == .record ? model.studio.lanes.count : 0,
+                               fretboardMax: FretboardView.naturalHeight(width: size.width - 24, model: model))
+    }
+
+    private func lanesStack(_ layout: LaneLayout) -> some View {
         VStack(spacing: 0) {
             // No Ajuste, a música inteira em cima: o andamento, o som contra o mapa, os conferidos.
             if model.adjusting {
-                AdjustOverview(model: model, span: span)
+                AdjustOverview(model: model, span: span, height: layout.overview)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
             }
@@ -100,10 +145,8 @@ struct SongView: View {
             .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
             // A mesma margem da Fita: as duas têm a mesma largura, a mesma escala e a agulha no mesmo x.
             .padding(.horizontal, 12)
-            // Em páginas, sem altura escolhida, a TAB divide o espaço com as camadas (a música toda não cabe).
-            .frame(minHeight: tabHeight > 0 ? min(tabHeight, 160) : 120,
-                   maxHeight: tabHeight > 0 ? tabHeight
-                       : lanes && !model.scorePage ? model.scoreHeight.map { max(120, $0 + 16) } ?? .infinity : .infinity)
+            .frame(height: lanes ? layout.tab : nil)
+            .frame(maxHeight: lanes ? nil : .infinity)
             .background(GeometryReader { proxy in
                 Color.clear.onChange(of: proxy.size.height, initial: true) { tabMeasured = proxy.size.height }
             })
@@ -121,15 +164,21 @@ struct SongView: View {
                 } begin: { tabMeasured } reset: { tabHeight = 0 }
             }
             // Os acordes da música, na escala da Fita (fora das páginas, que não têm a escala).
-            if model.chordsVisible, !model.scorePage, !model.chordSpans.isEmpty, !model.adjusting {
+            if showChords {
                 ChordLane(model: model, span: span)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     .padding(.horizontal, 12)
                     .padding(.top, 2)
             }
-            // No modo Gravar, os takes de cada pista de guitarra, na escala da Fita.
+            // No Estudar, o braço com as notas que tocam e as próximas.
+            if showFretboard {
+                FretboardView(model: model, height: layout.fretboard)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
+            }
+            // No modo Gravar, o disco e os takes de cada pista de guitarra, na escala da Fita.
             if model.mode == .record {
-                TakesLane(model: model, span: span)
+                TakesLane(model: model, span: span, row: layout.takeRow, record: layout.takeRecord)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
@@ -140,25 +189,25 @@ struct SongView: View {
             if model.waveVisible || model.adjusting {
                 FitaView(model: model, span: $span)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
-                    // Com a Lente embaixo, a altura do divisor, mas encolhe se a janela não comporta tudo (a soma das
-                    // mínimas passava da janela e empurrava o cabeçalho para fora).
-                    .frame(minHeight: 60, maxHeight: model.lensVisible && !model.adjusting ? waveHeight : .infinity)
-                    .layoutPriority(model.lensVisible && !model.adjusting ? 1 : 0)
+                    // A última camada leva a sobra do arredondamento; com a Lente embaixo, a altura do layout.
+                    .frame(minHeight: LaneLayout.waveMinimum, idealHeight: layout.wave,
+                           maxHeight: model.lensShown ? layout.wave : .infinity)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
-            if model.waveVisible, model.lensVisible, !model.adjusting {
+            if model.waveVisible, model.lensShown {
                 ResizeHandle(help: "Arraste para dividir a altura entre a Onda e a Lente") { delta, start in
                     waveHeight = min(max(60, (start ?? waveHeight) + delta), 600)
                 } begin: { waveHeight } reset: { waveHeight = 150 }
             }
-            if model.lensVisible, !model.adjusting {
+            if model.lensShown {
                 FitaView(model: model, span: $span, lens: true, strip: !model.waveVisible)
                     .background(ScrollCatcher(onScroll: scrub, onMagnify: pinch))
                     .frame(minHeight: 90, maxHeight: .infinity)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 4)
             }
+            if lanes, !model.waveVisible, !model.lensShown, !model.adjusting { Spacer(minLength: 0) }
         }
     }
 
@@ -365,8 +414,20 @@ struct SongView: View {
         Menu {
             Toggle("Onda", isOn: Binding(get: { model.waveVisible }, set: { model.waveVisible = $0 }))
                 .keyboardShortcut("1", modifiers: [.option, .command])
-            Toggle("Lente (o espectro)", isOn: Binding(get: { model.lensVisible }, set: { model.lensVisible = $0 }))
+            Toggle(model.mode == .edit ? "Lente (o espectro)" : "Lente neste modo",
+                   isOn: Binding(get: { model.lensShown }, set: { if $0 != model.lensShown { model.toggleLens() } }))
                 .keyboardShortcut("2", modifiers: [.option, .command])
+                .disabled(model.mode == .adjust)
+            Toggle("Barras na Lente", isOn: Binding(get: { model.lensBars }, set: { model.lensBars = $0 }))
+                .keyboardShortcut("b", modifiers: [.option, .command])
+                .disabled(!model.lensShown)
+            Toggle("Espectro na Lente", isOn: Binding(get: { model.lensSpectrum }, set: { model.lensSpectrum = $0 }))
+                .keyboardShortcut("s", modifiers: [.option, .command])
+                .disabled(!model.lensShown)
+            if model.mode == .study {
+                Toggle("Braço", isOn: Binding(get: { model.fretboardVisible }, set: { model.fretboardVisible = $0 }))
+                    .keyboardShortcut("4", modifiers: [.option, .command])
+            }
             Toggle("Acordes", isOn: Binding(get: { model.chordsVisible }, set: { model.chordsVisible = $0 }))
                 .keyboardShortcut("3", modifiers: [.option, .command])
             Divider()

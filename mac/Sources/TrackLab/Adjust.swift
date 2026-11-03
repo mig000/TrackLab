@@ -286,10 +286,13 @@ extension SongModel {
         playCheckingBar()
     }
 
-    /// O compasso em conferência, em loop.
+    /// O compasso em conferência, em loop, do começo dele. Tocando também: o `setLoop` só leva a música ao loop parada,
+    /// e com ela tocando o compasso escolhido mais adiante (Pular, a grade, Certo depois de compassos pulados) só soava
+    /// quando a música chegava lá (2/11).
     func playCheckingBar() {
         guard let bar = checkingBar, let range = barRange(bar) else { return }
-        setLoop(range, seekToStart: true)
+        setLoop(range)
+        engine.seek(to: range.lowerBound)
         if !engine.isPlaying { engine.play() }
     }
 
@@ -328,6 +331,14 @@ extension SongModel {
             checkChange = MapChange.between(before, grid, bars: bar - 2, bar + 2)
             playCheckingBar()
         }
+    }
+
+    /// ↑: o compasso de antes (o vizinho, conferido ou não), para ouvir de novo.
+    func previousCheckingBar() {
+        guard let bar = checkingBar, bar > 1 else { return }
+        checkChange = nil
+        checkingBar = bar - 1
+        playCheckingBar()
     }
 
     func skipCheckingBar() {

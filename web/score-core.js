@@ -285,7 +285,9 @@
   // a nota chega e sai (somados: 1, vem de outra casa pela corda, num ligado, num slide da anterior ou num slide de fora;
   // 2, sai por slide; 4 e 8, o slide de saída é para fora, para cima ou para baixo; 16 e 32, o de entrada vem de baixo ou
   // de cima; para a Lente desenhar o slide) e os pontos do bend em pares (deslocamento de 0 a 60 ao longo da nota, valor
-  // em quartos de tom)…]. Uma nota ligada (tie) soma a duração das seguintes e elas não entram; a bateria não tem altura
+  // em quartos de tom)…]. Nas ligações também, para o braço do app: 64 palm mute, 128 nota morta, 256 fantasma, 512
+  // harmônico natural, 1024 outro harmônico, 2048 tapping, 4096 let ring e o dedo da mão esquerda × 8192 (1 o polegar,
+  // 2 a 5 do indicador ao mínimo; 0 sem). Uma nota ligada (tie) soma a duração das seguintes e elas não entram; a bateria não tem altura
   // e fica de fora (lista vazia).
   function trackNotes(score) {
     return score.tracks.map((track) => {
@@ -309,9 +311,14 @@
                 const bend = chainBend(pieces, duration).flatMap((p) => p);
                 const trill = note.isTrill ? note.realValue + note.trillFret - note.fret : 0;
                 const out = pieces[pieces.length - 1].slideOutType;
+                const finger = note.leftHandFinger >= 0 && note.leftHandFinger <= 4 ? note.leftHandFinger + 1 : 0;
                 const links = (note.isHammerPullDestination || note.slideOrigin || note.slideInType ? 1 : 0)
                   + (out >= 1 && out <= 4 ? 2 : 0) + (out === 3 ? 4 : out === 4 ? 8 : 0)
-                  + (note.slideInType === 1 ? 16 : note.slideInType === 2 ? 32 : 0);
+                  + (note.slideInType === 1 ? 16 : note.slideInType === 2 ? 32 : 0)
+                  + (note.isPalmMute ? 64 : 0) + (note.isDead ? 128 : 0) + (note.isGhost ? 256 : 0)
+                  + (note.harmonicType === 1 ? 512 : note.harmonicType > 1 ? 1024 : 0)
+                  + (beat.tap || note.isLeftHandTapped ? 2048 : 0) + (pieces.some((n) => n.isLetRing) ? 4096 : 0)
+                  + finger * 8192;
                 notes.push([beat.absolutePlaybackStart, duration, note.realValue, strings ? strings - note.string + 1 : 0,
                   note.fret, vibrato, trill, links, ...bend]);
               }
